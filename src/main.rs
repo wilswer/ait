@@ -1,3 +1,4 @@
+use gait::ai::bot_response;
 use gait::app::{App, AppResult};
 use gait::event::{Event, EventHandler};
 use gait::handler::handle_key_events;
@@ -28,6 +29,10 @@ async fn main() -> AppResult<()> {
             Event::Key(key_event) => handle_key_events(key_event, &mut app)?,
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}
+        }
+        if let Some(ref query) = app.current_message {
+            let chat_resp = bot_response(query).await?;
+            app.receive_message(chat_resp).await;
         }
     }
 

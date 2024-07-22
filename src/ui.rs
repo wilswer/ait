@@ -80,17 +80,18 @@ pub fn render(f: &mut Frame, app: &App) {
     }
 
     let messages: Vec<ListItem> = app
-        .messages
+        .user_messages
         .iter()
-        .map(|m| {
+        .zip(app.bot_messages.iter())
+        .map(|(u, b)| {
             let user_content =
-                Line::from(Span::raw(format!("USER: {m}"))).alignment(Alignment::Left);
+                Line::from(Span::raw(format!("USER: {u}")).yellow()).alignment(Alignment::Left);
             let bot_content =
-                Line::from(Span::raw(format!("BOT: {m}"))).alignment(Alignment::Right);
+                Line::from(Span::raw(format!("BOT: {b}")).green()).alignment(Alignment::Right);
             let content = vec![user_content, bot_content];
             return ListItem::new(content);
         })
         .collect();
-    let messages = List::new(messages).block(Block::bordered().title("Messages"));
+    let messages = List::new(messages).block(Block::bordered().title("Chat"));
     f.render_widget(messages, messages_area);
 }

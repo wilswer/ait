@@ -16,8 +16,12 @@ pub struct App {
     pub character_index: usize,
     /// Current input mode
     pub input_mode: InputMode,
+    /// Current message to process
+    pub current_message: Option<String>,
     /// History of recorded messages
-    pub messages: Vec<String>,
+    pub user_messages: Vec<String>,
+    /// History of recorded messages
+    pub bot_messages: Vec<String>,
     /// Is the application running?
     pub running: bool,
 }
@@ -27,7 +31,9 @@ impl Default for App {
         Self {
             input: String::new(),
             input_mode: InputMode::Normal,
-            messages: Vec::new(),
+            current_message: None,
+            user_messages: Vec::new(),
+            bot_messages: Vec::new(),
             character_index: 0,
             running: true,
         }
@@ -105,9 +111,15 @@ impl App {
     }
 
     pub fn submit_message(&mut self) {
-        self.messages.push(self.input.clone());
+        self.current_message = self.input.clone().into();
+        self.user_messages.push(self.input.clone());
         self.input.clear();
         self.reset_cursor();
+    }
+
+    pub async fn receive_message(&mut self, message: String) {
+        self.bot_messages.push(message);
+        self.current_message = None;
     }
 
     pub fn quit(&mut self) {
