@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Margin},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
@@ -22,7 +22,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let vertical = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
-        Constraint::Length(3),
+        Constraint::Max(8),
     ]);
 
     let vertical = vertical.margin(1);
@@ -37,17 +37,13 @@ pub fn render(f: &mut Frame, app: &App) {
                 " to exit, ".into(),
                 "i".bold(),
                 " to start editing.".bold(),
+                " Press Enter".bold(),
+                " to submit the message.".into(),
             ],
             Style::default().add_modifier(Modifier::RAPID_BLINK),
         ),
         InputMode::Editing => (
-            vec![
-                "Press ".into(),
-                "Esc".bold(),
-                " to stop editing, ".into(),
-                "Enter".bold(),
-                " to record the message".into(),
-            ],
+            vec!["Press ".into(), "Esc".bold(), " to stop editing.".into()],
             Style::default(),
         ),
     };
@@ -55,29 +51,8 @@ pub fn render(f: &mut Frame, app: &App) {
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);
 
-    let input = Paragraph::new(app.input.as_str())
-        .style(match app.input_mode {
-            InputMode::Normal => Style::default(),
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-        })
-        .block(Block::bordered().title("Input"));
-    f.render_widget(input, input_area);
-    match app.input_mode {
-        InputMode::Normal => {}
+    f.render_widget(app.text_area.widget(), input_area);
 
-        InputMode::Editing => {
-            // Make the cursor visible and ask ratatui to put it at the specified coordinates after
-            // rendering
-            #[allow(clippy::cast_possible_truncation)]
-            f.set_cursor(
-                // Draw the cursor at the current position in the input field.
-                // This position is can be controlled via the left and right arrow key
-                input_area.x + app.character_index as u16 + 1,
-                // Move one line down, from the border to the input line
-                input_area.y + 1,
-            );
-        }
-    }
     let messages: Vec<Line> = app
         .messages
         .iter()

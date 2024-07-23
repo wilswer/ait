@@ -15,17 +15,21 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Down | KeyCode::Char('j') => {
                 app.increment_vertical_scroll();
             }
+            KeyCode::Enter => {
+                app.submit_message();
+            }
             _ => {}
         },
         InputMode::Editing => match key_event.code {
             // Exit editing mode on `ESC`
             KeyCode::Esc => app.set_input_mode(InputMode::Normal),
-            KeyCode::Char(c) => app.enter_char(c),
-            KeyCode::Backspace => app.delete_char(),
-            KeyCode::Enter => app.submit_message(),
-            KeyCode::Right => app.move_cursor_right(),
-            KeyCode::Left => app.move_cursor_left(),
-            _ => {}
+            // KeyCode::Char(c) => app.enter_char(c),
+            // KeyCode::Backspace => app.delete_char(),
+            // KeyCode::Right => app.move_cursor_right(),
+            // KeyCode::Left => app.move_cursor_left(),
+            _ => {
+                app.text_area.input(key_event);
+            }
         },
     }
     Ok(())
