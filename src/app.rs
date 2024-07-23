@@ -3,12 +3,14 @@ use std::error;
 /// Application result type.
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
+#[derive(Clone)]
 pub enum InputMode {
     Normal,
     Editing,
 }
 
 /// App holds the state of the application
+#[derive(Clone)]
 pub struct App {
     /// Current value of the input box
     pub input: String,

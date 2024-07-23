@@ -30,9 +30,10 @@ async fn main() -> AppResult<()> {
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}
         }
-        if let Some(ref query) = app.current_message {
-            let chat_resp = bot_response(query).await?;
-            app.receive_message(chat_resp).await;
+        if let Some(query) = app.current_message.clone() {
+            app.current_message = None;
+            let bot_response = bot_response(query).await?;
+            app.receive_message(bot_response).await;
         }
     }
 

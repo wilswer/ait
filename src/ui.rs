@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Paragraph, Wrap},
     Frame,
 };
 
@@ -19,13 +19,13 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let vertical = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Length(3),
         Constraint::Min(1),
+        Constraint::Length(3),
     ]);
 
     let vertical = vertical.margin(1);
 
-    let [help_area, input_area, messages_area] = vertical.areas(f.size());
+    let [help_area, messages_area, input_area] = vertical.areas(f.size());
 
     let (msg, style) = match app.input_mode {
         InputMode::Normal => (
@@ -79,19 +79,29 @@ pub fn render(f: &mut Frame, app: &App) {
         }
     }
 
-    let messages: Vec<ListItem> = app
+    let messages: Vec<Line> = app
         .user_messages
         .iter()
         .zip(app.bot_messages.iter())
-        .map(|(u, b)| {
-            let user_content =
-                Line::from(Span::raw(format!("USER: {u}")).yellow()).alignment(Alignment::Left);
-            let bot_content =
-                Line::from(Span::raw(format!("BOT: {b}")).green()).alignment(Alignment::Right);
-            let content = vec![user_content, bot_content];
-            return ListItem::new(content);
+        .flat_map(|(u, b)| {
+            let mut user_lines = u
+                .split('\n')
+                .map(|l| Line::from(Span::raw(l).yellow()))
+                .collect::<Vec<Line>>();
+            user_lines.insert(0, Line::from(Span::raw("USER:").yellow()));
+            let mut bot_lines = b
+                .split('\n')
+                .map(|l| Line::from(Span::raw(l).green()))
+                .collect::<Vec<Line>>();
+            bot_lines.insert(0, Line::from(Span::raw("BOT:").green()));
+
+            user_lines.extend(bot_lines);
+            user_lines
         })
         .collect();
-    let messages = List::new(messages).block(Block::bordered().title("Chat"));
+    let messages_text = Text::from(messages);
+    let messages = Paragraph::new(messages_text)
+        .wrap(Wrap { trim: true })
+        .block(Block::bordered().title("Chat"));
     f.render_widget(messages, messages_area);
 }
