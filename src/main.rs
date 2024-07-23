@@ -1,4 +1,4 @@
-use gait::ai::bot_response;
+use gait::ai::assistant_response;
 use gait::app::{App, AppResult};
 use gait::event::{Event, EventHandler};
 use gait::handler::handle_key_events;
@@ -6,6 +6,8 @@ use gait::tui::Tui;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
+use tokio::sync::mpsc;
+use tokio::task;
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
@@ -19,6 +21,9 @@ async fn main() -> AppResult<()> {
     let mut tui = Tui::new(terminal, events);
     tui.init()?;
 
+    // Create a channel to receive the assistant responses
+    let (assistant_response_tx, mut assistant_response_rx) = mpsc::channel(32);
+
     // Start the main loop.
     while app.running {
         // Render the user interface.
@@ -30,10 +35,24 @@ async fn main() -> AppResult<()> {
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}
         }
+
+        // Check for a new query and spawn a task to handle it
         if let Some(query) = app.current_message.clone() {
             app.current_message = None;
-            let bot_response = bot_response(query).await?;
-            app.receive_message(bot_response).await;
+            let assistant_response_tx = assistant_response_tx.clone();
+            let messages = app.messages.clone();
+            task::spawn(async move {
+                let assistant_response = assistant_response(query, messages).await;
+                let _ = assistant_response_tx.send(assistant_response).await;
+            });
+        }
+
+        // Check for a response from the assistant and process it
+        if let Ok(assistant_response) = assistant_response_rx.try_recv() {
+            match assistant_response {
+                Ok(response) => app.receive_message(response).await,
+                Err(e) => eprintln!("Error receiving assistant response: {}", e),
+            }
         }
     }
 

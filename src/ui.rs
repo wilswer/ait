@@ -1,8 +1,10 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Layout},
+    layout::{Alignment, Constraint, Layout, Margin},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    },
     Frame,
 };
 
@@ -61,9 +63,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(Block::bordered().title("Input"));
     f.render_widget(input, input_area);
     match app.input_mode {
-        InputMode::Normal =>
-            // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
-            {}
+        InputMode::Normal => {}
 
         InputMode::Editing => {
             // Make the cursor visible and ask ratatui to put it at the specified coordinates after
@@ -78,30 +78,43 @@ pub fn render(f: &mut Frame, app: &App) {
             );
         }
     }
-
     let messages: Vec<Line> = app
-        .user_messages
+        .messages
         .iter()
-        .zip(app.bot_messages.iter())
-        .flat_map(|(u, b)| {
-            let mut user_lines = u
-                .split('\n')
-                .map(|l| Line::from(Span::raw(l).yellow()))
-                .collect::<Vec<Line>>();
-            user_lines.insert(0, Line::from(Span::raw("USER:").yellow()));
-            let mut bot_lines = b
-                .split('\n')
-                .map(|l| Line::from(Span::raw(l).green()))
-                .collect::<Vec<Line>>();
-            bot_lines.insert(0, Line::from(Span::raw("BOT:").green()));
-
-            user_lines.extend(bot_lines);
-            user_lines
+        .flat_map(|m| {
+            if m.starts_with("USER:") {
+                m.split('\n')
+                    .map(|l| Line::from(Span::raw(l).yellow()))
+                    .collect::<Vec<Line>>()
+            } else {
+                m.split('\n')
+                    .map(|l| Line::from(Span::raw(l).green()))
+                    .collect::<Vec<Line>>()
+            }
         })
         .collect();
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("↑"))
+        .end_symbol(Some("↓"));
+
+    let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
+
     let messages_text = Text::from(messages);
     let messages = Paragraph::new(messages_text)
         .wrap(Wrap { trim: true })
+        .scroll((app.vertical_scroll as u16, 0))
         .block(Block::bordered().title("Chat"));
+
     f.render_widget(messages, messages_area);
+
+    f.render_stateful_widget(
+        scrollbar,
+        messages_area.inner(Margin {
+            // using an inner vertical margin of 1 unit makes the scrollbar inside the block
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut scrollbar_state,
+    );
 }

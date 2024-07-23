@@ -21,9 +21,13 @@ pub struct App {
     /// Current message to process
     pub current_message: Option<String>,
     /// History of recorded messages
+    pub messages: Vec<String>,
+    /// History of recorded messages
     pub user_messages: Vec<String>,
     /// History of recorded messages
-    pub bot_messages: Vec<String>,
+    pub assistant_messages: Vec<String>,
+    /// Vertical scroll
+    pub vertical_scroll: usize,
     /// Is the application running?
     pub running: bool,
 }
@@ -34,9 +38,11 @@ impl Default for App {
             input: String::new(),
             input_mode: InputMode::Normal,
             current_message: None,
+            messages: Vec::new(),
             user_messages: Vec::new(),
-            bot_messages: Vec::new(),
+            assistant_messages: Vec::new(),
             character_index: 0,
+            vertical_scroll: 0,
             running: true,
         }
     }
@@ -52,6 +58,13 @@ impl App {
 
     pub fn set_input_mode(&mut self, new_input_mode: InputMode) {
         self.input_mode = new_input_mode;
+    }
+    pub fn increment_vertical_scroll(&mut self) {
+        self.vertical_scroll = self.vertical_scroll.saturating_add(1);
+    }
+
+    pub fn decrement_vertical_scroll(&mut self) {
+        self.vertical_scroll = self.vertical_scroll.saturating_sub(1);
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -114,13 +127,15 @@ impl App {
 
     pub fn submit_message(&mut self) {
         self.current_message = self.input.clone().into();
+        self.messages.push(format!("USER:\n{}", self.input.clone()));
         self.user_messages.push(self.input.clone());
         self.input.clear();
         self.reset_cursor();
     }
 
     pub async fn receive_message(&mut self, message: String) {
-        self.bot_messages.push(message);
+        self.messages.push(format!("ASSISTANT:\n{}", message));
+        self.assistant_messages.push(message);
         self.current_message = None;
     }
 
