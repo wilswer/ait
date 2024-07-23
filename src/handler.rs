@@ -9,10 +9,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Esc => app.quit(),
             KeyCode::Char('i') => app.set_input_mode(InputMode::Editing),
             KeyCode::Char('q') => app.quit(),
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 app.decrement_vertical_scroll();
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 app.increment_vertical_scroll();
             }
             _ => {}
