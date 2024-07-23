@@ -127,14 +127,16 @@ impl App {
 
     pub fn submit_message(&mut self) {
         self.current_message = self.input.clone().into();
-        self.messages.push(format!("USER:\n{}", self.input.clone()));
+        self.messages
+            .push(format!("USER:\n---\n{}\n", self.input.clone()));
         self.user_messages.push(self.input.clone());
         self.input.clear();
         self.reset_cursor();
     }
 
     pub async fn receive_message(&mut self, message: String) {
-        self.messages.push(format!("ASSISTANT:\n{}", message));
+        self.messages
+            .push(format!("ASSISTANT:\n---\n{}\n", message));
         self.assistant_messages.push(message);
         self.current_message = None;
     }
