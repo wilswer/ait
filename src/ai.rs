@@ -3,7 +3,7 @@ use std::error::Error;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::Client;
 
-const MODEL_OPENAI: &str = "gpt-4o-mini";
+pub const MODEL_OPENAI_MODELS: [&str; 2] = ["gpt-4o-mini", "gpt-4o"];
 
 // NOTE: Model to AdapterKind (AI Provider) type mapping rule
 //  - starts_with "gpt"      -> OpenAI
@@ -42,7 +42,9 @@ pub async fn assistant_response(
     chat_req = chat_req.append_message(ChatMessage::user(query));
 
     let client = Client::default();
-    let chat_res = client.exec_chat(MODEL_OPENAI, chat_req, None).await?;
+    let chat_res = client
+        .exec_chat(MODEL_OPENAI_MODELS[0], chat_req, None)
+        .await?;
     let chat_res_text = chat_res
         .content_text_into_string()
         .unwrap_or("NO RESPONSE".to_string());

@@ -15,3 +15,6 @@ pub mod handler;
 
 /// GenAI chat client.
 pub mod ai;
+
+/// Models.
+pub mod models;

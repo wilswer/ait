@@ -1,13 +1,14 @@
-use crate::app::{App, AppResult, InputMode};
+use crate::app::{App, AppMode, AppResult};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
-    match app.input_mode {
-        InputMode::Normal => match key_event.code {
+    match app.app_mode {
+        AppMode::Normal => match key_event.code {
             // Exit application on `ESC` or `q`
             KeyCode::Esc => app.quit(),
-            KeyCode::Char('i') => app.set_input_mode(InputMode::Editing),
+            KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
+            KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
             KeyCode::Char('q') => app.quit(),
             KeyCode::Char('y') => app.yank_latest_assistant_message(),
             KeyCode::Up | KeyCode::Char('k') => {
@@ -18,9 +19,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
             _ => {}
         },
-        InputMode::Editing => match key_event.code {
+        AppMode::Editing => match key_event.code {
             // Exit editing mode on `ESC`
-            KeyCode::Esc => app.set_input_mode(InputMode::Normal),
+            KeyCode::Esc => app.set_app_mode(AppMode::Normal),
             KeyCode::Char('V') | KeyCode::Char('v') => {
                 if key_event.modifiers == KeyModifiers::CONTROL {
                     app.paste_to_input_textarea();
@@ -38,6 +39,16 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             _ => {
                 app.input_textarea.input(key_event);
             }
+        },
+        AppMode::ModelSelection => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('m') => app.set_app_mode(AppMode::Normal),
+            // KeyCode::Up => {
+            //     todo!()
+            // }
+            // KeyCode::Down => {
+            //     todo!()
+            // }
+            _ => {}
         },
     }
     Ok(())

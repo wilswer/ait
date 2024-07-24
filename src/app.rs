@@ -10,9 +10,10 @@ use tui_textarea::TextArea;
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
 #[derive(Clone)]
-pub enum InputMode {
+pub enum AppMode {
     Normal,
     Editing,
+    ModelSelection,
 }
 
 /// App holds the state of the application
@@ -20,7 +21,7 @@ pub struct App<'a> {
     /// Input text area
     pub input_textarea: TextArea<'a>,
     /// Position of cursor in the editor area.
-    pub input_mode: InputMode,
+    pub app_mode: AppMode,
     /// Current message to process
     pub current_message: Option<String>,
     /// History of recorded messages
@@ -48,7 +49,7 @@ impl Default for App<'_> {
     fn default() -> Self {
         Self {
             input_textarea: styled_input_textarea(),
-            input_mode: InputMode::Normal,
+            app_mode: AppMode::Normal,
             current_message: None,
             messages: Vec::new(),
             user_messages: Vec::new(),
@@ -68,8 +69,8 @@ impl App<'_> {
     /// Handles the tick event of the terminal.
     pub fn tick(&self) {}
 
-    pub fn set_input_mode(&mut self, new_input_mode: InputMode) {
-        self.input_mode = new_input_mode;
+    pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
+        self.app_mode = new_app_mode;
     }
 
     pub fn increment_vertical_scroll(&mut self) {
@@ -98,7 +99,7 @@ impl App<'_> {
         self.messages.push(format!("USER:\n---\n{}\n", text));
         self.user_messages.push(text.clone());
         self.input_textarea = styled_input_textarea();
-        self.set_input_mode(InputMode::Normal);
+        self.set_app_mode(AppMode::Normal);
     }
 
     pub async fn receive_message(&mut self, message: String) {
