@@ -18,11 +18,15 @@ pub fn render(f: &mut Frame, app: &App) {
             .border_type(BorderType::Rounded),
         f.size(),
     );
+    let input_area_constraint = match app.input_mode {
+        InputMode::Normal => Constraint::Length(0),
+        InputMode::Editing => Constraint::Min(1),
+    };
 
     let vertical = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
-        Constraint::Max(8),
+        input_area_constraint,
     ]);
 
     let vertical = vertical.margin(1);
@@ -36,22 +40,29 @@ pub fn render(f: &mut Frame, app: &App) {
                 "q".bold(),
                 " to exit, ".into(),
                 "i".bold(),
-                " to start editing.".bold(),
-                " Press Enter".bold(),
-                " to submit the message.".into(),
+                " to start editing, and ".into(),
+                "y".bold(),
+                " to copy the last answer.".into(),
             ],
             Style::default().add_modifier(Modifier::RAPID_BLINK),
         ),
         InputMode::Editing => (
-            vec!["Press ".into(), "Esc".bold(), " to stop editing.".into()],
+            vec![
+                "Press ".into(),
+                "Esc".bold(),
+                " to stop editing. Press ".into(),
+                "Enter + ALT".bold(),
+                " to submit the message.".into(),
+            ],
             Style::default(),
         ),
     };
     let text = Text::from(Line::from(msg)).patch_style(style);
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);
-
-    f.render_widget(app.textarea.widget(), input_area);
+    if let InputMode::Editing = app.input_mode {
+        f.render_widget(app.input_textarea.widget(), input_area);
+    }
 
     let messages: Vec<Line> = app
         .messages

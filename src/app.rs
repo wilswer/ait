@@ -18,7 +18,7 @@ pub enum InputMode {
 /// App holds the state of the application
 pub struct App<'a> {
     /// Input text area
-    pub textarea: TextArea<'a>,
+    pub input_textarea: TextArea<'a>,
     /// Position of cursor in the editor area.
     pub input_mode: InputMode,
     /// Current message to process
@@ -37,17 +37,17 @@ pub struct App<'a> {
     pub clipboard: Clipboard,
 }
 
-fn styled_textarea() -> TextArea<'static> {
-    let mut textarea = TextArea::default();
-    textarea.set_block(Block::bordered().title("Input"));
-    textarea.set_style(Style::default().fg(Color::Yellow));
-    textarea
+fn styled_input_textarea() -> TextArea<'static> {
+    let mut input_textarea = TextArea::default();
+    input_textarea.set_block(Block::bordered().title("Input"));
+    input_textarea.set_style(Style::default().fg(Color::Yellow));
+    input_textarea
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
         Self {
-            textarea: styled_textarea(),
+            input_textarea: styled_input_textarea(),
             input_mode: InputMode::Normal,
             current_message: None,
             messages: Vec::new(),
@@ -73,7 +73,16 @@ impl App<'_> {
     }
 
     pub fn increment_vertical_scroll(&mut self) {
-        self.vertical_scroll = self.vertical_scroll.saturating_add(1);
+        let max_scroll = self
+            .messages
+            .join("\n")
+            .split('\n')
+            .collect::<Vec<&str>>()
+            .len()
+            - 1;
+        if self.vertical_scroll < max_scroll {
+            self.vertical_scroll += 1;
+        }
     }
 
     pub fn decrement_vertical_scroll(&mut self) {
@@ -81,11 +90,15 @@ impl App<'_> {
     }
 
     pub fn submit_message(&mut self) {
-        let text = self.textarea.lines().join("\n");
+        let text = self.input_textarea.lines().join("\n");
+        if text.is_empty() {
+            return;
+        }
         self.current_message = Some(text.clone());
         self.messages.push(format!("USER:\n---\n{}\n", text));
         self.user_messages.push(text.clone());
-        self.textarea = styled_textarea();
+        self.input_textarea = styled_input_textarea();
+        self.set_input_mode(InputMode::Normal);
     }
 
     pub async fn receive_message(&mut self, message: String) {
@@ -97,7 +110,13 @@ impl App<'_> {
 
     pub fn paste_to_input_textarea(&mut self) {
         if let Ok(clipboard_content) = self.clipboard.get_text() {
-            self.textarea.insert_str(clipboard_content);
+            self.input_textarea.insert_str(clipboard_content);
+        }
+    }
+
+    pub fn yank_latest_assistant_message(&mut self) {
+        if let Some(message) = self.assistant_messages.last() {
+            self.clipboard.set_text(message.clone()).unwrap();
         }
     }
 

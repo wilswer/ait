@@ -33,7 +33,7 @@ pub async fn assistant_response(
         .collect::<Vec<ChatMessage>>();
     let mut chat_req = ChatRequest::new(vec![
         // -- Messages (de/activate to see the differences)
-        ChatMessage::system("You are a helpful assistant."),
+        ChatMessage::system("You are a helpful, consise, and friendly assistant."),
     ]);
 
     for chat_message in chat_messages {

@@ -9,31 +9,34 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Esc => app.quit(),
             KeyCode::Char('i') => app.set_input_mode(InputMode::Editing),
             KeyCode::Char('q') => app.quit(),
+            KeyCode::Char('y') => app.yank_latest_assistant_message(),
             KeyCode::Up | KeyCode::Char('k') => {
                 app.decrement_vertical_scroll();
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 app.increment_vertical_scroll();
             }
-            KeyCode::Enter => {
-                app.submit_message();
-            }
             _ => {}
         },
         InputMode::Editing => match key_event.code {
             // Exit editing mode on `ESC`
             KeyCode::Esc => app.set_input_mode(InputMode::Normal),
-            // KeyCode::Char(c) => app.enter_char(c),
-            // KeyCode::Backspace => app.delete_char(),
-            // KeyCode::Right => app.move_cursor_right(),
-            // KeyCode::Left => app.move_cursor_left(),
             KeyCode::Char('V') | KeyCode::Char('v') => {
-                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                if key_event.modifiers == KeyModifiers::CONTROL {
                     app.paste_to_input_textarea();
+                } else {
+                    app.input_textarea.input(key_event);
+                }
+            }
+            KeyCode::Enter => {
+                if key_event.modifiers == KeyModifiers::NONE {
+                    app.input_textarea.input(key_event);
+                } else {
+                    app.submit_message();
                 }
             }
             _ => {
-                app.textarea.input(key_event);
+                app.input_textarea.input(key_event);
             }
         },
     }
