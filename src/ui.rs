@@ -54,7 +54,7 @@ pub fn render(f: &mut Frame, app: &App) {
         AppMode::Normal | AppMode::ModelSelection => (
             vec![
                 "Press ".into(),
-                "q".bold(),
+                "Esc/q".bold(),
                 " to exit, ".into(),
                 "i".bold(),
                 " to start editing, ".into(),
