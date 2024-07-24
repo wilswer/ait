@@ -1,5 +1,5 @@
 use crate::app::{App, AppResult, InputMode};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
@@ -27,8 +27,13 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             // KeyCode::Backspace => app.delete_char(),
             // KeyCode::Right => app.move_cursor_right(),
             // KeyCode::Left => app.move_cursor_left(),
+            KeyCode::Char('V') | KeyCode::Char('v') => {
+                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.paste_to_input_textarea();
+                }
+            }
             _ => {
-                app.text_area.input(key_event);
+                app.textarea.input(key_event);
             }
         },
     }

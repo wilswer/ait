@@ -1,3 +1,4 @@
+use arboard::Clipboard;
 use ratatui::{
     style::{Color, Style},
     widgets::Block,
@@ -15,10 +16,9 @@ pub enum InputMode {
 }
 
 /// App holds the state of the application
-#[derive(Clone)]
 pub struct App<'a> {
     /// Input text area
-    pub text_area: TextArea<'a>,
+    pub textarea: TextArea<'a>,
     /// Position of cursor in the editor area.
     pub input_mode: InputMode,
     /// Current message to process
@@ -33,19 +33,21 @@ pub struct App<'a> {
     pub vertical_scroll: usize,
     /// Is the application running?
     pub running: bool,
+    /// Is the application running?
+    pub clipboard: Clipboard,
 }
 
-fn styled_text_area() -> TextArea<'static> {
-    let mut text_area = TextArea::default();
-    text_area.set_block(Block::bordered().title("Input"));
-    text_area.set_style(Style::default().fg(Color::Yellow));
-    text_area
+fn styled_textarea() -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    textarea.set_block(Block::bordered().title("Input"));
+    textarea.set_style(Style::default().fg(Color::Yellow));
+    textarea
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
         Self {
-            text_area: styled_text_area(),
+            textarea: styled_textarea(),
             input_mode: InputMode::Normal,
             current_message: None,
             messages: Vec::new(),
@@ -53,6 +55,7 @@ impl Default for App<'_> {
             assistant_messages: Vec::new(),
             vertical_scroll: 0,
             running: true,
+            clipboard: Clipboard::new().unwrap(),
         }
     }
 }
@@ -78,11 +81,11 @@ impl App<'_> {
     }
 
     pub fn submit_message(&mut self) {
-        let text = self.text_area.lines().join("\n");
+        let text = self.textarea.lines().join("\n");
         self.current_message = Some(text.clone());
         self.messages.push(format!("USER:\n---\n{}\n", text));
         self.user_messages.push(text.clone());
-        self.text_area = styled_text_area();
+        self.textarea = styled_textarea();
     }
 
     pub async fn receive_message(&mut self, message: String) {
@@ -90,6 +93,12 @@ impl App<'_> {
             .push(format!("ASSISTANT:\n---\n{}\n", message));
         self.assistant_messages.push(message);
         self.current_message = None;
+    }
+
+    pub fn paste_to_input_textarea(&mut self) {
+        if let Ok(clipboard_content) = self.clipboard.get_text() {
+            self.textarea.insert_str(clipboard_content);
+        }
     }
 
     pub fn quit(&mut self) {

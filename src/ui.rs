@@ -51,7 +51,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);
 
-    f.render_widget(app.text_area.widget(), input_area);
+    f.render_widget(app.textarea.widget(), input_area);
 
     let messages: Vec<Line> = app
         .messages
