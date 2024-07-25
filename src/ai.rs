@@ -47,10 +47,11 @@ pub async fn assistant_response(
     }
 
     let client = Client::default();
-    let chat_res = client.exec_chat(model, chat_req, None).await?;
-    let raw_chat_res_text = chat_res
-        .content_text_into_string()
-        .unwrap_or("NO RESPONSE".to_string());
+    let chat_res = match client.exec_chat(model, chat_req, None).await {
+        Ok(res) => res.content_text_into_string(),
+        Err(e) => Some(format!("Error: {}", e)),
+    };
+    let raw_chat_res_text = chat_res.unwrap_or("NO RESPONSE".to_string());
     let chat_res_text = textwrap::wrap(&raw_chat_res_text, 140).join("\n");
     Ok(chat_res_text)
 }
