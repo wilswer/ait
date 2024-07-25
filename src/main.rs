@@ -37,12 +37,12 @@ async fn main() -> AppResult<()> {
         }
 
         // Check for a new query and spawn a task to handle it
-        if let Some(query) = app.current_message.clone() {
+        if app.current_message.is_some() {
             app.current_message = None;
             let assistant_response_tx = assistant_response_tx.clone();
             let messages = app.messages.clone();
             task::spawn(async move {
-                let assistant_response = assistant_response(query, messages).await;
+                let assistant_response = assistant_response(messages).await;
                 let _ = assistant_response_tx.send(assistant_response).await;
             });
         }

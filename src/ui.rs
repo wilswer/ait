@@ -86,15 +86,22 @@ pub fn render(f: &mut Frame, app: &App) {
     let messages: Vec<Line> = app
         .messages
         .iter()
-        .flat_map(|m| {
-            if m.starts_with("USER:") {
-                m.split('\n')
-                    .map(|l| Line::from(Span::raw(l).yellow()))
-                    .collect::<Vec<Line>>()
+        .enumerate()
+        .flat_map(|(i, m)| {
+            if i % 2 == 0 {
+                let mut line_vec = Vec::new();
+                line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
+                line_vec.push(Line::from(Span::raw("---").bold().yellow()));
+                line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).yellow())));
+                line_vec.push(Line::from(Span::raw("").bold().yellow()));
+                line_vec
             } else {
-                m.split('\n')
-                    .map(|l| Line::from(Span::raw(l).green()))
-                    .collect::<Vec<Line>>()
+                let mut line_vec = Vec::new();
+                line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+                line_vec.push(Line::from(Span::raw("---").bold().green()));
+                line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).green())));
+                line_vec.push(Line::from(Span::raw("").bold().green()));
+                line_vec
             }
         })
         .collect();
@@ -107,7 +114,6 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let messages_text = Text::from(messages);
     let messages = Paragraph::new(messages_text)
-        .wrap(Wrap { trim: true })
         .scroll((app.vertical_scroll as u16, 0))
         .block(Block::bordered().title("Chat"));
 

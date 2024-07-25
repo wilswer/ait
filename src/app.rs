@@ -80,6 +80,7 @@ impl App<'_> {
             .split('\n')
             .collect::<Vec<&str>>()
             .len()
+            + 3 * (self.messages.len())
             - 1;
         if self.vertical_scroll < max_scroll {
             self.vertical_scroll += 1;
@@ -96,15 +97,14 @@ impl App<'_> {
             return;
         }
         self.current_message = Some(text.clone());
-        self.messages.push(format!("USER:\n---\n{}\n", text));
-        self.user_messages.push(text.clone());
+        self.messages.push(text.clone());
+        self.user_messages.push(text);
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
     }
 
     pub async fn receive_message(&mut self, message: String) {
-        self.messages
-            .push(format!("ASSISTANT:\n---\n{}\n", message));
+        self.messages.push(message.clone());
         self.assistant_messages.push(message);
         self.current_message = None;
     }
