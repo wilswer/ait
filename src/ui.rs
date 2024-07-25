@@ -1,16 +1,36 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Margin},
-    style::{Modifier, Style, Stylize},
+    layout::{Alignment, Constraint, Layout, Margin, Rect},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+        Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState,
     },
     Frame,
 };
 
-use crate::app::{App, InputMode};
+use crate::app::{App, AppMode};
 
-pub fn render(f: &mut Frame, app: &App) {
+pub const SELECTED_STYLE: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Blue);
+
+/// helper function to create a centered rect using up certain percentage of the available rect `r`
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1])[1]
+}
+
+pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(
         Block::bordered()
             .title("Generative AI in the Terminal")
@@ -18,9 +38,9 @@ pub fn render(f: &mut Frame, app: &App) {
             .border_type(BorderType::Rounded),
         f.size(),
     );
-    let input_area_constraint = match app.input_mode {
-        InputMode::Normal => Constraint::Length(0),
-        InputMode::Editing => Constraint::Min(1),
+    let input_area_constraint = match app.app_mode {
+        AppMode::Normal | AppMode::ModelSelection => Constraint::Length(0),
+        AppMode::Editing => Constraint::Min(1),
     };
 
     let vertical = Layout::vertical([
@@ -33,20 +53,22 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let [help_area, messages_area, input_area] = vertical.areas(f.size());
 
-    let (msg, style) = match app.input_mode {
-        InputMode::Normal => (
+    let (msg, style) = match app.app_mode {
+        AppMode::Normal | AppMode::ModelSelection => (
             vec![
                 "Press ".into(),
-                "q".bold(),
+                "Esc/q".bold(),
                 " to exit, ".into(),
                 "i".bold(),
-                " to start editing, and ".into(),
+                " to start editing, ".into(),
                 "y".bold(),
-                " to copy the last answer.".into(),
+                " to copy the last answer, ".into(),
+                "m".bold(),
+                " to choose model. ".into(),
             ],
             Style::default().add_modifier(Modifier::RAPID_BLINK),
         ),
-        InputMode::Editing => (
+        AppMode::Editing => (
             vec![
                 "Press ".into(),
                 "Esc".bold(),
@@ -60,22 +82,29 @@ pub fn render(f: &mut Frame, app: &App) {
     let text = Text::from(Line::from(msg)).patch_style(style);
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);
-    if let InputMode::Editing = app.input_mode {
+    if let AppMode::Editing = app.app_mode {
         f.render_widget(app.input_textarea.widget(), input_area);
     }
 
     let messages: Vec<Line> = app
         .messages
         .iter()
-        .flat_map(|m| {
-            if m.starts_with("USER:") {
-                m.split('\n')
-                    .map(|l| Line::from(Span::raw(l).yellow()))
-                    .collect::<Vec<Line>>()
+        .enumerate()
+        .flat_map(|(i, m)| {
+            if i % 2 == 0 {
+                let mut line_vec = Vec::new();
+                line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
+                line_vec.push(Line::from(Span::raw("---").bold().yellow()));
+                line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).yellow())));
+                line_vec.push(Line::from(Span::raw("").bold().yellow()));
+                line_vec
             } else {
-                m.split('\n')
-                    .map(|l| Line::from(Span::raw(l).green()))
-                    .collect::<Vec<Line>>()
+                let mut line_vec = Vec::new();
+                line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+                line_vec.push(Line::from(Span::raw("---").bold().green()));
+                line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).green())));
+                line_vec.push(Line::from(Span::raw("").bold().green()));
+                line_vec
             }
         })
         .collect();
@@ -88,7 +117,6 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let messages_text = Text::from(messages);
     let messages = Paragraph::new(messages_text)
-        .wrap(Wrap { trim: true })
         .scroll((app.vertical_scroll as u16, 0))
         .block(Block::bordered().title("Chat"));
 
@@ -103,4 +131,29 @@ pub fn render(f: &mut Frame, app: &App) {
         }),
         &mut scrollbar_state,
     );
+    if let AppMode::ModelSelection = app.app_mode {
+        let block = Block::bordered().title("Select Model");
+        let area = centered_rect(40, 50, messages_area);
+        f.render_widget(Clear, area); //this clears out the background
+        f.render_widget(block, area);
+        render_list(f, area, app);
+    }
+}
+
+fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
+    let block = Block::new().padding(Padding::uniform(1));
+
+    // Iterate through all elements in the `items` and stylize them.
+    let items: Vec<ListItem> = app.model_list.items.iter().map(ListItem::from).collect();
+
+    // Create a List from all list items and highlight the currently selected one
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(SELECTED_STYLE)
+        .highlight_symbol(">")
+        .highlight_spacing(HighlightSpacing::Always);
+
+    // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
+    // same method name `render`.
+    f.render_stateful_widget(list, area, &mut app.model_list.state);
 }

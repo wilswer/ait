@@ -6,13 +6,17 @@ use ratatui::{
 use std::error;
 use tui_textarea::TextArea;
 
+use crate::ai::MODELS;
+use crate::models::ModelList;
+
 /// Application result type.
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
 #[derive(Clone)]
-pub enum InputMode {
+pub enum AppMode {
     Normal,
     Editing,
+    ModelSelection,
 }
 
 /// App holds the state of the application
@@ -20,7 +24,7 @@ pub struct App<'a> {
     /// Input text area
     pub input_textarea: TextArea<'a>,
     /// Position of cursor in the editor area.
-    pub input_mode: InputMode,
+    pub app_mode: AppMode,
     /// Current message to process
     pub current_message: Option<String>,
     /// History of recorded messages
@@ -35,6 +39,10 @@ pub struct App<'a> {
     pub running: bool,
     /// Is the application running?
     pub clipboard: Clipboard,
+    /// List of models
+    pub model_list: ModelList,
+    /// Selected model name
+    pub selected_model_name: String,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -48,7 +56,7 @@ impl Default for App<'_> {
     fn default() -> Self {
         Self {
             input_textarea: styled_input_textarea(),
-            input_mode: InputMode::Normal,
+            app_mode: AppMode::Normal,
             current_message: None,
             messages: Vec::new(),
             user_messages: Vec::new(),
@@ -56,6 +64,14 @@ impl Default for App<'_> {
             vertical_scroll: 0,
             running: true,
             clipboard: Clipboard::new().unwrap(),
+            model_list: ModelList::from_iter(MODELS.iter().map(|&model| {
+                if model == "gpt-4o-mini" {
+                    (model, true)
+                } else {
+                    (model, false)
+                }
+            })),
+            selected_model_name: "gpt-4o-mini".to_string(),
         }
     }
 }
@@ -68,8 +84,8 @@ impl App<'_> {
     /// Handles the tick event of the terminal.
     pub fn tick(&self) {}
 
-    pub fn set_input_mode(&mut self, new_input_mode: InputMode) {
-        self.input_mode = new_input_mode;
+    pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
+        self.app_mode = new_app_mode;
     }
 
     pub fn increment_vertical_scroll(&mut self) {
@@ -79,6 +95,7 @@ impl App<'_> {
             .split('\n')
             .collect::<Vec<&str>>()
             .len()
+            + 3 * (self.messages.len())
             - 1;
         if self.vertical_scroll < max_scroll {
             self.vertical_scroll += 1;
@@ -95,15 +112,14 @@ impl App<'_> {
             return;
         }
         self.current_message = Some(text.clone());
-        self.messages.push(format!("USER:\n---\n{}\n", text));
-        self.user_messages.push(text.clone());
+        self.messages.push(text.clone());
+        self.user_messages.push(text);
         self.input_textarea = styled_input_textarea();
-        self.set_input_mode(InputMode::Normal);
+        self.set_app_mode(AppMode::Normal);
     }
 
     pub async fn receive_message(&mut self, message: String) {
-        self.messages
-            .push(format!("ASSISTANT:\n---\n{}\n", message));
+        self.messages.push(message.clone());
         self.assistant_messages.push(message);
         self.current_message = None;
     }
@@ -122,5 +138,34 @@ impl App<'_> {
 
     pub fn quit(&mut self) {
         self.running = false;
+    }
+
+    pub fn select_none(&mut self) {
+        self.model_list.state.select(None);
+    }
+
+    pub fn select_next(&mut self) {
+        self.model_list.state.select_next();
+    }
+    pub fn select_previous(&mut self) {
+        self.model_list.state.select_previous();
+    }
+
+    pub fn select_first(&mut self) {
+        self.model_list.state.select_first();
+    }
+
+    pub fn select_last(&mut self) {
+        self.model_list.state.select_last();
+    }
+    /// Changes the status of the selected list item
+    pub fn set_model(&mut self) {
+        if let Some(i) = self.model_list.state.selected() {
+            for item in self.model_list.items.iter_mut() {
+                item.selected = false;
+            }
+            self.model_list.items[i].selected = true;
+            self.selected_model_name = self.model_list.items[i].name.to_string();
+        }
     }
 }
