@@ -4,9 +4,12 @@ use std::fs;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::Client;
 
-pub const MODEL_OPENAI_MODELS: [&str; 2] = ["gpt-4o-mini", "gpt-4o"];
-pub const MODEL_ANTHROPIC_MODELS: [&str; 2] =
-    ["claude-3-haiku-20240307", "claude-3-5-sonnet-20240620"];
+pub const MODELS: [&str; 4] = [
+    "gpt-4o-mini",
+    "gpt-4o",
+    "claude-3-haiku-20240307",
+    "claude-3-5-sonnet-20240620",
+];
 
 // NOTE: Model to AdapterKind (AI Provider) type mapping rule
 //  - starts_with "gpt"      -> OpenAI
@@ -20,6 +23,7 @@ pub const MODEL_ANTHROPIC_MODELS: [&str; 2] =
 
 pub async fn assistant_response(
     messages: Vec<String>,
+    model: &str,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     fs::write(".chat.log", messages.join("\n")).expect("");
     let chat_messages = messages
@@ -43,9 +47,7 @@ pub async fn assistant_response(
     }
 
     let client = Client::default();
-    let chat_res = client
-        .exec_chat(MODEL_OPENAI_MODELS[0], chat_req, None)
-        .await?;
+    let chat_res = client.exec_chat(model, chat_req, None).await?;
     let raw_chat_res_text = chat_res
         .content_text_into_string()
         .unwrap_or("NO RESPONSE".to_string());

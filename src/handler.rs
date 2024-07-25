@@ -42,6 +42,15 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
         },
         AppMode::ModelSelection => match key_event.code {
             KeyCode::Esc | KeyCode::Char('m') => app.set_app_mode(AppMode::Normal),
+            KeyCode::Char('h') | KeyCode::Left => app.select_none(),
+            KeyCode::Char('j') | KeyCode::Down => app.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => app.select_previous(),
+            KeyCode::Char('g') | KeyCode::Home => app.select_first(),
+            KeyCode::Char('G') | KeyCode::End => app.select_last(),
+            KeyCode::Enter => {
+                app.set_model();
+                app.set_app_mode(AppMode::Normal);
+            }
             // KeyCode::Up => {
             //     todo!()
             // }

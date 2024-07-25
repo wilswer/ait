@@ -6,6 +6,9 @@ use ratatui::{
 use std::error;
 use tui_textarea::TextArea;
 
+use crate::ai::MODELS;
+use crate::models::ModelList;
+
 /// Application result type.
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
@@ -36,6 +39,10 @@ pub struct App<'a> {
     pub running: bool,
     /// Is the application running?
     pub clipboard: Clipboard,
+    /// List of models
+    pub model_list: ModelList,
+    /// Selected model name
+    pub selected_model_name: String,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -57,6 +64,14 @@ impl Default for App<'_> {
             vertical_scroll: 0,
             running: true,
             clipboard: Clipboard::new().unwrap(),
+            model_list: ModelList::from_iter(MODELS.iter().map(|&model| {
+                if model == "gpt-4o-mini" {
+                    (model, true)
+                } else {
+                    (model, false)
+                }
+            })),
+            selected_model_name: "gpt-4o-mini".to_string(),
         }
     }
 }
@@ -123,5 +138,34 @@ impl App<'_> {
 
     pub fn quit(&mut self) {
         self.running = false;
+    }
+
+    pub fn select_none(&mut self) {
+        self.model_list.state.select(None);
+    }
+
+    pub fn select_next(&mut self) {
+        self.model_list.state.select_next();
+    }
+    pub fn select_previous(&mut self) {
+        self.model_list.state.select_previous();
+    }
+
+    pub fn select_first(&mut self) {
+        self.model_list.state.select_first();
+    }
+
+    pub fn select_last(&mut self) {
+        self.model_list.state.select_last();
+    }
+    /// Changes the status of the selected list item
+    pub fn set_model(&mut self) {
+        if let Some(i) = self.model_list.state.selected() {
+            for item in self.model_list.items.iter_mut() {
+                item.selected = false;
+            }
+            self.model_list.items[i].selected = true;
+            self.selected_model_name = self.model_list.items[i].name.to_string();
+        }
     }
 }

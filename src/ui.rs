@@ -1,14 +1,17 @@
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Margin, Rect},
-    style::{Modifier, Style, Stylize},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState,
     },
     Frame,
 };
 
 use crate::app::{App, AppMode};
+
+pub const SELECTED_STYLE: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Blue);
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -27,7 +30,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     .split(popup_layout[1])[1]
 }
 
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(
         Block::bordered()
             .title("Generative AI in the Terminal")
@@ -133,5 +136,24 @@ pub fn render(f: &mut Frame, app: &App) {
         let area = centered_rect(40, 50, messages_area);
         f.render_widget(Clear, area); //this clears out the background
         f.render_widget(block, area);
+        render_list(f, area, app);
     }
+}
+
+fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
+    let block = Block::new().padding(Padding::uniform(1));
+
+    // Iterate through all elements in the `items` and stylize them.
+    let items: Vec<ListItem> = app.model_list.items.iter().map(ListItem::from).collect();
+
+    // Create a List from all list items and highlight the currently selected one
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(SELECTED_STYLE)
+        .highlight_symbol(">")
+        .highlight_spacing(HighlightSpacing::Always);
+
+    // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
+    // same method name `render`.
+    f.render_stateful_widget(list, area, &mut app.model_list.state);
 }

@@ -41,8 +41,9 @@ async fn main() -> AppResult<()> {
             app.current_message = None;
             let assistant_response_tx = assistant_response_tx.clone();
             let messages = app.messages.clone();
+            let selected_model_name = app.selected_model_name.clone();
             task::spawn(async move {
-                let assistant_response = assistant_response(messages).await;
+                let assistant_response = assistant_response(messages, &selected_model_name).await;
                 let _ = assistant_response_tx.send(assistant_response).await;
             });
         }
