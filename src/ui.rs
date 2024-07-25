@@ -100,10 +100,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 line_vec
             } else {
                 let mut line_vec = Vec::new();
-                line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-                line_vec.push(Line::from(Span::raw("---").bold().green()));
-                line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).green())));
-                line_vec.push(Line::from(Span::raw("").bold().green()));
+                if m.starts_with("Error:") {
+                    line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
+                    line_vec.push(Line::from(Span::raw("---").bold().red()));
+                    line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).red())));
+                    line_vec.push(Line::from(Span::raw("").bold().red()));
+                } else {
+                    line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+                    line_vec.push(Line::from(Span::raw("---").bold().green()));
+                    line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).green())));
+                    line_vec.push(Line::from(Span::raw("").bold().green()));
+                }
                 line_vec
             }
         })
