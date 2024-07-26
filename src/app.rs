@@ -1,4 +1,6 @@
+#[cfg(not(target_os="linux"))]
 use arboard::Clipboard;
+
 use ratatui::{
     style::{Color, Style},
     widgets::Block,
@@ -37,7 +39,10 @@ pub struct App<'a> {
     pub vertical_scroll: usize,
     /// Is the application running?
     pub running: bool,
-    /// Is the application running?
+    /// System clipboard.
+    /// Not enabled on Linux because of an issue with the `arboard` crate, 
+    /// see https://github.com/1Password/arboard/issues/153
+    #[cfg(not(target_os="linux"))]
     pub clipboard: Clipboard,
     /// List of models
     pub model_list: ModelList,
@@ -63,6 +68,7 @@ impl Default for App<'_> {
             assistant_messages: Vec::new(),
             vertical_scroll: 0,
             running: true,
+            #[cfg(not(target_os="linux"))]
             clipboard: Clipboard::new().unwrap(),
             model_list: ModelList::from_iter(MODELS.iter().map(|&model| {
                 if model == "gpt-4o-mini" {
@@ -124,12 +130,14 @@ impl App<'_> {
         self.current_message = None;
     }
 
+    #[cfg(not(target_os="linux"))]
     pub fn paste_to_input_textarea(&mut self) {
         if let Ok(clipboard_content) = self.clipboard.get_text() {
             self.input_textarea.insert_str(clipboard_content);
         }
     }
 
+    #[cfg(not(target_os="linux"))]
     pub fn yank_latest_assistant_message(&mut self) {
         if let Some(message) = self.assistant_messages.last() {
             self.clipboard.set_text(message.clone()).unwrap();

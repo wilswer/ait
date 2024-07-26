@@ -10,6 +10,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
             KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
             KeyCode::Char('q') => app.quit(),
+
+            #[cfg(not(target_os="linux"))]
             KeyCode::Char('y') => app.yank_latest_assistant_message(),
             KeyCode::Up | KeyCode::Char('k') => {
                 app.decrement_vertical_scroll();
@@ -24,6 +26,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Esc => app.set_app_mode(AppMode::Normal),
             KeyCode::Char('V') | KeyCode::Char('v') => {
                 if key_event.modifiers == KeyModifiers::CONTROL {
+                    #[cfg(not(target_os="linux"))]
                     app.paste_to_input_textarea();
                 } else {
                     app.input_textarea.input(key_event);

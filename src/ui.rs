@@ -66,7 +66,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "m".bold(),
                 " to choose model. ".into(),
             ],
-            Style::default().add_modifier(Modifier::RAPID_BLINK),
+            Style::default(),
         ),
         AppMode::Editing => (
             vec![
