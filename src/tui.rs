@@ -38,6 +38,7 @@ impl<B: Backend> Tui<B> {
             io::stderr(),
             EnterAlternateScreen,
             EnableMouseCapture,
+            #[cfg(not(target_os="windows"))]
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )?;
 
@@ -73,6 +74,7 @@ impl<B: Backend> Tui<B> {
             io::stderr(),
             LeaveAlternateScreen,
             DisableMouseCapture,
+            #[cfg(not(target_os="windows"))]
             PopKeyboardEnhancementFlags
         )?;
         Ok(())
