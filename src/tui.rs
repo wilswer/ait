@@ -2,8 +2,11 @@ use crate::app::{App, AppResult};
 use crate::event::EventHandler;
 use crate::ui;
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableMouseCapture, EnableMouseCapture, 
+};
+#[cfg(not(target_os="windows"))]
+use crossterm::event::{
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::Backend;
@@ -34,12 +37,18 @@ impl<B: Backend> Tui<B> {
     /// It enables the raw mode and sets terminal properties.
     pub fn init(&mut self) -> AppResult<()> {
         terminal::enable_raw_mode()?;
+        #[cfg(not(target_os="windows"))]
         crossterm::execute!(
             io::stderr(),
             EnterAlternateScreen,
             EnableMouseCapture,
-            #[cfg(not(target_os="windows"))]
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
+        #[cfg(target_os="windows")]
+        crossterm::execute!(
+            io::stderr(),
+            EnterAlternateScreen,
+            EnableMouseCapture,
         )?;
 
         // Define a custom panic hook to reset the terminal properties.
@@ -70,12 +79,18 @@ impl<B: Backend> Tui<B> {
     /// the terminal properties if unexpected errors occur.
     fn reset() -> AppResult<()> {
         terminal::disable_raw_mode()?;
+        #[cfg(not(target_os="windows"))]
         crossterm::execute!(
             io::stderr(),
             LeaveAlternateScreen,
             DisableMouseCapture,
-            #[cfg(not(target_os="windows"))]
             PopKeyboardEnhancementFlags
+        )?;
+        #[cfg(target_os="windows")]
+        crossterm::execute!(
+            io::stderr(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
         )?;
         Ok(())
     }
