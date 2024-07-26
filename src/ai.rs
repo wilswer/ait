@@ -4,11 +4,13 @@ use std::fs;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::Client;
 
-pub const MODELS: [&str; 4] = [
+pub const MODELS: [&str; 6] = [
     "gpt-4o-mini",
     "gpt-4o",
     "claude-3-haiku-20240307",
     "claude-3-5-sonnet-20240620",
+    "gemma:2b",
+    "mistral",
 ];
 
 // NOTE: Model to AdapterKind (AI Provider) type mapping rule
