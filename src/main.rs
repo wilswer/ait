@@ -51,7 +51,7 @@ async fn main() -> AppResult<()> {
         // Check for a response from the assistant and process it
         if let Ok(assistant_response) = assistant_response_rx.try_recv() {
             match assistant_response {
-                Ok(response) => app.receive_message(response).await,
+                Ok(response) => app.receive_message(response).await?,
                 Err(e) => eprintln!("Error receiving assistant response: {}", e),
             }
         }

@@ -39,8 +39,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.size(),
     );
     let input_area_constraint = match app.app_mode {
-        AppMode::Normal | AppMode::ModelSelection => Constraint::Length(0),
         AppMode::Editing => Constraint::Min(1),
+        _ => Constraint::Length(0),
     };
 
     let vertical = Layout::vertical([
@@ -54,7 +54,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let [help_area, messages_area, input_area] = vertical.areas(f.size());
 
     let (msg, style) = match app.app_mode {
-        AppMode::Normal | AppMode::ModelSelection => (
+        AppMode::Editing => (
+            vec![
+                "Press ".into(),
+                "Esc".bold(),
+                " to stop editing. Press ".into(),
+                "Enter + ALT".bold(),
+                " to submit the message.".into(),
+            ],
+            Style::default(),
+        ),
+        _ => (
             vec![
                 "Press ".into(),
                 "Esc/q".bold(),
@@ -64,17 +74,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "y".bold(),
                 " to copy the last answer, ".into(),
                 "m".bold(),
-                " to choose model. ".into(),
-            ],
-            Style::default(),
-        ),
-        AppMode::Editing => (
-            vec![
-                "Press ".into(),
-                "Esc".bold(),
-                " to stop editing. Press ".into(),
-                "Enter + ALT".bold(),
-                " to submit the message.".into(),
+                " to choose model, ".into(),
+                "s".bold(),
+                " to browse code snippets.".into(),
             ],
             Style::default(),
         ),
@@ -143,11 +145,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let area = centered_rect(40, 50, messages_area);
         f.render_widget(Clear, area); //this clears out the background
         f.render_widget(block, area);
-        render_list(f, area, app);
+        render_model_list(f, area, app);
+    }
+
+    if let AppMode::SnippetSelection = app.app_mode {
+        let block = Block::bordered().title("Select Snippet");
+        let area = centered_rect(80, 50, messages_area);
+        f.render_widget(Clear, area); //this clears out the background
+        f.render_widget(block, area);
+        render_snippet_list(f, area, app);
     }
 }
 
-fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
+fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
 
     // Iterate through all elements in the `items` and stylize them.
@@ -163,4 +173,22 @@ fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
     // same method name `render`.
     f.render_stateful_widget(list, area, &mut app.model_list.state);
+}
+
+fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {
+    let block = Block::new().padding(Padding::uniform(1));
+
+    // Iterate through all elements in the `items` and stylize them.
+    let items: Vec<ListItem> = app.snippet_list.items.iter().map(ListItem::from).collect();
+
+    // Create a List from all list items and highlight the currently selected one
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(SELECTED_STYLE)
+        .highlight_symbol(">")
+        .highlight_spacing(HighlightSpacing::Always);
+
+    // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
+    // same method name `render`.
+    f.render_stateful_widget(list, area, &mut app.snippet_list.state);
 }

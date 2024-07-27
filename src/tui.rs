@@ -1,10 +1,8 @@
 use crate::app::{App, AppResult};
 use crate::event::EventHandler;
 use crate::ui;
-use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, 
-};
-#[cfg(not(target_os="windows"))]
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+#[cfg(not(target_os = "windows"))]
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
@@ -37,19 +35,15 @@ impl<B: Backend> Tui<B> {
     /// It enables the raw mode and sets terminal properties.
     pub fn init(&mut self) -> AppResult<()> {
         terminal::enable_raw_mode()?;
-        #[cfg(not(target_os="windows"))]
+        #[cfg(not(target_os = "windows"))]
         crossterm::execute!(
             io::stderr(),
             EnterAlternateScreen,
             EnableMouseCapture,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )?;
-        #[cfg(target_os="windows")]
-        crossterm::execute!(
-            io::stderr(),
-            EnterAlternateScreen,
-            EnableMouseCapture,
-        )?;
+        #[cfg(target_os = "windows")]
+        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableMouseCapture,)?;
 
         // Define a custom panic hook to reset the terminal properties.
         // This way, you won't have your terminal messed up if an unexpected error happens.
@@ -79,19 +73,15 @@ impl<B: Backend> Tui<B> {
     /// the terminal properties if unexpected errors occur.
     fn reset() -> AppResult<()> {
         terminal::disable_raw_mode()?;
-        #[cfg(not(target_os="windows"))]
+        #[cfg(not(target_os = "windows"))]
         crossterm::execute!(
             io::stderr(),
             LeaveAlternateScreen,
             DisableMouseCapture,
             PopKeyboardEnhancementFlags
         )?;
-        #[cfg(target_os="windows")]
-        crossterm::execute!(
-            io::stderr(),
-            LeaveAlternateScreen,
-            DisableMouseCapture,
-        )?;
+        #[cfg(target_os = "windows")]
+        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableMouseCapture,)?;
         Ok(())
     }
 

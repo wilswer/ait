@@ -1,5 +1,4 @@
 use std::error::Error;
-use std::fs;
 
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::Client;
@@ -27,7 +26,6 @@ pub async fn assistant_response(
     messages: Vec<String>,
     model: &str,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
-    fs::write(".chat.log", messages.join("\n")).expect("");
     let chat_messages = messages
         .iter()
         .enumerate()

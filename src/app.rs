@@ -1,24 +1,31 @@
-#[cfg(not(target_os="linux"))]
+#[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
+
+use std::error::Error;
+use std::fs;
+use std::result::Result;
 
 use ratatui::{
     style::{Color, Style},
     widgets::Block,
 };
-use std::error;
 use tui_textarea::TextArea;
 
-use crate::ai::MODELS;
-use crate::models::ModelList;
+use crate::{
+    ai::MODELS,
+    snippets::{find_fenced_code_snippets, SnippetItem},
+};
+use crate::{models::ModelList, snippets::SnippetList};
 
 /// Application result type.
-pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
+pub type AppResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Clone)]
 pub enum AppMode {
     Normal,
     Editing,
     ModelSelection,
+    SnippetSelection,
 }
 
 /// App holds the state of the application
@@ -40,14 +47,16 @@ pub struct App<'a> {
     /// Is the application running?
     pub running: bool,
     /// System clipboard.
-    /// Not enabled on Linux because of an issue with the `arboard` crate, 
+    /// Not enabled on Linux because of an issue with the `arboard` crate,
     /// see https://github.com/1Password/arboard/issues/153
-    #[cfg(not(target_os="linux"))]
+    #[cfg(not(target_os = "linux"))]
     pub clipboard: Clipboard,
     /// List of models
     pub model_list: ModelList,
     /// Selected model name
     pub selected_model_name: String,
+    /// Discovered snippets
+    pub snippet_list: SnippetList,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -68,7 +77,7 @@ impl Default for App<'_> {
             assistant_messages: Vec::new(),
             vertical_scroll: 0,
             running: true,
-            #[cfg(not(target_os="linux"))]
+            #[cfg(not(target_os = "linux"))]
             clipboard: Clipboard::new().unwrap(),
             model_list: ModelList::from_iter(MODELS.iter().map(|&model| {
                 if model == "gpt-4o-mini" {
@@ -78,6 +87,7 @@ impl Default for App<'_> {
                 }
             })),
             selected_model_name: "gpt-4o-mini".to_string(),
+            snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false))),
         }
     }
 }
@@ -92,6 +102,19 @@ impl App<'_> {
 
     pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
         self.app_mode = new_app_mode;
+    }
+
+    fn write_chat_log(&self) -> AppResult<()> {
+        let mut chat_log = String::new();
+        for (i, message) in self.messages.iter().enumerate() {
+            if i % 2 == 0 {
+                chat_log.push_str(&format!("User: {}\n", message));
+            } else {
+                chat_log.push_str(&format!("Assistant: {}\n", message));
+            }
+        }
+        fs::write(".chat.log", chat_log)?;
+        Ok(())
     }
 
     pub fn increment_vertical_scroll(&mut self) {
@@ -112,32 +135,43 @@ impl App<'_> {
         self.vertical_scroll = self.vertical_scroll.saturating_sub(1);
     }
 
-    pub fn submit_message(&mut self) {
+    pub fn submit_message(&mut self) -> AppResult<()> {
         let text = self.input_textarea.lines().join("\n");
         if text.is_empty() {
-            return;
+            return Ok(());
         }
         self.current_message = Some(text.clone());
         self.messages.push(text.clone());
         self.user_messages.push(text);
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
+        self.write_chat_log()?;
+        Ok(())
     }
 
-    pub async fn receive_message(&mut self, message: String) {
+    pub async fn receive_message(&mut self, message: String) -> AppResult<()> {
         self.messages.push(message.clone());
+        let discovered_snippets =
+            find_fenced_code_snippets(message.split('\n').map(|s| s.to_string()).collect());
+        let snippet_items: Vec<SnippetItem> = discovered_snippets
+            .iter()
+            .map(|snippet| snippet.to_string().into())
+            .collect();
+        self.snippet_list.items.extend(snippet_items);
         self.assistant_messages.push(message);
         self.current_message = None;
+        self.write_chat_log()?;
+        Ok(())
     }
 
-    #[cfg(not(target_os="linux"))]
+    #[cfg(not(target_os = "linux"))]
     pub fn paste_to_input_textarea(&mut self) {
         if let Ok(clipboard_content) = self.clipboard.get_text() {
             self.input_textarea.insert_str(clipboard_content);
         }
     }
 
-    #[cfg(not(target_os="linux"))]
+    #[cfg(not(target_os = "linux"))]
     pub fn yank_latest_assistant_message(&mut self) {
         if let Some(message) = self.assistant_messages.last() {
             self.clipboard.set_text(message.clone()).unwrap();
@@ -148,24 +182,25 @@ impl App<'_> {
         self.running = false;
     }
 
-    pub fn select_none(&mut self) {
+    pub fn select_no_model(&mut self) {
         self.model_list.state.select(None);
     }
 
-    pub fn select_next(&mut self) {
+    pub fn select_next_model(&mut self) {
         self.model_list.state.select_next();
     }
-    pub fn select_previous(&mut self) {
+    pub fn select_previous_model(&mut self) {
         self.model_list.state.select_previous();
     }
 
-    pub fn select_first(&mut self) {
+    pub fn select_first_model(&mut self) {
         self.model_list.state.select_first();
     }
 
-    pub fn select_last(&mut self) {
+    pub fn select_last_model(&mut self) {
         self.model_list.state.select_last();
     }
+
     /// Changes the status of the selected list item
     pub fn set_model(&mut self) {
         if let Some(i) = self.model_list.state.selected() {
@@ -175,5 +210,37 @@ impl App<'_> {
             self.model_list.items[i].selected = true;
             self.selected_model_name = self.model_list.items[i].name.to_string();
         }
+    }
+
+    pub fn select_no_snippet(&mut self) {
+        self.snippet_list.state.select(None);
+    }
+
+    pub fn select_next_snippet(&mut self) {
+        self.snippet_list.state.select_next();
+    }
+    pub fn select_previous_snippet(&mut self) {
+        self.snippet_list.state.select_previous();
+    }
+
+    pub fn select_first_snippet(&mut self) {
+        self.snippet_list.state.select_first();
+    }
+
+    pub fn select_last_snippet(&mut self) {
+        self.snippet_list.state.select_last();
+    }
+
+    /// Changes the status of the selected list item
+    pub fn copy_snippet(&mut self) -> AppResult<()> {
+        if let Some(i) = self.snippet_list.state.selected() {
+            for item in self.snippet_list.items.iter_mut() {
+                item.selected = false;
+            }
+            self.snippet_list.items[i].selected = true;
+            self.clipboard
+                .set_text(self.snippet_list.items[i].text.clone())?;
+        }
+        Ok(())
     }
 }
