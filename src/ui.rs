@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -167,7 +169,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let preview_block_content = Block::new().padding(Padding::uniform(1));
         if let Some(preview_text) = preview_text {
             let snippet_paragraph =
-                Paragraph::new(Text::from(preview_text).yellow()).block(preview_block_content);
+                Paragraph::new(Text::from(preview_text).magenta()).block(preview_block_content);
             f.render_widget(snippet_paragraph, preview_area);
         }
     }
@@ -200,7 +202,13 @@ fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {
         .items
         .iter()
         .enumerate()
-        .map(|(i, s)| ListItem::from(format!("Snippet {}: {}...", i + 1, s.text[..10].to_owned())))
+        .map(|(i, s)| {
+            ListItem::from(format!(
+                "Snippet {}: {}...",
+                i + 1,
+                s.text[..min(10, s.text.len())].to_owned()
+            ))
+        })
         .collect();
 
     // Create a List from all list items and highlight the currently selected one
