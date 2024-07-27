@@ -231,6 +231,13 @@ impl App<'_> {
         self.snippet_list.state.select_last();
     }
 
+    pub fn get_snippet_text(&self) -> Option<String> {
+        self.snippet_list
+            .state
+            .selected()
+            .map(|i| self.snippet_list.items[i].text.clone())
+    }
+
     /// Changes the status of the selected list item
     pub fn copy_snippet(&mut self) -> AppResult<()> {
         if let Some(i) = self.snippet_list.state.selected() {

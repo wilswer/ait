@@ -30,6 +30,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     .split(popup_layout[1])[1]
 }
 
+fn right_aligned_rect(r: Rect) -> Rect {
+    Layout::horizontal([Constraint::Percentage(60), Constraint::Fill(1)]).split(r)[1]
+}
+
 pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(
         Block::bordered()
@@ -150,10 +154,22 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     if let AppMode::SnippetSelection = app.app_mode {
         let block = Block::bordered().title("Select Snippet");
-        let area = centered_rect(80, 50, messages_area);
+        let area = centered_rect(20, 100, messages_area);
         f.render_widget(Clear, area); //this clears out the background
         f.render_widget(block, area);
         render_snippet_list(f, area, app);
+
+        let preview_block = Block::bordered().title("Snippet Preview");
+        let preview_area = right_aligned_rect(messages_area);
+        f.render_widget(Clear, preview_area); //this clears out the background
+        f.render_widget(preview_block, preview_area);
+        let preview_text = app.get_snippet_text();
+        let preview_block_content = Block::new().padding(Padding::uniform(1));
+        if let Some(preview_text) = preview_text {
+            let snippet_paragraph =
+                Paragraph::new(Text::from(preview_text).yellow()).block(preview_block_content);
+            f.render_widget(snippet_paragraph, preview_area);
+        }
     }
 }
 
@@ -179,7 +195,13 @@ fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
 
     // Iterate through all elements in the `items` and stylize them.
-    let items: Vec<ListItem> = app.snippet_list.items.iter().map(ListItem::from).collect();
+    let items: Vec<ListItem> = app
+        .snippet_list
+        .items
+        .iter()
+        .enumerate()
+        .map(|(i, s)| ListItem::from(format!("Snippet {}: {}...", i + 1, s.text[..10].to_owned())))
+        .collect();
 
     // Create a List from all list items and highlight the currently selected one
     let list = List::new(items)
