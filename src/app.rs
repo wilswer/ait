@@ -238,7 +238,8 @@ impl App<'_> {
             .map(|i| self.snippet_list.items[i].text.clone())
     }
 
-    /// Changes the status of the selected list item
+    #[cfg(not(target_os = "linux"))]
+    /// Copy the selected snippet to the clipboard.
     pub fn copy_snippet(&mut self) -> AppResult<()> {
         if let Some(i) = self.snippet_list.state.selected() {
             for item in self.snippet_list.items.iter_mut() {
