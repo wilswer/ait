@@ -42,12 +42,14 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
         if !env_name.is_empty() && std::env::var(env_name).is_err() {
             continue;
         }
-        let models_provider = client
-            .all_model_names(kind)
-            .await?
-            .into_iter()
-            .map(|m| (kind.as_str().to_string(), m))
-            .collect::<Vec<(String, String)>>();
+        let models_provider_res = client.all_model_names(kind).await;
+        let models_provider = match models_provider_res {
+            Ok(m) => m
+                .into_iter()
+                .map(|m| (kind.as_str().to_string(), m))
+                .collect::<Vec<(String, String)>>(),
+            Err(_) => Vec::new(),
+        };
         models.extend(models_provider);
     }
     Ok(models)

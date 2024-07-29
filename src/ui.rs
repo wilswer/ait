@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar,
-        ScrollbarOrientation, ScrollbarState,
+        ScrollbarOrientation, ScrollbarState, Wrap,
     },
     Frame,
 };
@@ -177,7 +177,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
 fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
-
+    if app.model_list.items.is_empty() {
+        let p = Paragraph::new(
+            Text::from("No API keys detected, no running Ollama detected. Unable to choose model.")
+                .red(),
+        )
+        .wrap(Wrap { trim: true })
+        .block(block);
+        f.render_widget(p, area);
+        return;
+    }
     // Iterate through all elements in the `items` and stylize them.
     let items: Vec<ListItem> = app.model_list.items.iter().map(ListItem::from).collect();
 
