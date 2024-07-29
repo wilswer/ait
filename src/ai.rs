@@ -1,26 +1,57 @@
 use std::error::Error;
 
+use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::Client;
 
-pub const MODELS: [&str; 6] = [
-    "gpt-4o-mini",
-    "gpt-4o",
-    "claude-3-haiku-20240307",
-    "claude-3-5-sonnet-20240620",
-    "gemma:2b",
-    "mistral",
+use crate::app::AppResult;
+
+pub const MODELS: [(&str, &str); 5] = [
+    ("OpenAI", "gpt-4o-mini"),
+    ("OpenAI", "gpt-4o"),
+    ("Anthropic", "claude-3-haiku-20240307"),
+    ("Anthropic", "claude-3-5-sonnet-20240620"),
+    ("Ollama", "gemma:2b"),
 ];
 
-// NOTE: Model to AdapterKind (AI Provider) type mapping rule
-//  - starts_with "gpt"      -> OpenAI
-//  - starts_with "claude"   -> Anthropic
-//  - starts_with "command"  -> Cohere
-//  - starts_with "gemini"   -> Gemini
-//  - model in Groq models   -> Groq
-//  - For anything else      -> Ollama
-//
-// Can be customized, see `examples/c03-kind.rs`
+fn get_api_key_name(kind: &AdapterKind) -> &'static str {
+    match kind {
+        AdapterKind::OpenAI => "OPENAI_API_KEY",
+        AdapterKind::Ollama => "",
+        AdapterKind::Gemini => "GEMINI_API_KEY",
+        AdapterKind::Anthropic => "ANTHROPIC_API_KEY",
+        AdapterKind::Groq => "GROQ_API_KEY",
+        AdapterKind::Cohere => "COHERE_API_KEY",
+    }
+}
+
+pub async fn get_models() -> AppResult<Vec<(String, String)>> {
+    const KINDS: &[AdapterKind] = &[
+        AdapterKind::OpenAI,
+        AdapterKind::Ollama,
+        AdapterKind::Gemini,
+        AdapterKind::Anthropic,
+        AdapterKind::Groq,
+        AdapterKind::Cohere,
+    ];
+
+    let client = Client::default();
+    let mut models = Vec::new();
+    for &kind in KINDS {
+        let env_name = get_api_key_name(&kind);
+        if !env_name.is_empty() && std::env::var(env_name).is_err() {
+            continue;
+        }
+        let models_provider = client
+            .all_model_names(kind)
+            .await?
+            .into_iter()
+            .map(|m| (kind.as_str().to_string(), m))
+            .collect::<Vec<(String, String)>>();
+        models.extend(models_provider);
+    }
+    Ok(models)
+}
 
 pub async fn assistant_response(
     messages: Vec<String>,

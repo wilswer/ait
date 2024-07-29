@@ -1,4 +1,4 @@
-use gait::ai::assistant_response;
+use gait::ai::{assistant_response, get_models};
 use gait::app::{App, AppResult};
 use gait::event::{Event, EventHandler};
 use gait::handler::handle_key_events;
@@ -13,6 +13,8 @@ use tokio::task;
 async fn main() -> AppResult<()> {
     // Create an application.
     let mut app = App::new();
+    let models = get_models().await?;
+    app.set_models(models);
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(io::stderr());

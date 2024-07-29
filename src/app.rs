@@ -79,11 +79,11 @@ impl Default for App<'_> {
             running: true,
             #[cfg(not(target_os = "linux"))]
             clipboard: Clipboard::new().unwrap(),
-            model_list: ModelList::from_iter(MODELS.iter().map(|&model| {
+            model_list: ModelList::from_iter(MODELS.map(|(provider, model)| {
                 if model == "gpt-4o-mini" {
-                    (model, true)
+                    (provider, model, true)
                 } else {
-                    (model, false)
+                    (provider, model, false)
                 }
             })),
             selected_model_name: "gpt-4o-mini".to_string(),
@@ -147,6 +147,16 @@ impl App<'_> {
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()?;
         Ok(())
+    }
+
+    pub fn set_models(&mut self, models: Vec<(String, String)>) {
+        self.model_list = ModelList::from_iter(models.into_iter().map(|(provider, model)| {
+            if model == "gpt-4o-mini" {
+                (provider, model, true)
+            } else {
+                (provider, model, false)
+            }
+        }));
     }
 
     pub async fn receive_message(&mut self, message: String) -> AppResult<()> {

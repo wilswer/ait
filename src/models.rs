@@ -10,15 +10,28 @@ pub struct ModelList {
 
 #[derive(Debug)]
 pub struct ModelItem {
+    pub provider: String,
     pub name: String,
     pub selected: bool,
 }
 
-impl FromIterator<(&'static str, bool)> for ModelList {
-    fn from_iter<I: IntoIterator<Item = (&'static str, bool)>>(iter: I) -> Self {
+impl FromIterator<(&'static str, &'static str, bool)> for ModelList {
+    fn from_iter<I: IntoIterator<Item = (&'static str, &'static str, bool)>>(iter: I) -> Self {
         let items = iter
             .into_iter()
-            .map(|(name, selected)| ModelItem::new(name, selected))
+            .map(|(provider, name, selected)| ModelItem::new(provider, name, selected))
+            .collect();
+        let mut state = ListState::default();
+        state.select_first();
+        Self { items, state }
+    }
+}
+
+impl FromIterator<(String, String, bool)> for ModelList {
+    fn from_iter<I: IntoIterator<Item = (String, String, bool)>>(iter: I) -> Self {
+        let items = iter
+            .into_iter()
+            .map(|(provider, name, selected)| ModelItem::new(&provider, &name, selected))
             .collect();
         let mut state = ListState::default();
         state.select_first();
@@ -27,9 +40,10 @@ impl FromIterator<(&'static str, bool)> for ModelList {
 }
 
 impl ModelItem {
-    pub fn new(model: &str, selected: bool) -> Self {
+    pub fn new(provider: &str, name: &str, selected: bool) -> Self {
         Self {
-            name: model.to_string(),
+            provider: provider.to_string(),
+            name: name.to_string(),
             selected,
         }
     }
@@ -37,7 +51,7 @@ impl ModelItem {
 
 impl From<&ModelItem> for ListItem<'_> {
     fn from(value: &ModelItem) -> Self {
-        let line = Line::from(Span::raw(value.name.clone()));
+        let line = Line::from(Span::raw(format!("{}: {}", value.provider, value.name)));
         ListItem::new(line)
     }
 }
