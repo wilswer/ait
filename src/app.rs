@@ -26,6 +26,7 @@ pub enum AppMode {
     Editing,
     ModelSelection,
     SnippetSelection,
+    Help,
 }
 
 /// App holds the state of the application

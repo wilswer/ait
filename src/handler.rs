@@ -10,8 +10,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
             KeyCode::Char('s') => app.set_app_mode(AppMode::SnippetSelection),
             KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
+            KeyCode::Char('?') => app.set_app_mode(AppMode::Help),
             KeyCode::Char('q') => app.quit(),
-
             #[cfg(not(target_os = "linux"))]
             KeyCode::Char('y') => app.yank_latest_assistant_message(),
             KeyCode::Up | KeyCode::Char('k') => {
@@ -69,6 +69,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.copy_snippet()?;
                 app.set_app_mode(AppMode::Normal);
             }
+            _ => {}
+        },
+        AppMode::Help => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('?') => app.set_app_mode(AppMode::Normal),
             _ => {}
         },
     }

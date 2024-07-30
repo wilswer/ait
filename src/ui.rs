@@ -74,15 +74,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
             vec![
                 "Press ".into(),
                 "Esc/q".bold(),
-                " to exit, ".into(),
-                "i".bold(),
-                " to start editing, ".into(),
-                "y".bold(),
-                " to copy the last answer, ".into(),
-                "m".bold(),
-                " to choose model, ".into(),
-                "s".bold(),
-                " to browse code snippets.".into(),
+                " to exit. Press ".into(),
+                "?".bold(),
+                " for help.".into(),
             ],
             Style::default(),
         ),
@@ -90,6 +84,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let text = Text::from(Line::from(msg)).patch_style(style);
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);
+
     if let AppMode::Editing = app.app_mode {
         f.render_widget(app.input_textarea.widget(), input_area);
     }
@@ -172,6 +167,69 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Paragraph::new(Text::from(preview_text).magenta()).block(preview_block_content);
             f.render_widget(snippet_paragraph, preview_area);
         }
+    }
+    if let AppMode::Help = app.app_mode {
+        let block = Block::bordered().title("Help");
+        let area = centered_rect(50, 60, messages_area);
+        f.render_widget(Clear, area); //this clears out the background
+        f.render_widget(block, area);
+
+        let normal_keys = vec![
+            "Press ".into(),
+            "Esc/q".bold(),
+            " to exit, ".into(),
+            "i".bold(),
+            " to start editing, ".into(),
+            "y".bold(),
+            " to copy the last answer (not linux yet), ".into(),
+            "m".bold(),
+            " to choose model, ".into(),
+            "s".bold(),
+            " to browse code snippets.".into(),
+        ];
+        let editing_keys = vec![
+            "Press ".into(),
+            "Esc".bold(),
+            " to stop editing. Press ".into(),
+            "Enter + ALT".bold(),
+            " to submit the message.".into(),
+        ];
+        let model_keys = vec![
+            "Press ".into(),
+            "Up/Down".bold(),
+            " to select model, or press ".into(),
+            "Enter".bold(),
+            " to select model, and return to 'normal' mode.".into(),
+        ];
+        let snippet_keys = vec![
+            "Press ".into(),
+            "Up/Down".bold(),
+            " to select snippet, or press ".into(),
+            "Enter".bold(),
+            " to copy snippet to the clipboard (not linux yet), and return to 'normal' mode."
+                .into(),
+        ];
+        let msg = vec![
+            Line::from(Span::raw("Welcome to Generative AI in the Terminal! ").bold()),
+            Line::from(""),
+            Line::from(Span::raw("When in 'normal' mode, you can:").bold()),
+            Line::from(normal_keys),
+            Line::from(""),
+            Line::from(Span::raw("When in 'editing' mode, you can:").bold()),
+            Line::from(editing_keys),
+            Line::from(""),
+            Line::from(Span::raw("When choosing models, you can:").bold()),
+            Line::from(model_keys),
+            Line::from(""),
+            Line::from(Span::raw("When browsing snippets, you can:").bold()),
+            Line::from(snippet_keys),
+        ];
+        let help_text_block = Block::new().padding(Padding::uniform(1));
+        let text = Text::from(msg).patch_style(style);
+        let help_message = Paragraph::new(text)
+            .block(help_text_block)
+            .wrap(Wrap { trim: true });
+        f.render_widget(help_message, area);
     }
 }
 
