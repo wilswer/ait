@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage, ChatRequest, ChatRequestOptions};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest};
 use genai::{Client, ClientConfig};
 
 use crate::app::AppResult;
@@ -79,8 +79,8 @@ pub async fn assistant_response(
         chat_req = chat_req.append_message(chat_message);
     }
 
-    let client_config = ClientConfig::default()
-        .with_chat_request_options(ChatRequestOptions::default().with_temperature(0.2));
+    let client_config =
+        ClientConfig::default().with_chat_options(ChatOptions::default().with_temperature(0.2));
 
     let client = Client::builder().with_config(client_config).build();
     let chat_res = match client.exec_chat(model, chat_req, None).await {
