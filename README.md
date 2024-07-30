@@ -2,7 +2,7 @@
 
 `gait` is a terminal user interface for interacting with several providers of generative large language models.
 It uses the [`genai`](https://github.com/jeremychone/rust-genai) crate to communicate with the model providers.
-The TUI is built using the [`ratatui`](whttps://ratatui.rs) crate.
+The TUI is built using the [`ratatui`](https://ratatui.rs) crate.
 
 ## Installation
 
