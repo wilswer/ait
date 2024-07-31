@@ -20,6 +20,7 @@ async fn main() -> AppResult<()> {
     } else {
         "You are a helpful and friendly assistant.".to_string()
     };
+
     // Create an application.
     let mut app = App::new();
     let models = get_models().await?;

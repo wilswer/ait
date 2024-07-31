@@ -171,7 +171,7 @@ impl App<'_> {
         self.snippet_list.items.extend(snippet_items);
         self.assistant_messages.push(message);
         self.current_message = None;
-        self.write_chat_log()?;
+        // self.write_chat_log()?;
         Ok(())
     }
 
