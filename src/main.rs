@@ -1,8 +1,8 @@
-use gait::ai::{assistant_response, get_models};
-use gait::app::{App, AppResult};
-use gait::event::{Event, EventHandler};
-use gait::handler::handle_key_events;
-use gait::tui::Tui;
+use ait::ai::{assistant_response, get_models};
+use ait::app::{App, AppResult};
+use ait::event::{Event, EventHandler};
+use ait::handler::handle_key_events;
+use ait::tui::Tui;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;

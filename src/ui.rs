@@ -39,7 +39,7 @@ fn right_aligned_rect(r: Rect) -> Rect {
 pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(
         Block::bordered()
-            .title("Generative AI in the Terminal")
+            .title("AI in the Terminal")
             .title_alignment(Alignment::Center)
             .border_type(BorderType::Rounded),
         f.size(),
@@ -210,7 +210,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .into(),
         ];
         let msg = vec![
-            Line::from(Span::raw("Welcome to Generative AI in the Terminal! ").bold()),
+            Line::from(Span::raw("Welcome to AI in the Terminal! ").bold()),
             Line::from(""),
             Line::from(Span::raw("When in 'normal' mode, you can:").bold()),
             Line::from(normal_keys),

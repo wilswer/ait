@@ -1,5 +1,5 @@
 [package]
-name = "gait"
+name = "ait"
 version = "0.1.0"
 authors = ["Wilhelm Söderkvist Vermelin <wilhelm.wermelin@icloud.com>"]
 license = "MIT"
