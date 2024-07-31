@@ -21,3 +21,6 @@ pub mod models;
 
 /// Snippets finder.
 pub mod snippets;
+
+/// Command line interface.
+pub mod cli;

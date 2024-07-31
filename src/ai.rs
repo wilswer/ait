@@ -56,8 +56,9 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
 }
 
 pub async fn assistant_response(
-    messages: Vec<String>,
+    messages: &[String],
     model: &str,
+    system_prompt: &str,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let chat_messages = messages
         .iter()
@@ -72,7 +73,7 @@ pub async fn assistant_response(
         .collect::<Vec<ChatMessage>>();
     let mut chat_req = ChatRequest::new(vec![
         // -- Messages (de/activate to see the differences)
-        ChatMessage::system("You are a helpful and friendly assistant."),
+        ChatMessage::system(system_prompt),
     ]);
 
     for chat_message in chat_messages {
