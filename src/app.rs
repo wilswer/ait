@@ -1,9 +1,10 @@
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 
-use std::error::Error;
 use std::fs;
+use std::path::PathBuf;
 use std::result::Result;
+use std::{env, error::Error};
 
 use ratatui::{
     style::{Color, Style},
@@ -114,7 +115,11 @@ impl App<'_> {
                 chat_log.push_str(&format!("Assistant: {}\n", message));
             }
         }
-        fs::write(".chat.log", chat_log)?;
+        let home_dir = env::var("HOME")?;
+        let mut path = PathBuf::from(format!("{}/{}", home_dir, ".cache/ait"));
+        fs::create_dir_all(&path)?;
+        path.push("latest-chat.log");
+        fs::write(&path, chat_log)?;
         Ok(())
     }
 
@@ -146,6 +151,7 @@ impl App<'_> {
         self.user_messages.push(text);
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
+        #[cfg(not(target_os = "windows"))]
         self.write_chat_log()?;
         Ok(())
     }
@@ -171,7 +177,7 @@ impl App<'_> {
         self.snippet_list.items.extend(snippet_items);
         self.assistant_messages.push(message);
         self.current_message = None;
-        // self.write_chat_log()?;
+        self.write_chat_log()?;
         Ok(())
     }
 
