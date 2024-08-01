@@ -27,8 +27,11 @@ The binary name is `ait`.
 The chat interface is modal and starts in the 'normal' mode.
 By pressing the `i` key text can be input into the text area.
 More information can be found by pressing the `?` key.
+To submit queries to the model providers, you either need to obtain an API key and
+set the appropriate environment variable OR you need a running
+[Ollama](https://ollama.com/) instance on `http://localhost:11434`.
 
 ## Chat history
 
 Chat history is not yet implemented. `ait` will store a log of the latest chat
-in the user's home directory, `~/.cache/ait/latest-chat.log`.
+in the user's home directory, `~/.cache/ait/latest-chat.log` on macOS and Linux.
