@@ -31,4 +31,4 @@ More information can be found by pressing the `?` key.
 ## Chat history
 
 Chat history is not yet implemented. `ait` will store a log of the latest chat
-in the user's home directory, `~/.cache/ait/latest-chat.log` (not on Windows yet).
+in the user's home directory, `~/.cache/ait/latest-chat.log`.

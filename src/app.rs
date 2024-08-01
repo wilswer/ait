@@ -1,10 +1,10 @@
+use ::dirs::home_dir;
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 
+use std::error::Error;
 use std::fs;
-use std::path::PathBuf;
 use std::result::Result;
-use std::{env, error::Error};
 
 use ratatui::{
     style::{Color, Style},
@@ -115,8 +115,8 @@ impl App<'_> {
                 chat_log.push_str(&format!("Assistant: {}\n", message));
             }
         }
-        let home_dir = env::var("HOME")?;
-        let mut path = PathBuf::from(format!("{}/{}", home_dir, ".cache/ait"));
+        let mut path = home_dir().ok_or("Cannot find home directory")?;
+        path.push(".cache/ait");
         fs::create_dir_all(&path)?;
         path.push("latest-chat.log");
         fs::write(&path, chat_log)?;
@@ -151,7 +151,6 @@ impl App<'_> {
         self.user_messages.push(text);
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
-        #[cfg(not(target_os = "windows"))]
         self.write_chat_log()?;
         Ok(())
     }
