@@ -22,6 +22,8 @@ cargo install --force --path .
 
 The binary name is `ait`.
 
+Binaries are also available for download under [Releases](https://github.com/wilswer/ait/releases).
+
 ## Usage
 
 The chat interface is modal and starts in the 'normal' mode.
