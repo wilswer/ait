@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Wilhelm Söderkvist Vermelin <wilhelm.wermelin@icloud.com>"]
 license = "MIT"
 edition = "2021"
+repository = "https://github.com/wilswer/ait"
+description = "AIT is a terminal based chat interface for interacting with large language models from various providers."
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 arboard = "3"
