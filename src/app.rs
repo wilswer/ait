@@ -146,6 +146,10 @@ impl App<'_> {
         if text.is_empty() {
             return Ok(());
         }
+        if self.user_messages.len() != self.assistant_messages.len() {
+            return Ok(());
+        }
+
         self.current_message = Some(text.clone());
         self.messages.push(text.clone());
         self.user_messages.push(text);
