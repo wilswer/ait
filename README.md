@@ -8,6 +8,14 @@ The TUI is built using the [`ratatui`](https://ratatui.rs) crate.
 
 ## Installation
 
+Installation requires `cargo` to be installed.
+
+```bash
+cargo install ait
+```
+
+### Manual installation
+
 Clone this repository and `cd` to the `ait` directory and run the application using:
 
 ```bash
