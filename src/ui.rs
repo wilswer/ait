@@ -13,7 +13,7 @@ use ratatui::{
 
 use crate::app::{App, AppMode};
 
-pub const SELECTED_STYLE: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Blue);
+pub const SELECTED_STYLE: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Green);
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -128,7 +128,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let messages_text = Text::from(messages);
     let messages = Paragraph::new(messages_text)
         .scroll((app.vertical_scroll as u16, 0))
-        .block(Block::bordered().title("Chat"));
+        .block(Block::bordered().title(format!("Chat - {}", app.selected_model_name)));
 
     f.render_widget(messages, messages_area);
 
