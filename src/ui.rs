@@ -192,7 +192,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
             "Esc".bold(),
             " to stop editing. Press ".into(),
             "Enter + ALT".bold(),
-            " to submit the message.".into(),
+            " to submit the message. ".into(),
+            "Paste into the text area by pressing ".into(),
+            "Ctrl + V".bold(),
         ];
         let model_keys = vec![
             "Press ".into(),

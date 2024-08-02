@@ -6,12 +6,11 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
     match app.app_mode {
         AppMode::Normal => match key_event.code {
             // Exit application on `ESC` or `q`
-            KeyCode::Esc => app.quit(),
+            KeyCode::Esc | KeyCode::Char('q') => app.quit(),
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
             KeyCode::Char('s') => app.set_app_mode(AppMode::SnippetSelection),
             KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
             KeyCode::Char('?') => app.set_app_mode(AppMode::Help),
-            KeyCode::Char('q') => app.quit(),
             #[cfg(not(target_os = "linux"))]
             KeyCode::Char('y') => app.yank_latest_assistant_message(),
             KeyCode::Up | KeyCode::Char('k') => {
@@ -45,7 +44,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
         },
         AppMode::ModelSelection => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('m') => app.set_app_mode(AppMode::Normal),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('m') => {
+                app.set_app_mode(AppMode::Normal)
+            }
             KeyCode::Char('h') | KeyCode::Left => app.select_no_model(),
             KeyCode::Char('j') | KeyCode::Down => app.select_next_model(),
             KeyCode::Char('k') | KeyCode::Up => app.select_previous_model(),
@@ -58,7 +59,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             _ => {}
         },
         AppMode::SnippetSelection => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('s') => app.set_app_mode(AppMode::Normal),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') => {
+                app.set_app_mode(AppMode::Normal)
+            }
             KeyCode::Char('h') | KeyCode::Left => app.select_no_snippet(),
             KeyCode::Char('j') | KeyCode::Down => app.select_next_snippet(),
             KeyCode::Char('k') | KeyCode::Up => app.select_previous_snippet(),
@@ -72,7 +75,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             _ => {}
         },
         AppMode::Help => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('?') => app.set_app_mode(AppMode::Normal),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                app.set_app_mode(AppMode::Normal)
+            }
             _ => {}
         },
     }
