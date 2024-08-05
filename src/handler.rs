@@ -4,8 +4,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
+    let KeyEvent {
+        code, modifiers, ..
+    } = key_event;
     match app.app_mode {
-        AppMode::Normal => match key_event.code {
+        AppMode::Normal => match code {
             // Exit application on `ESC` or `q`
             KeyCode::Esc | KeyCode::Char('q') => app.quit(),
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
@@ -22,11 +25,11 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
             _ => {}
         },
-        AppMode::Editing => match key_event.code {
+        AppMode::Editing => match code {
             // Exit editing mode on `ESC`
             KeyCode::Esc => app.set_app_mode(AppMode::Normal),
             KeyCode::Char('V') | KeyCode::Char('v') => {
-                if key_event.modifiers == KeyModifiers::CONTROL {
+                if modifiers == KeyModifiers::CONTROL {
                     #[cfg(not(target_os = "linux"))]
                     app.paste_to_input_textarea();
                 } else {
@@ -34,10 +37,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 }
             }
             KeyCode::Enter => {
-                if key_event.modifiers == KeyModifiers::NONE {
-                    app.input_textarea.input(key_event);
-                } else {
+                if !modifiers.is_empty() {
                     app.submit_message()?;
+                } else {
+                    app.input_textarea.input(key_event);
                 }
             }
             _ => {
