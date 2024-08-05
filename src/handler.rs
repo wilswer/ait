@@ -1,4 +1,5 @@
 use crate::app::{App, AppMode, AppResult};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handles the key events and updates the state of [`App`].

@@ -86,7 +86,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(help_message, help_area);
 
     if let AppMode::Editing = app.app_mode {
-        f.render_widget(app.input_textarea.widget(), input_area);
+        f.render_widget(&app.input_textarea, input_area);
     }
 
     let messages: Vec<Line> = app
