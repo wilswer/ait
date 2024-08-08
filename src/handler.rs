@@ -1,5 +1,6 @@
 use crate::app::{App, AppMode, AppResult};
 
+use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handles the key events and updates the state of [`App`].
@@ -38,7 +39,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
             KeyCode::Enter => {
                 if !modifiers.is_empty() {
-                    app.submit_message()?;
+                    app.submit_message()
+                        .context("Handler failed to submit message")?;
                 } else {
                     app.input_textarea.input(key_event);
                 }
@@ -73,7 +75,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('G') | KeyCode::End => app.select_last_snippet(),
             #[cfg(not(target_os = "linux"))]
             KeyCode::Enter | KeyCode::Char('y') => {
-                app.copy_snippet()?;
+                app.copy_snippet()
+                    .context("Error when copying snippet to clipboard")?;
                 app.set_app_mode(AppMode::Normal);
             }
             _ => {}

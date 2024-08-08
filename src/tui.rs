@@ -1,6 +1,7 @@
 use crate::app::{App, AppResult};
 use crate::event::EventHandler;
 use crate::ui;
+use anyhow::Context;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 #[cfg(not(target_os = "windows"))]
 use crossterm::event::{
@@ -34,16 +35,19 @@ impl<B: Backend> Tui<B> {
     ///
     /// It enables the raw mode and sets terminal properties.
     pub fn init(&mut self) -> AppResult<()> {
-        terminal::enable_raw_mode()?;
+        terminal::enable_raw_mode().context("Could not enable raw mode")?;
         #[cfg(not(target_os = "windows"))]
         crossterm::execute!(
             io::stderr(),
             EnterAlternateScreen,
             EnableMouseCapture,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        )?;
+        )
+        .context("Could not initialize terminal, error in `crossterm::execute!`")?;
+
         #[cfg(target_os = "windows")]
-        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableMouseCapture,)?;
+        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableMouseCapture)
+            .context("Could not initialize terminal, error in `crossterm::execute!`")?;
 
         // Define a custom panic hook to reset the terminal properties.
         // This way, you won't have your terminal messed up if an unexpected error happens.
@@ -53,8 +57,10 @@ impl<B: Backend> Tui<B> {
             panic_hook(panic);
         }));
 
-        self.terminal.hide_cursor()?;
-        self.terminal.clear()?;
+        self.terminal
+            .hide_cursor()
+            .context("Error when hiding terminal cursor")?;
+        self.terminal.clear().context("Could not clear terminal")?;
         Ok(())
     }
 
@@ -63,7 +69,9 @@ impl<B: Backend> Tui<B> {
     /// [`Draw`]: ratatui::Terminal::draw
     /// [`rendering`]: crate::ui::render
     pub fn draw(&mut self, app: &mut App) -> AppResult<()> {
-        self.terminal.draw(|frame| ui::render(frame, app))?;
+        self.terminal
+            .draw(|frame| ui::render(frame, app))
+            .context("Failed to render the user interface")?;
         Ok(())
     }
 
@@ -72,16 +80,18 @@ impl<B: Backend> Tui<B> {
     /// This function is also used for the panic hook to revert
     /// the terminal properties if unexpected errors occur.
     fn reset() -> AppResult<()> {
-        terminal::disable_raw_mode()?;
+        terminal::disable_raw_mode().context("Failed to disable raw mode")?;
         #[cfg(not(target_os = "windows"))]
         crossterm::execute!(
             io::stderr(),
             LeaveAlternateScreen,
             DisableMouseCapture,
             PopKeyboardEnhancementFlags
-        )?;
+        )
+        .context("Failed resetting terminal, error during `crossterm::execute!`")?;
         #[cfg(target_os = "windows")]
-        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableMouseCapture,)?;
+        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableMouseCapture)
+            .context("Failed resetting terminal, error during `crossterm::execute!`")?;
         Ok(())
     }
 
@@ -89,8 +99,10 @@ impl<B: Backend> Tui<B> {
     ///
     /// It disables the raw mode and reverts back the terminal properties.
     pub fn exit(&mut self) -> AppResult<()> {
-        Self::reset()?;
-        self.terminal.show_cursor()?;
+        Self::reset().context("Failed to reset terminal")?;
+        self.terminal
+            .show_cursor()
+            .context("Failed to show cursor")?;
         Ok(())
     }
 }

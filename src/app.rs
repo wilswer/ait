@@ -1,10 +1,9 @@
 use ::dirs::home_dir;
+use anyhow::{Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 
-use std::error::Error;
 use std::fs;
-use std::result::Result;
 
 use ratatui::{
     style::{Color, Style},
@@ -19,7 +18,7 @@ use crate::{
 use crate::{models::ModelList, snippets::SnippetList};
 
 /// Application result type.
-pub type AppResult<T> = Result<T, Box<dyn Error>>;
+pub type AppResult<T> = Result<T>;
 
 #[derive(Clone)]
 pub enum AppMode {
@@ -115,11 +114,11 @@ impl App<'_> {
                 chat_log.push_str(&format!("Assistant: {}\n", message));
             }
         }
-        let mut path = home_dir().ok_or("Cannot find home directory")?;
+        let mut path = home_dir().context("Cannot find home directory")?;
         path.push(".cache/ait");
-        fs::create_dir_all(&path)?;
+        fs::create_dir_all(&path).context("Could not create cache directory")?;
         path.push("latest-chat.log");
-        fs::write(&path, chat_log)?;
+        fs::write(&path, chat_log).context("Unable to write chat log")?;
         Ok(())
     }
 
@@ -155,7 +154,8 @@ impl App<'_> {
         self.user_messages.push(text);
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
-        self.write_chat_log()?;
+        self.write_chat_log()
+            .context("Unable to write submitted message to chat log")?;
         Ok(())
     }
 
@@ -180,7 +180,8 @@ impl App<'_> {
         self.snippet_list.items.extend(snippet_items);
         self.assistant_messages.push(message);
         self.current_message = None;
-        self.write_chat_log()?;
+        self.write_chat_log()
+            .context("Unable to write received message to chat log")?;
         Ok(())
     }
 
@@ -267,7 +268,8 @@ impl App<'_> {
             }
             self.snippet_list.items[i].selected = true;
             self.clipboard
-                .set_text(self.snippet_list.items[i].text.clone())?;
+                .set_text(self.snippet_list.items[i].text.clone())
+                .context("Unable to copy snippet to clipboard")?;
         }
         Ok(())
     }

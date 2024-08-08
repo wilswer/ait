@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::Client;
@@ -59,7 +57,7 @@ pub async fn assistant_response(
     messages: &[String],
     model: &str,
     system_prompt: &str,
-) -> Result<String, Box<dyn Error + Send + Sync>> {
+) -> AppResult<String> {
     let chat_messages = messages
         .iter()
         .enumerate()

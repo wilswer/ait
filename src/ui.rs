@@ -42,7 +42,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .title("AI in the Terminal")
             .title_alignment(Alignment::Center)
             .border_type(BorderType::Rounded),
-        f.size(),
+        f.area(),
     );
     let input_area_constraint = match app.app_mode {
         AppMode::Editing => Constraint::Min(1),
@@ -57,7 +57,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     let vertical = vertical.margin(1);
 
-    let [help_area, messages_area, input_area] = vertical.areas(f.size());
+    let [help_area, messages_area, input_area] = vertical.areas(f.area());
 
     let (msg, style) = match app.app_mode {
         AppMode::Editing => (

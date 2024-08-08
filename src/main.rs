@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::Parser;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -23,15 +24,17 @@ async fn main() -> AppResult<()> {
 
     // Create an application.
     let mut app = App::new();
-    let models = get_models().await?;
+    let models = get_models()
+        .await
+        .context("Failed to find models from providers")?;
     app.set_models(models);
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(io::stderr());
-    let terminal = Terminal::new(backend)?;
+    let terminal = Terminal::new(backend).context("Failed to create terminal")?;
     let events = EventHandler::new(250);
     let mut tui = Tui::new(terminal, events);
-    tui.init()?;
+    tui.init().context("Failed to initialize terminal")?;
 
     // Create a channel to receive the assistant responses
     let (assistant_response_tx, mut assistant_response_rx) = mpsc::channel(32);
@@ -39,11 +42,19 @@ async fn main() -> AppResult<()> {
     // Start the main loop.
     while app.running {
         // Render the user interface.
-        tui.draw(&mut app)?;
+        tui.draw(&mut app)
+            .context("Failed to render user interface")?;
         // Handle events.
-        match tui.events.next().await? {
+        match tui
+            .events
+            .next()
+            .await
+            .context("Unable to get next event")?
+        {
             Event::Tick => app.tick(),
-            Event::Key(key_event) => handle_key_events(key_event, &mut app)?,
+            Event::Key(key_event) => {
+                handle_key_events(key_event, &mut app).context("Error handling key events")?
+            }
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}
         }
@@ -65,13 +76,16 @@ async fn main() -> AppResult<()> {
         // Check for a response from the assistant and process it
         if let Ok(assistant_response) = assistant_response_rx.try_recv() {
             match assistant_response {
-                Ok(response) => app.receive_message(response).await?,
+                Ok(response) => app
+                    .receive_message(response)
+                    .await
+                    .context("Error while receiving message")?,
                 Err(e) => eprintln!("Error receiving assistant response: {}", e),
             }
         }
     }
 
     // Exit the user interface.
-    tui.exit()?;
+    tui.exit().context("Failed during application shutdown")?;
     Ok(())
 }
