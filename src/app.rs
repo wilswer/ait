@@ -49,7 +49,7 @@ pub struct App<'a> {
     pub running: bool,
     /// System clipboard.
     /// Not enabled on Linux because of an issue with the `arboard` crate,
-    /// see https://github.com/1Password/arboard/issues/153
+    /// see <https://github.com/1Password/arboard/issues/153>
     #[cfg(not(target_os = "linux"))]
     pub clipboard: Clipboard,
     /// List of models
