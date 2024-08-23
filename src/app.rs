@@ -142,6 +142,7 @@ impl App<'_> {
 
     pub fn submit_message(&mut self) -> AppResult<()> {
         let text = self.input_textarea.lines().join("\n");
+        let text = textwrap::wrap(&text, 140).join("\n");
         if text.is_empty() {
             return Ok(());
         }
