@@ -88,34 +88,42 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if let AppMode::Editing = app.app_mode {
         f.render_widget(&app.input_textarea, input_area);
     }
-
     let messages: Vec<Line> = app
         .messages
         .iter()
         .enumerate()
         .flat_map(|(i, m)| {
+            let wrapped_message = textwrap::wrap(m, messages_area.width as usize - 3);
+            let mut line_vec = Vec::new();
             if i % 2 == 0 {
-                let mut line_vec = Vec::new();
                 line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
                 line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-                line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).yellow())));
+                line_vec.extend(
+                    wrapped_message
+                        .into_iter()
+                        .map(|l| Line::from(Span::raw(l).yellow())),
+                );
                 line_vec.push(Line::from(Span::raw("").bold().yellow()));
-                line_vec
+            } else if m.starts_with("Error:") {
+                line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
+                line_vec.push(Line::from(Span::raw("---").bold().red()));
+                line_vec.extend(
+                    wrapped_message
+                        .into_iter()
+                        .map(|l| Line::from(Span::raw(l).red())),
+                );
+                line_vec.push(Line::from(Span::raw("").bold().red()));
             } else {
-                let mut line_vec = Vec::new();
-                if m.starts_with("Error:") {
-                    line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
-                    line_vec.push(Line::from(Span::raw("---").bold().red()));
-                    line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).red())));
-                    line_vec.push(Line::from(Span::raw("").bold().red()));
-                } else {
-                    line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-                    line_vec.push(Line::from(Span::raw("---").bold().green()));
-                    line_vec.extend(m.split('\n').map(|l| Line::from(Span::raw(l).green())));
-                    line_vec.push(Line::from(Span::raw("").bold().green()));
-                }
-                line_vec
+                line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+                line_vec.push(Line::from(Span::raw("---").bold().green()));
+                line_vec.extend(
+                    wrapped_message
+                        .into_iter()
+                        .map(|l| Line::from(Span::raw(l).green())),
+                );
+                line_vec.push(Line::from(Span::raw("").bold().green()));
             }
+            line_vec
         })
         .collect();
 

@@ -22,7 +22,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.decrement_vertical_scroll();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                app.increment_vertical_scroll();
+                app.increment_vertical_scroll()?;
             }
             _ => {}
         },

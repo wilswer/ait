@@ -87,7 +87,6 @@ pub async fn assistant_response(
         Ok(res) => res.content_text_into_string(),
         Err(e) => Some(format!("Error: {}", e)),
     };
-    let raw_chat_res_text = chat_res.unwrap_or("NO RESPONSE".to_string());
-    let chat_res_text = textwrap::wrap(&raw_chat_res_text, 140).join("\n");
+    let chat_res_text = chat_res.unwrap_or("NO RESPONSE".to_string());
     Ok(chat_res_text)
 }

@@ -122,9 +122,13 @@ impl App<'_> {
         Ok(())
     }
 
-    pub fn increment_vertical_scroll(&mut self) {
+    pub fn increment_vertical_scroll(&mut self) -> AppResult<()> {
+        let (width, _) = crossterm::terminal::size().context("Unable to get terminal size")?;
         let max_scroll = self
             .messages
+            .iter()
+            .map(|m| textwrap::wrap(m, width as usize - 5).join("\n"))
+            .collect::<Vec<String>>()
             .join("\n")
             .split('\n')
             .collect::<Vec<&str>>()
@@ -134,6 +138,7 @@ impl App<'_> {
         if self.vertical_scroll < max_scroll {
             self.vertical_scroll += 1;
         }
+        Ok(())
     }
 
     pub fn decrement_vertical_scroll(&mut self) {
@@ -142,7 +147,6 @@ impl App<'_> {
 
     pub fn submit_message(&mut self) -> AppResult<()> {
         let text = self.input_textarea.lines().join("\n");
-        let text = textwrap::wrap(&text, 140).join("\n");
         if text.is_empty() {
             return Ok(());
         }
