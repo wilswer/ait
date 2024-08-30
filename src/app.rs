@@ -67,10 +67,6 @@ pub struct App<'a> {
     pub current_message: Option<Message>,
     /// History of recorded messages
     pub messages: Vec<Message>,
-    // /// History of recorded messages
-    // pub user_messages: Vec<String>,
-    // /// History of recorded messages
-    // pub assistant_messages: Vec<String>,
     /// Vertical scroll
     pub vertical_scroll: usize,
     /// Is the application running?
