@@ -17,10 +17,38 @@ use crate::{
 };
 use crate::{models::ModelList, snippets::SnippetList};
 
+#[derive(Debug, Clone)]
+pub enum Message {
+    User(String),
+    Assistant(String),
+    Error(String),
+}
+
+impl From<String> for Message {
+    fn from(message: String) -> Self {
+        Message::User(message)
+    }
+}
+
+impl From<&str> for Message {
+    fn from(message: &str) -> Self {
+        Message::User(message.to_string())
+    }
+}
+
+impl AsRef<str> for Message {
+    fn as_ref(&self) -> &str {
+        match self {
+            Message::User(message) => message.as_str(),
+            Message::Assistant(message) => message.as_str(),
+            Message::Error(message) => message.as_str(),
+        }
+    }
+}
 /// Application result type.
 pub type AppResult<T> = Result<T>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum AppMode {
     Normal,
     Editing,
@@ -36,13 +64,9 @@ pub struct App<'a> {
     /// Position of cursor in the editor area.
     pub app_mode: AppMode,
     /// Current message to process
-    pub current_message: Option<String>,
+    pub current_message: Option<Message>,
     /// History of recorded messages
-    pub messages: Vec<String>,
-    /// History of recorded messages
-    pub user_messages: Vec<String>,
-    /// History of recorded messages
-    pub assistant_messages: Vec<String>,
+    pub messages: Vec<Message>,
     /// Vertical scroll
     pub vertical_scroll: usize,
     /// Is the application running?
@@ -74,8 +98,8 @@ impl Default for App<'_> {
             app_mode: AppMode::Normal,
             current_message: None,
             messages: Vec::new(),
-            user_messages: Vec::new(),
-            assistant_messages: Vec::new(),
+            // user_messages: Vec::new(),
+            // assistant_messages: Vec::new(),
             vertical_scroll: 0,
             running: true,
             #[cfg(not(target_os = "linux"))]
@@ -107,11 +131,17 @@ impl App<'_> {
 
     fn write_chat_log(&self) -> AppResult<()> {
         let mut chat_log = String::new();
-        for (i, message) in self.messages.iter().enumerate() {
-            if i % 2 == 0 {
-                chat_log.push_str(&format!("User: {}\n", message));
-            } else {
-                chat_log.push_str(&format!("Assistant: {}\n", message));
+        for message in self.messages.iter() {
+            match message {
+                Message::User(message) => {
+                    chat_log.push_str(&format!("User: {}\n", message));
+                }
+                Message::Assistant(message) => {
+                    chat_log.push_str(&format!("Assistant: {}\n", message));
+                }
+                Message::Error(message) => {
+                    chat_log.push_str(&format!("Error: {}\n", message));
+                }
             }
         }
         let mut path = home_dir().context("Cannot find home directory")?;
@@ -127,7 +157,7 @@ impl App<'_> {
         let max_scroll = self
             .messages
             .iter()
-            .map(|m| textwrap::wrap(m, width as usize - 5).join("\n"))
+            .map(|m| textwrap::wrap(m.as_ref(), width as usize - 5).join("\n"))
             .collect::<Vec<String>>()
             .join("\n")
             .split('\n')
@@ -147,16 +177,26 @@ impl App<'_> {
 
     pub fn submit_message(&mut self) -> AppResult<()> {
         let text = self.input_textarea.lines().join("\n");
+        let user_message = Message::User(text.clone());
         if text.is_empty() {
             return Ok(());
         }
-        if self.user_messages.len() != self.assistant_messages.len() {
+        let n_user_messages = self
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(_)))
+            .count();
+        let n_assistant_messages = self
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::Assistant(_)))
+            .count();
+        if n_user_messages != n_assistant_messages {
             return Ok(());
         }
 
-        self.current_message = Some(text.clone());
-        self.messages.push(text.clone());
-        self.user_messages.push(text);
+        self.current_message = Some(user_message.clone());
+        self.messages.push(user_message);
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()
@@ -174,16 +214,16 @@ impl App<'_> {
         }));
     }
 
-    pub async fn receive_message(&mut self, message: String) -> AppResult<()> {
+    pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {
+        let message_content = message.as_ref();
         self.messages.push(message.clone());
         let discovered_snippets =
-            find_fenced_code_snippets(message.split('\n').map(|s| s.to_string()).collect());
+            find_fenced_code_snippets(message_content.split('\n').map(|s| s.to_string()).collect());
         let snippet_items: Vec<SnippetItem> = discovered_snippets
             .iter()
             .map(|snippet| snippet.to_string().into())
             .collect();
         self.snippet_list.items.extend(snippet_items);
-        self.assistant_messages.push(message);
         self.current_message = None;
         self.write_chat_log()
             .context("Unable to write received message to chat log")?;
@@ -199,7 +239,11 @@ impl App<'_> {
 
     #[cfg(not(target_os = "linux"))]
     pub fn yank_latest_assistant_message(&mut self) {
-        if let Some(message) = self.assistant_messages.last() {
+        let assistant_messages = self.messages.iter().filter_map(|m| match m {
+            Message::Assistant(message) => Some(message),
+            _ => None,
+        });
+        if let Some(message) = assistant_messages.last() {
             self.clipboard.set_text(message.clone()).unwrap();
         }
     }

@@ -16,11 +16,10 @@ use ait::tui::Tui;
 #[tokio::main]
 async fn main() -> AppResult<()> {
     let cli = Cli::parse();
-    let system_prompt = if let Some(system_prompt) = cli.system_prompt {
-        system_prompt
-    } else {
-        "You are a helpful and friendly assistant.".to_string()
-    };
+    let system_prompt = cli
+        .system_prompt
+        .unwrap_or_else(|| "You are a helpful and friendly assistant.".to_string());
+    let temperature = cli.temperature;
 
     // Create an application.
     let mut app = App::new();
@@ -55,20 +54,23 @@ async fn main() -> AppResult<()> {
             Event::Key(key_event) => {
                 handle_key_events(key_event, &mut app).context("Error handling key events")?
             }
-            Event::Mouse(_) => {}
-            Event::Resize(_, _) => {}
+            Event::Mouse(_) | Event::Resize(_, _) => {}
         }
 
         // Check for a new query and spawn a task to handle it
-        if app.current_message.is_some() {
-            app.current_message = None;
+        if app.current_message.take().is_some() {
             let assistant_response_tx = assistant_response_tx.clone();
-            let messages = app.messages.clone();
-            let selected_model_name = app.selected_model_name.clone();
-            let system_prompt = system_prompt.clone();
+            let messages = app.messages.clone(); // This clone is necessary for the async task
+            let selected_model_name = app.selected_model_name.clone(); // This clone is necessary for the async task
+            let system_prompt = system_prompt.clone(); // This clone is necessary for the async task
             task::spawn(async move {
-                let assistant_response =
-                    assistant_response(&messages, &selected_model_name, &system_prompt).await;
+                let assistant_response = assistant_response(
+                    &messages,
+                    &selected_model_name,
+                    &system_prompt,
+                    temperature,
+                )
+                .await;
                 let _ = assistant_response_tx.send(assistant_response).await;
             });
         }
