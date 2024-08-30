@@ -1,6 +1,6 @@
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage, ChatRequest};
-use genai::Client;
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest};
+use genai::{Client, ClientBuilder, ClientConfig};
 
 use crate::app::AppResult;
 
@@ -33,7 +33,10 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
         AdapterKind::Cohere,
     ];
 
-    let client = Client::default();
+    let chat_opts = ChatOptions::default().with_temperature(0.2);
+    let client_config = ClientConfig::default().with_chat_options(chat_opts);
+
+    let client = ClientBuilder::default().with_config(client_config).build();
     let mut models = Vec::new();
     for &kind in KINDS {
         let env_name = get_api_key_name(&kind);
