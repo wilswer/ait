@@ -24,23 +24,15 @@ pub enum Message {
     Error(String),
 }
 
-impl Into<String> for Message {
-    fn into(self) -> String {
-        match self {
-            Message::User(message) => message,
-            Message::Assistant(message) => message,
-            Message::Error(message) => message,
-        }
+impl From<String> for Message {
+    fn from(message: String) -> Self {
+        Message::User(message)
     }
 }
 
-impl Into<String> for &Message {
-    fn into(self) -> String {
-        match self {
-            Message::User(message) => message.clone(),
-            Message::Assistant(message) => message.clone(),
-            Message::Error(message) => message.clone(),
-        }
+impl From<&str> for Message {
+    fn from(message: &str) -> Self {
+        Message::User(message.to_string())
     }
 }
 
