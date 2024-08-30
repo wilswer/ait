@@ -2,7 +2,7 @@ use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatOptions, ChatRequest};
 use genai::{Client, ClientBuilder, ClientConfig};
 
-use crate::app::AppResult;
+use crate::app::{AppResult, Message};
 
 pub const MODELS: [(&str, &str); 5] = [
     ("OpenAI", "gpt-4o-mini"),
@@ -33,10 +33,7 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
         AdapterKind::Cohere,
     ];
 
-    let chat_opts = ChatOptions::default().with_temperature(0.2);
-    let client_config = ClientConfig::default().with_chat_options(chat_opts);
-
-    let client = ClientBuilder::default().with_config(client_config).build();
+    let client = Client::default();
     let mut models = Vec::new();
     for &kind in KINDS {
         let env_name = get_api_key_name(&kind);
@@ -57,39 +54,39 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
 }
 
 pub async fn assistant_response(
-    messages: &[String],
+    messages: &[Message],
     model: &str,
     system_prompt: &str,
-) -> AppResult<String> {
+    temperature: f64,
+) -> AppResult<Message> {
     let chat_messages = messages
         .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            if i % 2 == 0 {
-                ChatMessage::user(m)
-            } else {
-                ChatMessage::assistant(m)
-            }
+        .map(|m| match m {
+            Message::User(m) => ChatMessage::user(m),
+            Message::Assistant(m) => ChatMessage::assistant(m),
+            _ => ChatMessage::assistant(""),
         })
         .collect::<Vec<ChatMessage>>();
-    let mut chat_req = ChatRequest::new(vec![
-        // -- Messages (de/activate to see the differences)
-        ChatMessage::system(system_prompt),
-    ]);
+    let mut chat_req = ChatRequest::new(vec![ChatMessage::system(system_prompt)]);
 
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
 
-    // let client_config =
-    //     ClientConfig::default().with_chat_options(ChatOptions::default().with_temperature(0.2));
+    let chat_opts = ChatOptions::default().with_temperature(temperature);
+    let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
-    // let client = Client::builder().with_config(client_config).build();
-    let client = Client::default();
+    let client = ClientBuilder::default().with_config(client_config).build();
     let chat_res = match client.exec_chat(model, chat_req, None).await {
-        Ok(res) => res.content_text_into_string(),
-        Err(e) => Some(format!("Error: {}", e)),
+        Ok(res) => {
+            if let Some(m) = res.content_text_into_string() {
+                Message::Assistant(m)
+            } else {
+                Message::Assistant("NO RESPONSE".to_string())
+            }
+        }
+        Err(e) => Message::Error(format!("Error: {}", e)),
     };
-    let chat_res_text = chat_res.unwrap_or("NO RESPONSE".to_string());
-    Ok(chat_res_text)
+
+    Ok(chat_res)
 }

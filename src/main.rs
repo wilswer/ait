@@ -21,6 +21,7 @@ async fn main() -> AppResult<()> {
     } else {
         "You are a helpful and friendly assistant.".to_string()
     };
+    let temperature = cli.temperature;
 
     // Create an application.
     let mut app = App::new();
@@ -67,8 +68,13 @@ async fn main() -> AppResult<()> {
             let selected_model_name = app.selected_model_name.clone();
             let system_prompt = system_prompt.clone();
             task::spawn(async move {
-                let assistant_response =
-                    assistant_response(&messages, &selected_model_name, &system_prompt).await;
+                let assistant_response = assistant_response(
+                    &messages,
+                    &selected_model_name,
+                    &system_prompt,
+                    temperature,
+                )
+                .await;
                 let _ = assistant_response_tx.send(assistant_response).await;
             });
         }

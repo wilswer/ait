@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, Message};
 
 pub const SELECTED_STYLE: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Green);
 
@@ -91,37 +91,40 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let messages: Vec<Line> = app
         .messages
         .iter()
-        .enumerate()
-        .flat_map(|(i, m)| {
-            let wrapped_message = textwrap::wrap(m, messages_area.width as usize - 3);
+        .flat_map(|m| {
+            let wrapped_message = textwrap::wrap(m.as_ref(), messages_area.width as usize - 3);
             let mut line_vec = Vec::new();
-            if i % 2 == 0 {
-                line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
-                line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-                line_vec.extend(
-                    wrapped_message
-                        .into_iter()
-                        .map(|l| Line::from(Span::raw(l).yellow())),
-                );
-                line_vec.push(Line::from(Span::raw("").bold().yellow()));
-            } else if m.starts_with("Error:") {
-                line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
-                line_vec.push(Line::from(Span::raw("---").bold().red()));
-                line_vec.extend(
-                    wrapped_message
-                        .into_iter()
-                        .map(|l| Line::from(Span::raw(l).red())),
-                );
-                line_vec.push(Line::from(Span::raw("").bold().red()));
-            } else {
-                line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-                line_vec.push(Line::from(Span::raw("---").bold().green()));
-                line_vec.extend(
-                    wrapped_message
-                        .into_iter()
-                        .map(|l| Line::from(Span::raw(l).green())),
-                );
-                line_vec.push(Line::from(Span::raw("").bold().green()));
+            match m {
+                Message::User(_) => {
+                    line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
+                    line_vec.push(Line::from(Span::raw("---").bold().yellow()));
+                    line_vec.extend(
+                        wrapped_message
+                            .into_iter()
+                            .map(|l| Line::from(Span::raw(l).yellow())),
+                    );
+                    line_vec.push(Line::from(Span::raw("").bold().yellow()));
+                }
+                Message::Assistant(_) => {
+                    line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+                    line_vec.push(Line::from(Span::raw("---").bold().green()));
+                    line_vec.extend(
+                        wrapped_message
+                            .into_iter()
+                            .map(|l| Line::from(Span::raw(l).green())),
+                    );
+                    line_vec.push(Line::from(Span::raw("").bold().green()));
+                }
+                Message::Error(_) => {
+                    line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
+                    line_vec.push(Line::from(Span::raw("---").bold().red()));
+                    line_vec.extend(
+                        wrapped_message
+                            .into_iter()
+                            .map(|l| Line::from(Span::raw(l).red())),
+                    );
+                    line_vec.push(Line::from(Span::raw("").bold().red()));
+                }
             }
             line_vec
         })
