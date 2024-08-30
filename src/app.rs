@@ -17,6 +17,11 @@ use crate::{
 };
 use crate::{models::ModelList, snippets::SnippetList};
 
+pub enum Message {
+    User(String),
+    Assistant(String),
+    Error(String),
+}
 /// Application result type.
 pub type AppResult<T> = Result<T>;
 
