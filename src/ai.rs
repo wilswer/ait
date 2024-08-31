@@ -57,7 +57,7 @@ pub async fn assistant_response(
     messages: &[Message],
     model: &str,
     system_prompt: &str,
-    temperature: f64,
+    temperature: &f64,
 ) -> AppResult<Message> {
     let chat_messages = messages
         .iter()
@@ -73,7 +73,7 @@ pub async fn assistant_response(
         chat_req = chat_req.append_message(chat_message);
     }
 
-    let chat_opts = ChatOptions::default().with_temperature(temperature);
+    let chat_opts = ChatOptions::default().with_temperature(*temperature);
     let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
     let client = ClientBuilder::default().with_config(client_config).build();

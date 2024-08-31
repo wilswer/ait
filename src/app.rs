@@ -63,8 +63,8 @@ pub struct App<'a> {
     pub input_textarea: TextArea<'a>,
     /// Position of cursor in the editor area.
     pub app_mode: AppMode,
-    /// Current message to process
-    pub current_message: Option<Message>,
+    /// Has unprocessed messages
+    pub has_unprocessed_messages: bool,
     /// History of recorded messages
     pub messages: Vec<Message>,
     /// Vertical scroll
@@ -96,7 +96,7 @@ impl Default for App<'_> {
         Self {
             input_textarea: styled_input_textarea(),
             app_mode: AppMode::Normal,
-            current_message: None,
+            has_unprocessed_messages: false,
             messages: Vec::new(),
             // user_messages: Vec::new(),
             // assistant_messages: Vec::new(),
@@ -177,7 +177,6 @@ impl App<'_> {
 
     pub fn submit_message(&mut self) -> AppResult<()> {
         let text = self.input_textarea.lines().join("\n");
-        let user_message = Message::User(text.clone());
         if text.is_empty() {
             return Ok(());
         }
@@ -195,8 +194,8 @@ impl App<'_> {
             return Ok(());
         }
 
-        self.current_message = Some(user_message.clone());
-        self.messages.push(user_message);
+        self.has_unprocessed_messages = true;
+        self.messages.push(text.into());
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()
@@ -216,7 +215,6 @@ impl App<'_> {
 
     pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {
         let message_content = message.as_ref();
-        self.messages.push(message.clone());
         let discovered_snippets =
             find_fenced_code_snippets(message_content.split('\n').map(|s| s.to_string()).collect());
         let snippet_items: Vec<SnippetItem> = discovered_snippets
@@ -224,7 +222,8 @@ impl App<'_> {
             .map(|snippet| snippet.to_string().into())
             .collect();
         self.snippet_list.items.extend(snippet_items);
-        self.current_message = None;
+        self.has_unprocessed_messages = false;
+        self.messages.push(message);
         self.write_chat_log()
             .context("Unable to write received message to chat log")?;
         Ok(())
@@ -244,7 +243,7 @@ impl App<'_> {
             _ => None,
         });
         if let Some(message) = assistant_messages.last() {
-            self.clipboard.set_text(message.clone()).unwrap();
+            self.clipboard.set_text(message).unwrap();
         }
     }
 
@@ -301,11 +300,11 @@ impl App<'_> {
         self.snippet_list.state.select_last();
     }
 
-    pub fn get_snippet_text(&self) -> Option<String> {
+    pub fn get_snippet_text(&self) -> Option<&String> {
         self.snippet_list
             .state
             .selected()
-            .map(|i| self.snippet_list.items[i].text.clone())
+            .map(|i| &self.snippet_list.items[i].text)
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -317,7 +316,7 @@ impl App<'_> {
             }
             self.snippet_list.items[i].selected = true;
             self.clipboard
-                .set_text(self.snippet_list.items[i].text.clone())
+                .set_text(&self.snippet_list.items[i].text)
                 .context("Unable to copy snippet to clipboard")?;
         }
         Ok(())

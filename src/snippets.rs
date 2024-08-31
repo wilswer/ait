@@ -1,9 +1,6 @@
 use std::str::FromStr;
 
-use ratatui::{
-    text::{Line, Span},
-    widgets::{ListItem, ListState},
-};
+use ratatui::widgets::ListState;
 
 #[derive(Debug)]
 pub struct SnippetList {
@@ -48,13 +45,6 @@ impl SnippetItem {
             text: snippet.to_string(),
             selected,
         }
-    }
-}
-
-impl From<&SnippetItem> for ListItem<'_> {
-    fn from(value: &SnippetItem) -> Self {
-        let line = Line::from(Span::raw(value.text.clone()));
-        ListItem::new(line)
     }
 }
 

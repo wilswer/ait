@@ -174,8 +174,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let preview_text = app.get_snippet_text();
         let preview_block_content = Block::new().padding(Padding::uniform(1));
         if let Some(preview_text) = preview_text {
-            let snippet_paragraph =
-                Paragraph::new(Text::from(preview_text).magenta()).block(preview_block_content);
+            let snippet_paragraph = Paragraph::new(Text::from(preview_text.as_str()).magenta())
+                .block(preview_block_content);
             f.render_widget(snippet_paragraph, preview_area);
         }
     }
