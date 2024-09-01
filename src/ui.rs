@@ -189,13 +189,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     if let AppMode::ShowHistory = app.app_mode {
         let block = Block::bordered().title("Select Chat");
-        let area = left_aligned_rect(messages_area, 30);
+        let area = left_aligned_rect(messages_area, 25);
         f.render_widget(Clear, area); //this clears out the background
         f.render_widget(block, area);
         render_chat_history_list(f, area, app);
 
         let preview_block = Block::bordered().title("Chat Preview");
-        let preview_area = right_aligned_rect(messages_area, 70);
+        let preview_area = right_aligned_rect(messages_area, 75);
         f.render_widget(Clear, preview_area); //this clears out the background
         f.render_widget(preview_block, preview_area);
         let chat_id = app.get_selected_chat_id();
@@ -263,8 +263,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
             "Press ".into(),
             "Up/Down".bold(),
             " to select chat, or press ".into(),
+            "d".bold(),
+            " to delete the selected chat, or press ".into(),
             "Enter".bold(),
-            " to select chat, and return to 'normal' mode.".into(),
+            " to select a chat, and return to 'normal' mode.".into(),
         ];
         let snippet_keys = vec![
             "Press ".into(),
@@ -366,7 +368,7 @@ fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
         .chat_list
         .items
         .iter()
-        .map(|c| ListItem::from(format!("Chat {}: created at {}", c.chat_id, c.started_at)))
+        .map(|c| ListItem::from(format!("Chat created {}", c.started_at)))
         .collect();
 
     // Create a List from all list items and highlight the currently selected one

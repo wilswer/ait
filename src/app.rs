@@ -15,7 +15,10 @@ use crate::{
     ai::MODELS,
     chats::ChatList,
     snippets::{find_fenced_code_snippets, SnippetItem},
-    storage::{create_db_conversation, insert_message, list_all_conversations, list_all_messages},
+    storage::{
+        create_db_conversation, delete_conversation, insert_message, list_all_conversations,
+        list_all_messages,
+    },
 };
 use crate::{models::ModelList, snippets::SnippetList};
 
@@ -383,6 +386,18 @@ impl<'a> App<'a> {
             .map(|(id, started_at)| (id, started_at, false))
             .collect::<Vec<(i64, String, bool)>>();
         self.chat_list = ChatList::from_iter(chats);
+        Ok(())
+    }
+
+    pub fn delete_chat(&mut self) -> AppResult<()> {
+        if let Some(i) = self.chat_list.state.selected() {
+            let chat_id = self.chat_list.items[i].chat_id;
+            delete_conversation(chat_id)?;
+            self.chat_list.items.remove(i);
+            self.messages.clear();
+            self.messages = list_all_messages(chat_id)?;
+            self.conversation_id = None;
+        }
         Ok(())
     }
 

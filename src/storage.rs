@@ -116,6 +116,27 @@ pub fn list_all_messages(conversation_id: i64) -> AppResult<Vec<Message>> {
     Ok(messages)
 }
 
+pub fn delete_conversation(conversation_id: i64) -> AppResult<()> {
+    // Connect to the SQLite database
+    let mut path = home_dir().context("Cannot find home directory")?;
+    path.push(".cache/ait");
+    path.push("chats.db");
+    let conn = Connection::open(path).context("Could not connect to database")?;
+    // Delete the conversation from the Conversations table
+    conn.execute(
+        "DELETE FROM Conversations WHERE conversation_id = ?1",
+        params![conversation_id],
+    )
+    .context("Failed to delete conversation")?;
+    // Delete the messages from the Messages table
+    conn.execute(
+        "DELETE FROM Messages WHERE conversation_id = ?1",
+        params![conversation_id],
+    )
+    .context("Failed to delete messages")?;
+    Ok(())
+}
+
 struct DBMessage {
     sender: String,
     message_text: String,

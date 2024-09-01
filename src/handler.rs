@@ -64,6 +64,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.set_chat()?;
                 app.set_app_mode(AppMode::Normal);
             }
+            KeyCode::Char('d') => {
+                app.delete_chat()?;
+                app.set_chat_list()?;
+            }
             _ => {}
         },
         AppMode::ModelSelection => match key_event.code {
