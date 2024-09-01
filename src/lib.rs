@@ -26,3 +26,9 @@ pub mod snippets;
 
 /// Command line interface.
 pub mod cli;
+
+///Chat conversations storage.
+pub mod storage;
+
+/// Chat list.
+pub mod chats;

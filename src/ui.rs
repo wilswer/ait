@@ -11,7 +11,11 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, AppMode, Message};
+use crate::storage::list_all_conversations;
+use crate::{
+    app::{App, AppMode, Message},
+    storage::list_all_messages,
+};
 
 pub const SELECTED_STYLE: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Green);
 
@@ -32,8 +36,12 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     .split(popup_layout[1])[1]
 }
 
-fn right_aligned_rect(r: Rect) -> Rect {
-    Layout::horizontal([Constraint::Percentage(60), Constraint::Fill(1)]).split(r)[1]
+fn right_aligned_rect(r: Rect, p: u16) -> Rect {
+    Layout::horizontal([Constraint::Percentage(100 - p), Constraint::Fill(1)]).split(r)[1]
+}
+
+fn left_aligned_rect(r: Rect, p: u16) -> Rect {
+    Layout::horizontal([Constraint::Fill(1), Constraint::Percentage(100 - p)]).split(r)[0]
 }
 
 pub fn render(f: &mut Frame, app: &mut App) {
@@ -168,13 +176,49 @@ pub fn render(f: &mut Frame, app: &mut App) {
         render_snippet_list(f, area, app);
 
         let preview_block = Block::bordered().title("Snippet Preview");
-        let preview_area = right_aligned_rect(messages_area);
+        let preview_area = right_aligned_rect(messages_area, 40);
         f.render_widget(Clear, preview_area); //this clears out the background
         f.render_widget(preview_block, preview_area);
         let preview_text = app.get_snippet_text();
         let preview_block_content = Block::new().padding(Padding::uniform(1));
         if let Some(preview_text) = preview_text {
             let snippet_paragraph = Paragraph::new(Text::from(preview_text.as_str()).magenta())
+                .block(preview_block_content);
+            f.render_widget(snippet_paragraph, preview_area);
+        }
+    }
+
+    if let AppMode::ShowHistory = app.app_mode {
+        let block = Block::bordered().title("Select Chat");
+        let area = left_aligned_rect(messages_area, 30);
+        f.render_widget(Clear, area); //this clears out the background
+        f.render_widget(block, area);
+        render_chat_history_list(f, area, app);
+
+        let preview_block = Block::bordered().title("Chat Preview");
+        let preview_area = right_aligned_rect(messages_area, 70);
+        f.render_widget(Clear, preview_area); //this clears out the background
+        f.render_widget(preview_block, preview_area);
+        let chat_id = app.get_selected_chat_id();
+        let preview_text = if let Some(id) = chat_id {
+            let text = list_all_messages(*id)
+                .unwrap_or([].to_vec())
+                .into_iter()
+                .map(|m| match m {
+                    Message::User(t) => format!("USER: {}\n", t),
+                    Message::Assistant(t) => format!("ASSISTANT: {}\n", t),
+                    Message::Error(t) => format!("ERROR: {}\n", t),
+                })
+                .collect::<Vec<String>>()
+                .join("\n");
+            Some(text)
+        } else {
+            None
+        };
+        let preview_block_content = Block::new().padding(Padding::uniform(1));
+        if let Some(preview_text) = preview_text {
+            let snippet_paragraph = Paragraph::new(Text::from(preview_text.as_str()).magenta())
+                .wrap(Wrap { trim: true })
                 .block(preview_block_content);
             f.render_widget(snippet_paragraph, preview_area);
         }
@@ -301,4 +345,26 @@ fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {
     // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
     // same method name `render`.
     f.render_stateful_widget(list, area, &mut app.snippet_list.state);
+}
+
+fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
+    let block = Block::new().padding(Padding::uniform(1));
+
+    // Iterate through all elements in the `items` and stylize them.
+    let chats = list_all_conversations().unwrap_or([].to_vec());
+    let items: Vec<ListItem> = chats
+        .iter()
+        .map(|(id, d)| ListItem::from(format!("Chat {}: created at {}", id, d)))
+        .collect();
+
+    // Create a List from all list items and highlight the currently selected one
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(SELECTED_STYLE)
+        .highlight_symbol(">")
+        .highlight_spacing(HighlightSpacing::Always);
+
+    // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
+    // same method name `render`.
+    f.render_stateful_widget(list, area, &mut app.chat_list.state);
 }

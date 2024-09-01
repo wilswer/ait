@@ -13,7 +13,9 @@ use tui_textarea::TextArea;
 
 use crate::{
     ai::MODELS,
+    chats::ChatList,
     snippets::{find_fenced_code_snippets, SnippetItem},
+    storage::{create_db_conversation, insert_message, list_all_conversations, list_all_messages},
 };
 use crate::{models::ModelList, snippets::SnippetList};
 
@@ -54,6 +56,7 @@ pub enum AppMode {
     Editing,
     ModelSelection,
     SnippetSelection,
+    ShowHistory,
     Help,
 }
 
@@ -63,6 +66,10 @@ pub struct App<'a> {
     pub input_textarea: TextArea<'a>,
     /// Position of cursor in the editor area.
     pub app_mode: AppMode,
+    /// Conversation ID for chat database.
+    pub conversation_id: Option<i64>,
+    /// System prompt
+    pub system_prompt: &'a str,
     /// Has unprocessed messages
     pub has_unprocessed_messages: bool,
     /// History of recorded messages
@@ -82,6 +89,8 @@ pub struct App<'a> {
     pub selected_model_name: String,
     /// Discovered snippets
     pub snippet_list: SnippetList,
+    /// List of chats
+    pub chat_list: ChatList,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -96,6 +105,8 @@ impl Default for App<'_> {
         Self {
             input_textarea: styled_input_textarea(),
             app_mode: AppMode::Normal,
+            system_prompt: "You are a helpful, friendly assistant.",
+            conversation_id: None,
             has_unprocessed_messages: false,
             messages: Vec::new(),
             // user_messages: Vec::new(),
@@ -113,13 +124,17 @@ impl Default for App<'_> {
             })),
             selected_model_name: "gpt-4o-mini".to_string(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false))),
+            chat_list: ChatList::from_iter([].iter().map(|&snippet| (snippet, false))),
         }
     }
 }
 
-impl App<'_> {
-    pub fn new() -> Self {
-        Self::default()
+impl<'a> App<'a> {
+    pub fn new(system_prompt: &'a str) -> Self {
+        Self {
+            system_prompt,
+            ..Default::default()
+        }
     }
 
     /// Handles the tick event of the terminal.
@@ -127,6 +142,13 @@ impl App<'_> {
 
     pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
         self.app_mode = new_app_mode;
+    }
+
+    pub fn create_conversation(&mut self) -> AppResult<i64> {
+        let conv_id = create_db_conversation(self.system_prompt)
+            .context("Failed to create conversation in db")?;
+        self.conversation_id = Some(conv_id);
+        Ok(conv_id)
     }
 
     fn write_chat_log(&self) -> AppResult<()> {
@@ -195,11 +217,18 @@ impl App<'_> {
         }
 
         self.has_unprocessed_messages = true;
-        self.messages.push(text.into());
         self.input_textarea = styled_input_textarea();
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()
             .context("Unable to write submitted message to chat log")?;
+        let message = Message::User(text);
+        if let Some(id) = self.conversation_id {
+            insert_message(id, &message)?;
+        } else {
+            let id = self.create_conversation()?;
+            insert_message(id, &message)?;
+        }
+        self.messages.push(message);
         Ok(())
     }
 
@@ -223,9 +252,15 @@ impl App<'_> {
             .collect();
         self.snippet_list.items.extend(snippet_items);
         self.has_unprocessed_messages = false;
-        self.messages.push(message);
         self.write_chat_log()
             .context("Unable to write received message to chat log")?;
+        if let Some(id) = self.conversation_id {
+            insert_message(id, &message)?;
+        } else {
+            let id = self.create_conversation()?;
+            insert_message(id, &message)?;
+        }
+        self.messages.push(message);
         Ok(())
     }
 
@@ -318,6 +353,68 @@ impl App<'_> {
             self.clipboard
                 .set_text(&self.snippet_list.items[i].text)
                 .context("Unable to copy snippet to clipboard")?;
+        }
+        Ok(())
+    }
+
+    pub fn select_no_chat(&mut self) {
+        self.chat_list.state.select(None);
+    }
+
+    pub fn select_next_chat(&mut self) {
+        self.chat_list.state.select_next();
+    }
+    pub fn select_previous_chat(&mut self) {
+        self.chat_list.state.select_previous();
+    }
+
+    pub fn select_first_chat(&mut self) {
+        self.chat_list.state.select_first();
+    }
+
+    pub fn select_last_chat(&mut self) {
+        self.chat_list.state.select_last();
+    }
+
+    pub fn set_chat_list(&mut self) -> AppResult<()> {
+        let chats = list_all_conversations()?;
+        let chats = chats
+            .into_iter()
+            .map(|(id, _)| (id, false))
+            .collect::<Vec<(i64, bool)>>();
+        self.chat_list = ChatList::from_iter(chats);
+        Ok(())
+    }
+
+    pub fn get_selected_chat_id(&self) -> Option<&i64> {
+        self.chat_list
+            .state
+            .selected()
+            .map(|i| &self.chat_list.items[i].chat_id)
+    }
+
+    pub fn set_chat(&mut self) -> AppResult<()> {
+        if let Some(i) = self.chat_list.state.selected() {
+            for item in self.chat_list.items.iter_mut() {
+                item.selected = false;
+            }
+            self.chat_list.items[i].selected = true;
+            self.conversation_id = Some(self.chat_list.items[i].chat_id);
+            self.messages.clear();
+            self.messages = list_all_messages(self.chat_list.items[i].chat_id)?;
+            self.snippet_list.clear();
+            for message in self.messages.iter() {
+                let message_content = message.as_ref();
+                let discovered_snippets = find_fenced_code_snippets(
+                    message_content.split('\n').map(|s| s.to_string()).collect(),
+                );
+                let snippet_items: Vec<SnippetItem> = discovered_snippets
+                    .iter()
+                    .map(|snippet| snippet.to_string().into())
+                    .collect();
+                self.snippet_list.items.extend(snippet_items);
+            }
+            self.vertical_scroll = 0;
         }
         Ok(())
     }
