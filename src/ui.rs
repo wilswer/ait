@@ -11,7 +11,6 @@ use ratatui::{
     Frame,
 };
 
-use crate::storage::list_all_conversations;
 use crate::{
     app::{App, AppMode, Message},
     storage::list_all_messages,
@@ -363,10 +362,11 @@ fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
 
     // Iterate through all elements in the `items` and stylize them.
-    let chats = list_all_conversations().unwrap_or([].to_vec());
-    let items: Vec<ListItem> = chats
+    let items: Vec<ListItem> = app
+        .chat_list
+        .items
         .iter()
-        .map(|(id, d)| ListItem::from(format!("Chat {}: created at {}", id, d)))
+        .map(|c| ListItem::from(format!("Chat {}: created at {}", c.chat_id, c.started_at)))
         .collect();
 
     // Create a List from all list items and highlight the currently selected one

@@ -15,7 +15,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
             KeyCode::Char('s') => app.set_app_mode(AppMode::SnippetSelection),
             KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
-            KeyCode::Char('h') => app.set_app_mode(AppMode::ShowHistory),
+            KeyCode::Char('h') => {
+                app.set_chat_list()?;
+                app.set_app_mode(AppMode::ShowHistory)
+            }
             KeyCode::Char('?') => app.set_app_mode(AppMode::Help),
             #[cfg(not(target_os = "linux"))]
             KeyCode::Char('y') => app.yank_latest_assistant_message(),

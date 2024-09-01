@@ -9,14 +9,15 @@ pub struct ChatList {
 #[derive(Debug)]
 pub struct ChatItem {
     pub chat_id: i64,
+    pub started_at: String,
     pub selected: bool,
 }
 
-impl FromIterator<(i64, bool)> for ChatList {
-    fn from_iter<I: IntoIterator<Item = (i64, bool)>>(iter: I) -> Self {
+impl FromIterator<(i64, String, bool)> for ChatList {
+    fn from_iter<I: IntoIterator<Item = (i64, String, bool)>>(iter: I) -> Self {
         let items = iter
             .into_iter()
-            .map(|(id, selected)| ChatItem::new(id, selected))
+            .map(|(id, started_at, selected)| ChatItem::new(id, started_at, selected))
             .collect();
         let mut state = ListState::default();
         state.select_first();
@@ -25,7 +26,11 @@ impl FromIterator<(i64, bool)> for ChatList {
 }
 
 impl ChatItem {
-    pub fn new(chat_id: i64, selected: bool) -> Self {
-        Self { chat_id, selected }
+    pub fn new(chat_id: i64, started_at: String, selected: bool) -> Self {
+        Self {
+            chat_id,
+            started_at,
+            selected,
+        }
     }
 }

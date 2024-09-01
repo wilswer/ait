@@ -124,7 +124,7 @@ impl Default for App<'_> {
             })),
             selected_model_name: "gpt-4o-mini".to_string(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false))),
-            chat_list: ChatList::from_iter([].iter().map(|&snippet| (snippet, false))),
+            chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
         }
     }
 }
@@ -380,13 +380,16 @@ impl<'a> App<'a> {
         let chats = list_all_conversations()?;
         let chats = chats
             .into_iter()
-            .map(|(id, _)| (id, false))
-            .collect::<Vec<(i64, bool)>>();
+            .map(|(id, started_at)| (id, started_at, false))
+            .collect::<Vec<(i64, String, bool)>>();
         self.chat_list = ChatList::from_iter(chats);
         Ok(())
     }
 
     pub fn get_selected_chat_id(&self) -> Option<&i64> {
+        if self.chat_list.items.is_empty() {
+            return None;
+        }
         self.chat_list
             .state
             .selected()
