@@ -43,5 +43,8 @@ set the appropriate environment variable OR you need a running
 
 ## Chat history
 
-Chat history is not yet implemented. `ait` will store a log of the latest chat
+Chat history is stored as a `sqlite` database (facilitated by the
+[`rusqlite`](https://github.com/rusqlite/rusqlite) crate)
+in the users cache directory in the home directory (`~/.cach/ait/chats.db`).
+In addition, `ait` will store a log of the latest chat
 in the user's home directory, `~/.cache/ait/latest-chat.log` on macOS and Linux.

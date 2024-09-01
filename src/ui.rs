@@ -239,6 +239,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
             " to copy the last answer (not linux yet), ".into(),
             "m".bold(),
             " to choose model, ".into(),
+            "h".bold(),
+            " to browse previous conversations, ".into(),
             "s".bold(),
             " to browse code snippets.".into(),
         ];
@@ -257,6 +259,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
             " to select model, or press ".into(),
             "Enter".bold(),
             " to select model, and return to 'normal' mode.".into(),
+        ];
+        let chat_keys = vec![
+            "Press ".into(),
+            "Up/Down".bold(),
+            " to select chat, or press ".into(),
+            "Enter".bold(),
+            " to select chat, and return to 'normal' mode.".into(),
         ];
         let snippet_keys = vec![
             "Press ".into(),
@@ -277,6 +286,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Line::from(""),
             Line::from(Span::raw("When choosing models, you can:").bold()),
             Line::from(model_keys),
+            Line::from(""),
+            Line::from(Span::raw("When choosing chats, you can:").bold()),
+            Line::from(chat_keys),
             Line::from(""),
             Line::from(Span::raw("When browsing snippets, you can:").bold()),
             Line::from(snippet_keys),
