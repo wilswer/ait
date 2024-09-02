@@ -45,6 +45,6 @@ set the appropriate environment variable OR you need a running
 
 Chat history is stored as a `sqlite` database (facilitated by the
 [`rusqlite`](https://github.com/rusqlite/rusqlite) crate)
-in the users cache directory in the home directory (`~/.cach/ait/chats.db`).
+in the users cache directory in the home directory (`~/.cache/ait/chats.db`).
 In addition, `ait` will store a log of the latest chat
 in the user's home directory, `~/.cache/ait/latest-chat.log` on macOS and Linux.
