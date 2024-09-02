@@ -84,7 +84,9 @@ pub fn list_all_conversations() -> AppResult<Vec<(i64, String)>> {
     path.push("chats.db");
     let conn = Connection::open(path).context("Could not connect to database")?;
     // Query the Conversations table for all conversation IDs
-    let mut stmt = conn.prepare("SELECT conversation_id, started_at FROM Conversations")?;
+    let mut stmt = conn.prepare(
+        "SELECT conversation_id, started_at FROM Conversations ORDER BY conversation_id DESC",
+    )?;
     let conversation_ids = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
         .context("Failed to query conversations table")?
