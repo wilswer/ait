@@ -124,18 +124,18 @@ pub fn delete_conversation(conversation_id: i64) -> AppResult<()> {
     path.push(".cache/ait");
     path.push("chats.db");
     let conn = Connection::open(path).context("Could not connect to database")?;
-    // Delete the conversation from the Conversations table
-    conn.execute(
-        "DELETE FROM Conversations WHERE conversation_id = ?1",
-        params![conversation_id],
-    )
-    .context("Failed to delete conversation")?;
     // Delete the messages from the Messages table
     conn.execute(
         "DELETE FROM Messages WHERE conversation_id = ?1",
         params![conversation_id],
     )
     .context("Failed to delete messages")?;
+    // Delete the conversation from the Conversations table
+    conn.execute(
+        "DELETE FROM Conversations WHERE conversation_id = ?1",
+        params![conversation_id],
+    )
+    .context("Failed to delete conversation")?;
     Ok(())
 }
 
