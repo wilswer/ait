@@ -72,7 +72,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Press ".into(),
                 "Esc".bold(),
                 " to stop editing. Press ".into(),
+                #[cfg(not(target_os = "linux"))]
                 "Enter + ALT".bold(),
+                #[cfg(target_os = "linux")]
+                "Enter + CTRL".bold(),
                 " to submit the message.".into(),
             ],
             Style::default(),
