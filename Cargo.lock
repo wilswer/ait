@@ -656,9 +656,9 @@ dependencies = [
 
 [[package]]
 name = "genai"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc8a6e46d71840233926fcb6f887fef3a3a0cb9999138c916cf98149836071a3"
+checksum = "36bd5ea063b1a858d876fb8eabcfca2e2e84f86753585fcc2c019c8ce7b93b50"
 dependencies = [
  "bytes",
  "derive_more",
@@ -670,6 +670,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "value-ext",
 ]
 
 [[package]]
@@ -2070,6 +2071,17 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "value-ext"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb73b85310c90212cedb1ee49a61d44586a9280f58d48ad9d97466bfe5b9c270"
+dependencies = [
+ "derive_more",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "vcpkg"
