@@ -17,7 +17,7 @@ clap = { version = "4.5", features = ["derive"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 dirs = "5.0"
 futures = "0.3"
-genai = "0.1.8"
+genai = "0.1.9"
 ratatui = "0.28"
 rusqlite = { version = "0.32", features = ["bundled"] }
 textwrap = "0.16"
