@@ -8,6 +8,13 @@ pub struct SnippetList {
     pub state: ListState,
 }
 
+impl SnippetList {
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.state.select(None);
+    }
+}
+
 #[derive(Debug)]
 pub struct SnippetItem {
     pub text: String,

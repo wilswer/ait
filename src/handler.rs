@@ -15,6 +15,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
             KeyCode::Char('s') => app.set_app_mode(AppMode::SnippetSelection),
             KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
+            KeyCode::Char('h') => {
+                app.set_chat_list()?;
+                app.set_app_mode(AppMode::ShowHistory)
+            }
             KeyCode::Char('?') => app.set_app_mode(AppMode::Help),
             #[cfg(not(target_os = "linux"))]
             KeyCode::Char('y') => app.yank_latest_assistant_message(),
@@ -48,6 +52,23 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             _ => {
                 app.input_textarea.input(key_event);
             }
+        },
+        AppMode::ShowHistory => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.set_app_mode(AppMode::Normal),
+            KeyCode::Char('h') | KeyCode::Left => app.select_no_chat(),
+            KeyCode::Char('j') | KeyCode::Down => app.select_next_chat(),
+            KeyCode::Char('k') | KeyCode::Up => app.select_previous_chat(),
+            KeyCode::Char('g') | KeyCode::Home => app.select_first_chat(),
+            KeyCode::Char('G') | KeyCode::End => app.select_last_chat(),
+            KeyCode::Enter => {
+                app.set_chat()?;
+                app.set_app_mode(AppMode::Normal);
+            }
+            KeyCode::Char('d') => {
+                app.delete_chat()?;
+                app.set_chat_list()?;
+            }
+            _ => {}
         },
         AppMode::ModelSelection => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('m') => {

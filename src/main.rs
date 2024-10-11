@@ -11,6 +11,7 @@ use ait::app::{App, AppResult};
 use ait::cli::Cli;
 use ait::event::{Event, EventHandler};
 use ait::handler::handle_key_events;
+use ait::storage::create_db;
 use ait::tui::Tui;
 
 #[tokio::main]
@@ -18,12 +19,15 @@ async fn main() -> AppResult<()> {
     let cli = Cli::parse();
     let temperature = cli.temperature;
 
+    create_db().context("Failed to create database")?;
+
     // Create an application.
-    let mut app = App::new();
+    let mut app = App::new(&cli.system_prompt);
     let models = get_models()
         .await
         .context("Failed to find models from providers")?;
     app.set_models(models);
+    app.set_chat_list()?;
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(io::stderr());
