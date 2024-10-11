@@ -656,9 +656,9 @@ dependencies = [
 
 [[package]]
 name = "genai"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83ae548a2399e1936ebca98628e5cc9a0ed57dc125f08f94abfe7baa7b52f6c9"
+checksum = "1505bea4bbae0b413fd1f1d2887c3082b8c4df4acb23c60690a34d6456249dda"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2074,9 +2074,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "value-ext"
-version = "0.0.1"
+version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb73b85310c90212cedb1ee49a61d44586a9280f58d48ad9d97466bfe5b9c270"
+checksum = "c2561a31f6267fc8d139ec0edb1782945406719abe82fa95afcf29f9f4c2b818"
 dependencies = [
  "derive_more",
  "serde",
