@@ -1,6 +1,6 @@
 [package]
 name = "ait"
-version = "0.1.4"
+version = "0.2.0"
 authors = ["Wilhelm Söderkvist Vermelin <wilhelm.wermelin@icloud.com>"]
 license = "MIT"
 edition = "2021"
