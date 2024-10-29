@@ -18,11 +18,11 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 dirs = "5.0"
 futures = "0.3"
 genai = "0.1.10"
-ratatui = "0.28"
+ratatui = "0.29"
 rusqlite = { version = "0.32", features = ["bundled"] }
 textwrap = "0.16"
 tokio = { version = "1", features = ["full"] }
-tui-textarea = "0.6"
+tui-textarea = "0.7"
 
 [profile.release]
 strip = true
