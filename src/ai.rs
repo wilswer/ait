@@ -7,8 +7,8 @@ use crate::app::{AppResult, Message};
 pub const MODELS: [(&str, &str); 5] = [
     ("OpenAI", "gpt-4o-mini"),
     ("OpenAI", "gpt-4o"),
+    ("Anthropic", "claude-3-5-sonnet-latest"),
     ("Anthropic", "claude-3-haiku-20240307"),
-    ("Anthropic", "claude-3-5-sonnet-20240620"),
     ("Ollama", "gemma:2b"),
 ];
 
