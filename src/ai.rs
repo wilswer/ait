@@ -41,13 +41,16 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
             continue;
         }
         let models_provider_res = client.all_model_names(kind).await;
-        let models_provider = match models_provider_res {
+        let mut models_provider = match models_provider_res {
             Ok(m) => m
                 .into_iter()
                 .map(|m| (kind.as_str().to_string(), m))
                 .collect::<Vec<(String, String)>>(),
             Err(_) => Vec::new(),
         };
+        if kind == AdapterKind::Anthropic {
+            models_provider.push((kind.as_str().into(), "claude-3-5-sonnet-latest".to_string()))
+        }
         models.extend(models_provider);
     }
     Ok(models)
