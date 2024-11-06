@@ -304,24 +304,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .wrap(Wrap { trim: true });
         f.render_widget(help_message, area);
     }
-    if let Some(cells) = app.selection.iter_selected_cells() {
-        for (col, row) in cells {
-            let cell = f.buffer_mut().cell_mut((col, row));
-            // Modify the cell style to show selection
-            if let Some(cell) = cell {
-                cell.set_style(Style::default().bg(Color::DarkGray).fg(Color::Magenta));
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        if let Some(cells) = app.selection.iter_selected_cells() {
+            for (col, row) in cells {
+                let cell = f.buffer_mut().cell_mut((col, row));
+                // Modify the cell style to show selection
+                if let Some(cell) = cell {
+                    cell.set_style(Style::default().bg(Color::DarkGray).fg(Color::Magenta));
+                }
             }
         }
-    }
 
-    if let Some(selected_text) = app.selection.get_selected_text(f.buffer_mut()) {
-        // Trim whitespace from the selected text for each line
-        let selected_text: String = selected_text
-            .lines()
-            .map(str::trim_end)
-            .collect::<Vec<&str>>()
-            .join("\n");
-        app.clipboard.set_text(&selected_text).unwrap();
+        if let Some(selected_text) = app.selection.get_selected_text(f.buffer_mut()) {
+            // Trim whitespace from the selected text for each line
+            let selected_text: String = selected_text
+                .lines()
+                .map(str::trim_end)
+                .collect::<Vec<&str>>()
+                .join("\n");
+            app.clipboard.set_text(&selected_text).unwrap();
+        }
     }
 }
 
