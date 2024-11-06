@@ -16,7 +16,10 @@ use crate::{
     storage::list_all_messages,
 };
 
-pub const SELECTED_STYLE: Style = Style::new().add_modifier(Modifier::BOLD).fg(Color::Green);
+pub const SELECTED_STYLE: Style = Style::new()
+    .add_modifier(Modifier::BOLD)
+    .fg(Color::LightBlue)
+    .bg(Color::DarkGray);
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -312,7 +315,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let cell = f.buffer_mut().cell_mut((col, row));
                 // Modify the cell style to show selection
                 if let Some(cell) = cell {
-                    cell.set_style(Style::default().bg(Color::DarkGray).fg(Color::Magenta));
+                    cell.set_style(SELECTED_STYLE);
                 }
             }
         }
