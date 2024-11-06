@@ -10,7 +10,7 @@ use ait::ai::{assistant_response, get_models};
 use ait::app::{App, AppResult};
 use ait::cli::Cli;
 use ait::event::{Event, EventHandler};
-use ait::handler::handle_key_events;
+use ait::handler::{handle_key_events, handle_mouse_events};
 use ait::storage::create_db;
 use ait::tui::Tui;
 
@@ -55,7 +55,10 @@ async fn main() -> AppResult<()> {
             Event::Key(key_event) => {
                 handle_key_events(key_event, &mut app).context("Error handling key events")?
             }
-            Event::Mouse(_) | Event::Resize(_, _) => {}
+            Event::Mouse(mouse_event) => {
+                handle_mouse_events(mouse_event, &mut app);
+            }
+            Event::Resize(_, _) => {}
         }
 
         // Check for a new query and spawn a task to handle it

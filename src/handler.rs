@@ -2,6 +2,7 @@ use crate::app::{App, AppMode, AppResult};
 
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{MouseEvent, MouseEventKind};
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
@@ -27,6 +28,12 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 app.increment_vertical_scroll()?;
+            }
+            KeyCode::Char('g') => {
+                app.scroll_to_top();
+            }
+            KeyCode::Char('G') => {
+                let _ = app.scroll_to_bottom();
             }
             _ => {}
         },
@@ -110,4 +117,25 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
         },
     }
     Ok(())
+}
+
+pub fn handle_mouse_events(event: MouseEvent, app: &mut App) {
+    match event.kind {
+        MouseEventKind::Down(_) => {
+            // Start selection
+            app.selection.start = Some((event.column, event.row));
+            app.selection.end = Some((event.column, event.row));
+        }
+        MouseEventKind::Drag(_) => {
+            // Update selection end point while dragging
+            if app.selection.start.is_some() {
+                app.selection.end = Some((event.column, event.row));
+            }
+        }
+        MouseEventKind::Up(_) => {
+            app.selection.start = None;
+            app.selection.end = None;
+        }
+        _ => {}
+    }
 }

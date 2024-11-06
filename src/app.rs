@@ -6,6 +6,7 @@ use arboard::Clipboard;
 use std::fs;
 
 use ratatui::{
+    buffer::Buffer,
     style::{Color, Style},
     widgets::Block,
 };
@@ -21,6 +22,63 @@ use crate::{
     },
 };
 use crate::{models::ModelList, snippets::SnippetList};
+
+#[derive(Debug, Clone, Default)]
+pub struct Selection {
+    pub start: Option<(u16, u16)>, // (column, row)
+    pub end: Option<(u16, u16)>,
+}
+
+impl Selection {
+    pub fn get_selected_text(&self, buffer: &Buffer) -> Option<String> {
+        // Need both start and end points to make a selection
+        let (start, end) = match (self.start, self.end) {
+            (Some(start), Some(end)) => (start, end),
+            _ => return None,
+        };
+
+        // Calculate bounds (handles selection in any direction)
+        let start_row = start.1.min(end.1);
+        let end_row = start.1.max(end.1);
+        let start_col = start.0.min(end.0);
+        let end_col = start.0.max(end.0);
+
+        let mut selected_text = String::new();
+
+        for row in start_row..=end_row {
+            // Add newline between rows, but not before first row
+            if row > start_row {
+                selected_text.push('\n');
+            }
+
+            for col in start_col..=end_col {
+                let cell = buffer.cell((col, row));
+                if let Some(cell) = cell {
+                    selected_text.push_str(cell.symbol());
+                }
+            }
+        }
+
+        Some(selected_text)
+    }
+
+    pub fn iter_selected_cells(&self) -> Option<impl Iterator<Item = (u16, u16)>> {
+        let (start, end) = match (self.start, self.end) {
+            (Some(start), Some(end)) => (start, end),
+            _ => return None,
+        };
+
+        let start_row = start.1.min(end.1);
+        let end_row = start.1.max(end.1);
+        let start_col = start.0.min(end.0);
+        let end_col = start.0.max(end.0);
+
+        Some(
+            (start_row..=end_row)
+                .flat_map(move |row| (start_col..=end_col).map(move |col| (col, row))),
+        )
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -94,6 +152,8 @@ pub struct App<'a> {
     pub snippet_list: SnippetList,
     /// List of chats
     pub chat_list: ChatList,
+    /// Selected text
+    pub selection: Selection,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -128,6 +188,7 @@ impl Default for App<'_> {
             selected_model_name: "claude-3-5-sonnet-latest".to_string(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
+            selection: Selection::default(),
         }
     }
 }
@@ -177,8 +238,9 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub fn increment_vertical_scroll(&mut self) -> AppResult<()> {
-        let (width, _) = crossterm::terminal::size().context("Unable to get terminal size")?;
+    fn get_max_scroll(&self) -> AppResult<usize> {
+        let (width, _) =
+            crossterm::terminal::size().context("Could not get terminal size from crossterm")?;
         let max_scroll = self
             .messages
             .iter()
@@ -189,7 +251,13 @@ impl<'a> App<'a> {
             .collect::<Vec<&str>>()
             .len()
             + 3 * (self.messages.len())
-            - 1;
+            - 2;
+
+        Ok(max_scroll)
+    }
+
+    pub fn increment_vertical_scroll(&mut self) -> AppResult<()> {
+        let max_scroll = self.get_max_scroll().context("Unable to get max scroll")?;
         if self.vertical_scroll < max_scroll {
             self.vertical_scroll += 1;
         }
@@ -198,6 +266,15 @@ impl<'a> App<'a> {
 
     pub fn decrement_vertical_scroll(&mut self) {
         self.vertical_scroll = self.vertical_scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        self.vertical_scroll = 0;
+    }
+
+    pub fn scroll_to_bottom(&mut self) -> AppResult<()> {
+        self.vertical_scroll = self.get_max_scroll().context("Unable to get max scroll")?;
+        Ok(())
     }
 
     pub fn submit_message(&mut self) -> AppResult<()> {
