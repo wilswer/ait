@@ -41,15 +41,15 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             // Exit editing mode on `ESC`
             KeyCode::Esc => app.set_app_mode(AppMode::Normal),
             KeyCode::Char('V') | KeyCode::Char('v') => {
-                if modifiers == KeyModifiers::CONTROL {
+                if modifiers.contains(KeyModifiers::CONTROL) {
                     #[cfg(not(target_os = "linux"))]
                     app.paste_to_input_textarea();
                 } else {
                     app.input_textarea.input(key_event);
                 }
             }
-            KeyCode::Enter => {
-                if !modifiers.is_empty() {
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                if modifiers.contains(KeyModifiers::CONTROL) {
                     app.submit_message()
                         .context("Handler failed to submit message")?;
                 } else {
