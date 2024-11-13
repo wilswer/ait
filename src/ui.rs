@@ -250,7 +250,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             "Press ".into(),
             "Esc".bold(),
             " to stop editing. Press ".into(),
-            "Enter + ALT".bold(),
+            "CONTROL + S (C-s)".bold(),
             " to submit the message. ".into(),
             "Paste into the text area by pressing ".into(),
             "Ctrl + V".bold(),
