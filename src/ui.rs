@@ -302,6 +302,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Press ".into(),
                 "Esc/q".bold(),
                 " to exit. Press ".into(),
+                "i".bold(),
+                " to enter text. Press ".into(),
                 "?".bold(),
                 " for help.".into(),
             ]
