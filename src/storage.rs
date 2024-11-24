@@ -61,6 +61,27 @@ pub fn insert_message(conversation_id: i64, message: &Message) -> AppResult<()> 
     Ok(())
 }
 
+pub fn delete_message(conversation_id: i64, message: &Message) -> AppResult<()> {
+    let mut path = home_dir().context("Cannot find home directory")?;
+    path.push(".cache/ait");
+    path.push("chats.db");
+    let conn = Connection::open(path).context("Could not connect to database")?;
+
+    let (sender, message_text) = match message {
+        Message::User(text) => ("human", text),
+        Message::Assistant(text) => ("assistant", text),
+        _ => return Ok(()),
+    };
+
+    conn.execute(
+        "DELETE FROM Messages WHERE conversation_id = ?1 AND sender = ?2 AND message_text = ?3",
+        params![conversation_id, sender, message_text],
+    )
+    .context("Failed to delete message")?;
+
+    Ok(())
+}
+
 pub fn create_db_conversation(system_prompt: &str) -> AppResult<i64> {
     // Connect to the SQLite database
     let mut path = home_dir().context("Cannot find home directory")?;

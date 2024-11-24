@@ -17,8 +17,8 @@ use crate::{
     chats::ChatList,
     snippets::{find_fenced_code_snippets, SnippetItem},
     storage::{
-        create_db_conversation, delete_conversation, insert_message, list_all_conversations,
-        list_all_messages,
+        create_db_conversation, delete_conversation, delete_message, insert_message,
+        list_all_conversations, list_all_messages,
     },
 };
 use crate::{models::ModelList, snippets::SnippetList};
@@ -466,7 +466,7 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub fn delete_chat(&mut self) -> AppResult<()> {
+    pub fn delete_selected_chat(&mut self) -> AppResult<()> {
         if let Some(i) = self.chat_list.state.selected() {
             let chat_id = self.chat_list.items[i].chat_id;
             delete_conversation(chat_id)?;
@@ -474,6 +474,39 @@ impl<'a> App<'a> {
             self.messages.clear();
             self.messages = list_all_messages(chat_id)?;
             self.conversation_id = None;
+        }
+        Ok(())
+    }
+
+    pub fn delete_chat_by_id(&mut self, id: i64) -> AppResult<()> {
+        delete_conversation(id)?;
+        Ok(())
+    }
+
+    pub fn new_chat(&mut self) {
+        if !self.messages.is_empty() {
+            self.messages = Vec::new();
+            self.conversation_id = None;
+            self.has_unprocessed_messages = false;
+        }
+    }
+
+    pub fn redo_last_message(&mut self) -> AppResult<()> {
+        self.has_unprocessed_messages = false;
+        while let Some(m) = self.messages.pop() {
+            if let Some(chat_id) = self.conversation_id {
+                delete_message(chat_id, &m)?;
+            }
+            match m {
+                Message::User(s) => {
+                    self.input_textarea = styled_input_textarea();
+                    self.input_textarea.insert_str(s);
+                    break;
+                }
+                _ => {
+                    continue;
+                }
+            }
         }
         Ok(())
     }

@@ -35,6 +35,11 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('G') => {
                 let _ = app.scroll_to_bottom();
             }
+            KeyCode::Char('r') => {
+                app.redo_last_message()?;
+                app.set_app_mode(AppMode::Editing);
+            }
+            KeyCode::Char('n') => app.new_chat(),
             _ => {}
         },
         AppMode::Editing => match code {
@@ -72,7 +77,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.set_app_mode(AppMode::Normal);
             }
             KeyCode::Char('d') => {
-                app.delete_chat()?;
+                app.delete_selected_chat()?;
                 app.set_chat_list()?;
             }
             _ => {}
