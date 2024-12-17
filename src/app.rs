@@ -508,6 +508,20 @@ impl<'a> App<'a> {
                 }
             }
         }
+
+        // Clear snippet list and find fenced code snippets
+        self.snippet_list.clear();
+        for message in self.messages.iter() {
+            let message_content = message.as_ref();
+            let discovered_snippets = find_fenced_code_snippets(
+                message_content.split('\n').map(|s| s.to_string()).collect(),
+            );
+            let snippet_items: Vec<SnippetItem> = discovered_snippets
+                .iter()
+                .map(|snippet| snippet.to_string().into())
+                .collect();
+            self.snippet_list.items.extend(snippet_items);
+        }
         Ok(())
     }
 
