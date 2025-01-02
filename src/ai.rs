@@ -20,6 +20,7 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::Anthropic => "ANTHROPIC_API_KEY",
         AdapterKind::Groq => "GROQ_API_KEY",
         AdapterKind::Cohere => "COHERE_API_KEY",
+        AdapterKind::Xai => "XAI_API_KEY",
     }
 }
 
@@ -31,6 +32,7 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
         AdapterKind::Anthropic,
         AdapterKind::Groq,
         AdapterKind::Cohere,
+        AdapterKind::Xai,
     ];
 
     let client = Client::default();

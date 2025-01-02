@@ -656,9 +656,9 @@ dependencies = [
 
 [[package]]
 name = "genai"
-version = "0.1.12"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62cca2b78f99a7414dbf456f8e4b1239dbd5f90def7e1998d8c94b1805f3d1ca"
+checksum = "f902d2a31eae179829cd73b12db5b21f5aee9209622a82e4d4a1f273748de9d2"
 dependencies = [
  "bytes",
  "derive_more",
