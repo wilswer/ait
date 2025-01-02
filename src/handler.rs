@@ -93,7 +93,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('G') | KeyCode::End => app.select_last_model(),
             KeyCode::Enter => {
                 app.set_model();
-                app.set_app_mode(AppMode::Normal);
+                app.set_app_mode(AppMode::Editing);
             }
             _ => {}
         },

@@ -2,7 +2,6 @@ use anyhow::Context;
 use clap::Parser;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use std::io;
 use tokio::sync::mpsc;
 use tokio::task;
 
@@ -30,7 +29,7 @@ async fn main() -> AppResult<()> {
     app.set_chat_list()?;
 
     // Initialize the terminal user interface.
-    let backend = CrosstermBackend::new(io::stderr());
+    let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend).context("Failed to create terminal")?;
     let events = EventHandler::new(250);
     let mut tui = Tui::new(terminal, events);
