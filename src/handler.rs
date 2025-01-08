@@ -24,7 +24,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             #[cfg(not(target_os = "linux"))]
             KeyCode::Char('y') => app.yank_latest_assistant_message(),
             KeyCode::Up | KeyCode::Char('k') => {
-                app.decrement_vertical_scroll();
+                app.decrement_vertical_scroll()?;
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 app.increment_vertical_scroll()?;
@@ -124,7 +124,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
     Ok(())
 }
 
-pub fn handle_mouse_events(event: MouseEvent, app: &mut App) {
+pub fn handle_mouse_events(event: MouseEvent, app: &mut App) -> AppResult<()> {
     match event.kind {
         MouseEventKind::Down(_) => {
             // Start selection
@@ -141,6 +141,13 @@ pub fn handle_mouse_events(event: MouseEvent, app: &mut App) {
             app.selection.start = None;
             app.selection.end = None;
         }
+        MouseEventKind::ScrollDown => {
+            app.increment_vertical_scroll()?;
+        }
+        MouseEventKind::ScrollUp => {
+            app.decrement_vertical_scroll()?;
+        }
         _ => {}
     }
+    Ok(())
 }

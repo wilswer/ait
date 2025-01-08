@@ -55,7 +55,7 @@ async fn main() -> AppResult<()> {
                 handle_key_events(key_event, &mut app).context("Error handling key events")?
             }
             Event::Mouse(mouse_event) => {
-                handle_mouse_events(mouse_event, &mut app);
+                handle_mouse_events(mouse_event, &mut app)?;
             }
             Event::Resize(_, _) => {}
         }

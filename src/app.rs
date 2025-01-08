@@ -264,8 +264,9 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub fn decrement_vertical_scroll(&mut self) {
+    pub fn decrement_vertical_scroll(&mut self) -> AppResult<()> {
         self.vertical_scroll = self.vertical_scroll.saturating_sub(1);
+        Ok(())
     }
 
     pub fn scroll_to_top(&mut self) {
