@@ -84,6 +84,7 @@ impl Selection {
 pub enum Message {
     User(String),
     Assistant(String),
+    // TODO: don't show errors as messages, show in popup
     Error(String),
 }
 
