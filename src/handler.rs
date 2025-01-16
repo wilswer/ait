@@ -14,7 +14,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             // Exit application on `ESC` or `q`
             KeyCode::Esc | KeyCode::Char('q') => app.quit(),
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
-            KeyCode::Char('s') => app.set_app_mode(AppMode::SnippetSelection),
+            KeyCode::Char('s') => {
+                app.snippet_list.state.select_first();
+                app.set_app_mode(AppMode::SnippetSelection);
+            }
             KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
             KeyCode::Char('h') => {
                 app.set_chat_list()?;
