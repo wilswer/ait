@@ -114,13 +114,19 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
 }
 
 pub fn render(f: &mut Frame, app: &mut App) {
-    f.render_widget(
-        Block::bordered()
-            .title("AI in the Terminal")
-            .title_alignment(Alignment::Center)
-            .border_type(BorderType::Rounded),
-        f.area(),
-    );
+    let title = format!("AI in the Terminal (AIT) v{}", env!("CARGO_PKG_VERSION"));
+    let main_block = Block::bordered()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .border_type(BorderType::Rounded);
+    match app.app_mode {
+        AppMode::Editing => {
+            f.render_widget(main_block.border_style(Style::new().yellow()), f.area());
+        }
+        _ => {
+            f.render_widget(main_block, f.area());
+        }
+    }
 
     let input_area_constraint = match app.app_mode {
         AppMode::Editing => Constraint::Min(1),
@@ -154,13 +160,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
         AppMode::SnippetSelection => {
             let block = Block::bordered().title("Select Snippet");
-            let area = centered_rect(20, 100, messages_area);
+            let area = left_aligned_rect(messages_area, 25);
             f.render_widget(Clear, area); //this clears out the background
             f.render_widget(block, area);
             render_snippet_list(f, area, app);
 
             let preview_block = Block::bordered().title("Snippet Preview");
-            let preview_area = right_aligned_rect(messages_area, 40);
+            let preview_area = right_aligned_rect(messages_area, 75);
             f.render_widget(Clear, preview_area); //this clears out the background
             f.render_widget(preview_block, preview_area);
             let preview_text = app.get_snippet_text();
@@ -241,7 +247,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Up/Down".bold(),
                 " to select model, or press ".into(),
                 "Enter".bold(),
-                " to select model, and return to 'normal' mode.".into(),
+                " to select model, which immediately enters 'editing' mode.".into(),
             ];
             let chat_keys = vec![
                 "Press ".into(),
