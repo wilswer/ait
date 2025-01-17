@@ -10,6 +10,7 @@ use ratatui::{
     },
     Frame,
 };
+use tui_big_text::{BigText, PixelSize};
 
 use crate::{
     app::{App, AppMode, Message},
@@ -113,6 +114,15 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     );
 }
 
+fn render_init_screen(f: &mut Frame, area: Rect) {
+    let big_text = BigText::builder()
+        .alignment(Alignment::Center)
+        .pixel_size(PixelSize::Full)
+        .lines(vec!["AIT".into()])
+        .build();
+    // let text = Text::raw("Hi there");
+    f.render_widget(big_text, area);
+}
 pub fn render(f: &mut Frame, app: &mut App) {
     let title = format!("AI in the Terminal (AIT v{})", env!("CARGO_PKG_VERSION"));
     let main_block = Block::bordered()
@@ -145,7 +155,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     match app.app_mode {
         AppMode::Normal => {
-            render_messages(f, app, messages_area);
+            if !app.messages.is_empty() {
+                render_messages(f, app, messages_area);
+            } else {
+                render_init_screen(f, messages_area);
+            }
         }
         AppMode::Editing => {
             render_messages(f, app, messages_area);
