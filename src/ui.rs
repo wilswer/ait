@@ -114,7 +114,7 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
 }
 
 pub fn render(f: &mut Frame, app: &mut App) {
-    let title = format!("AI in the Terminal (AIT) v{}", env!("CARGO_PKG_VERSION"));
+    let title = format!("AI in the Terminal (AIT v{})", env!("CARGO_PKG_VERSION"));
     let main_block = Block::bordered()
         .title(title)
         .title_alignment(Alignment::Center)
