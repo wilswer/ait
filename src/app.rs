@@ -490,6 +490,7 @@ impl<'a> App<'a> {
             self.messages = Vec::new();
             self.conversation_id = None;
             self.has_unprocessed_messages = false;
+            self.snippet_list = SnippetList::new();
         }
     }
 

@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use ratatui::widgets::ListState;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SnippetList {
     pub items: Vec<SnippetItem>,
     pub state: ListState,
@@ -13,8 +13,11 @@ impl SnippetList {
         self.items.clear();
         self.state.select(None);
     }
-}
 
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 #[derive(Debug)]
 pub struct SnippetItem {
     pub text: String,
