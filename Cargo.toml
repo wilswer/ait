@@ -19,7 +19,7 @@ dirs = "6.0"
 futures = "0.3"
 genai = "=0.1.17"
 ratatui = "0.29"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.33", features = ["bundled"] }
 textwrap = "0.16"
 tokio = { version = "1", features = ["full"] }
 tui-big-text = "0.7"
