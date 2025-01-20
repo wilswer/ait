@@ -141,6 +141,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .title_alignment(Alignment::Center)
         .border_type(BorderType::Rounded);
     match app.app_mode {
+        AppMode::Normal => {
+            f.render_widget(main_block.border_style(Style::new().blue()), f.area());
+        }
         AppMode::Editing => {
             f.render_widget(main_block.border_style(Style::new().yellow()), f.area());
         }
@@ -294,10 +297,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let msg = vec![
                 Line::from(Span::raw("Welcome to AI in the Terminal! ").bold()),
                 Line::from(""),
-                Line::from(Span::raw("When in 'normal' mode, you can:").bold()),
+                Line::from(vec![
+                    "When in ".bold(),
+                    "normal".bold().blue(),
+                    " mode, you can:".bold(),
+                ]),
                 Line::from(normal_keys),
                 Line::from(""),
-                Line::from(Span::raw("When in 'editing' mode, you can:").bold()),
+                Line::from(vec![
+                    "When in ".bold(),
+                    "editing".bold().yellow(),
+                    " mode, you can:".bold(),
+                ]),
                 Line::from(editing_keys),
                 Line::from(""),
                 Line::from(Span::raw("When choosing models, you can:").bold()),
