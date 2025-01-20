@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Margin, Rect},
+    layout::{Alignment, Constraint, Flex, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
@@ -114,6 +114,15 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     );
 }
 
+// Fron Ratatui's website
+fn center_rect(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
+    let [area] = Layout::horizontal([horizontal])
+        .flex(Flex::Center)
+        .areas(area);
+    let [area] = Layout::vertical([vertical]).flex(Flex::Center).areas(area);
+    area
+}
+
 fn render_init_screen(f: &mut Frame, area: Rect) {
     let big_text = BigText::builder()
         .alignment(Alignment::Center)
@@ -121,7 +130,9 @@ fn render_init_screen(f: &mut Frame, area: Rect) {
         .lines(vec!["AIT".into()])
         .build();
     // let text = Text::raw("Hi there");
-    f.render_widget(big_text, area);
+    let centered_area = center_rect(area, Constraint::Length(26), Constraint::Length(8)); // 3 8x8
+                                                                                          // characters
+    f.render_widget(big_text, centered_area);
 }
 pub fn render(f: &mut Frame, app: &mut App) {
     let title = format!("AI in the Terminal (AIT v{})", env!("CARGO_PKG_VERSION"));
