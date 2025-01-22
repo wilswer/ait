@@ -63,8 +63,8 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
 pub async fn assistant_response(
     messages: &[Message],
     model: &str,
-    system_prompt: &str,
-    temperature: &f64,
+    system_prompt: Option<String>,
+    temperature: Option<f64>,
 ) -> AppResult<Message> {
     let chat_messages = messages
         .iter()
@@ -74,13 +74,20 @@ pub async fn assistant_response(
             _ => ChatMessage::assistant(""),
         })
         .collect::<Vec<ChatMessage>>();
-    let mut chat_req = ChatRequest::new(vec![ChatMessage::system(system_prompt)]);
+    let mut chat_req = if let Some(system_prompt) = system_prompt {
+        ChatRequest::new(vec![ChatMessage::system(system_prompt)])
+    } else {
+        ChatRequest::new(vec![])
+    };
 
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
-
-    let chat_opts = ChatOptions::default().with_temperature(*temperature);
+    let chat_opts = if let Some(temp) = temperature {
+        ChatOptions::default().with_temperature(temp)
+    } else {
+        ChatOptions::default()
+    };
     let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
     let client = ClientBuilder::default().with_config(client_config).build();

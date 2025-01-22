@@ -66,15 +66,15 @@ async fn main() -> AppResult<()> {
             let assistant_response_tx = assistant_response_tx.clone();
             let messages = app.messages.clone(); // This clone is necessary for the async task
             let selected_model_name = app.selected_model_name.clone(); // This clone is necessary for the async task
-            let system_prompt = cli.system_prompt.clone(); // This clone is necessary for the async task
+            let (system_prompt, temperature) = if selected_model_name.starts_with("o1") {
+                (None, None)
+            } else {
+                (Some(cli.system_prompt.clone()), Some(temperature)) // This clone is necessary for the async task
+            };
             task::spawn(async move {
-                let assistant_response = assistant_response(
-                    &messages,
-                    &selected_model_name,
-                    &system_prompt,
-                    &temperature,
-                )
-                .await;
+                let assistant_response =
+                    assistant_response(&messages, &selected_model_name, system_prompt, temperature)
+                        .await;
                 let _ = assistant_response_tx.send(assistant_response).await;
             });
         }
