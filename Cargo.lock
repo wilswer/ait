@@ -28,7 +28,6 @@ dependencies = [
  "dirs",
  "futures",
  "genai",
- "idna",
  "ratatui",
  "rusqlite",
  "textwrap",
