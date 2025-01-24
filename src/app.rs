@@ -187,7 +187,7 @@ impl Default for App<'_> {
                 }
             })),
             selected_model_name: "claude-3-5-sonnet-latest".to_string(),
-            snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false))),
+            snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
         }
@@ -329,8 +329,8 @@ impl<'a> App<'a> {
         let discovered_snippets =
             find_fenced_code_snippets(message_content.split('\n').map(|s| s.to_string()).collect());
         let snippet_items: Vec<SnippetItem> = discovered_snippets
-            .iter()
-            .map(|snippet| snippet.to_string().into())
+            .into_iter()
+            .map(|snippet| snippet.into())
             .collect();
         self.snippet_list.items.extend(snippet_items);
         self.has_unprocessed_messages = false;
@@ -417,11 +417,11 @@ impl<'a> App<'a> {
         self.snippet_list.state.select_last();
     }
 
-    pub fn get_snippet_text(&self) -> Option<&String> {
+    pub fn get_snippet(&self) -> Option<&SnippetItem> {
         self.snippet_list
             .state
             .selected()
-            .map(|i| &self.snippet_list.items[i].text)
+            .map(|i| &self.snippet_list.items[i])
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -520,8 +520,8 @@ impl<'a> App<'a> {
                 message_content.split('\n').map(|s| s.to_string()).collect(),
             );
             let snippet_items: Vec<SnippetItem> = discovered_snippets
-                .iter()
-                .map(|snippet| snippet.to_string().into())
+                .into_iter()
+                .map(|snippet| snippet.into())
                 .collect();
             self.snippet_list.items.extend(snippet_items);
         }
@@ -554,8 +554,8 @@ impl<'a> App<'a> {
                     message_content.split('\n').map(|s| s.to_string()).collect(),
                 );
                 let snippet_items: Vec<SnippetItem> = discovered_snippets
-                    .iter()
-                    .map(|snippet| snippet.to_string().into())
+                    .into_iter()
+                    .map(|snippet| snippet.into())
                     .collect();
                 self.snippet_list.items.extend(snippet_items);
             }

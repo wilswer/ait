@@ -14,6 +14,7 @@ use tui_big_text::{BigText, PixelSize};
 
 use crate::{
     app::{App, AppMode, Message},
+    snippets::create_highlighted_code,
     storage::list_all_messages,
 };
 
@@ -197,11 +198,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let preview_area = right_aligned_rect(messages_area, 75);
             f.render_widget(Clear, preview_area); //this clears out the background
             f.render_widget(preview_block, preview_area);
-            let preview_text = app.get_snippet_text();
+            let snippet = app.get_snippet();
             let preview_block_content = Block::new().padding(Padding::uniform(1));
-            if let Some(preview_text) = preview_text {
-                let snippet_paragraph = Paragraph::new(Text::from(preview_text.as_str()).magenta())
-                    .block(preview_block_content);
+            if let Some(preview_text) = snippet {
+                let snippet_text = if let Some(lang) = &preview_text.language {
+                    create_highlighted_code(&preview_text.text, lang)
+                } else {
+                    Text::from(preview_text.text.as_str()).magenta()
+                };
+                let snippet_paragraph = Paragraph::new(snippet_text).block(preview_block_content);
                 f.render_widget(snippet_paragraph, preview_area);
             }
         }
