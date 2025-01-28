@@ -9,14 +9,13 @@ use syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet};
 
 pub fn create_highlighted_code<'a>(code: &'a str, language: &'a str) -> Text<'a> {
     // Load syntax set and theme
-    let ps = SyntaxSet::load_defaults_newlines();
+    let ps = SyntaxSet::load_defaults_nonewlines();
     let ts = ThemeSet::load_defaults();
-    let ss = SyntaxSet::load_defaults_newlines();
 
     // Get syntax reference for the specified language
     let syntax = ps
         .find_syntax_by_name(language)
-        .unwrap_or_else(|| ss.find_syntax_plain_text());
+        .unwrap_or_else(|| ps.find_syntax_plain_text());
 
     // Create highlighter with default theme
     let mut h = HighlightLines::new(syntax, &ts.themes["base16-mocha.dark"]);
