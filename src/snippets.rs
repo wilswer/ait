@@ -18,14 +18,19 @@ fn load_theme() -> Theme {
     })
 }
 
-pub fn create_highlighted_code<'a>(code: &'a str, language: &'a str) -> Text<'a> {
+pub fn create_highlighted_code<'a>(
+    code: impl Into<String>,
+    language: impl Into<String>,
+) -> Text<'a> {
     // Load syntax set and theme
+    let code = code.into();
+    let language = language.into();
     let ps = SyntaxSet::load_defaults_nonewlines();
     // let ts = ThemeSet::load_defaults();
 
     // Get syntax reference for the specified language
     let syntax = ps
-        .find_syntax_by_name(language)
+        .find_syntax_by_name(&language)
         .unwrap_or_else(|| ps.find_syntax_plain_text());
 
     // Create highlighter with default theme
@@ -166,7 +171,7 @@ pub fn find_fenced_code_snippets(messages: Vec<String>) -> Vec<CodeSnippet> {
     snippets
 }
 
-fn capitalize(s: &str) -> String {
+pub fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
         None => String::new(),
