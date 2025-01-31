@@ -37,12 +37,15 @@ async fn main() -> AppResult<()> {
 
     // Create a channel to receive the assistant responses
     let (assistant_response_tx, mut assistant_response_rx) = mpsc::channel(32);
-
+    let mut rendered = false;
     // Start the main loop.
     while app.running {
-        // Render the user interface.
-        tui.draw(&mut app)
-            .context("Failed to render user interface")?;
+        if !rendered {
+            // Render the user interface.
+            tui.draw(&mut app)
+                .context("Failed to render user interface")?;
+            rendered = true;
+        }
         // Handle events.
         match tui
             .events
@@ -52,10 +55,14 @@ async fn main() -> AppResult<()> {
         {
             Event::Tick => app.tick(),
             Event::Key(key_event) => {
-                handle_key_events(key_event, &mut app).context("Error handling key events")?
+                handle_key_events(key_event, &mut app).context("Error handling key events")?;
+                tui.draw(&mut app)
+                    .context("Failed to render user interface")?;
             }
             Event::Mouse(mouse_event) => {
                 handle_mouse_events(mouse_event, &mut app)?;
+                tui.draw(&mut app)
+                    .context("Failed to render user interface")?;
             }
             Event::Resize(_, _) => {}
         }
@@ -82,10 +89,13 @@ async fn main() -> AppResult<()> {
         // Check for a response from the assistant and process it
         if let Ok(assistant_response) = assistant_response_rx.try_recv() {
             match assistant_response {
-                Ok(response) => app
-                    .receive_message(response)
-                    .await
-                    .context("Error while receiving message")?,
+                Ok(response) => {
+                    app.receive_message(response)
+                        .await
+                        .context("Error while receiving message")?;
+                    tui.draw(&mut app)
+                        .context("Failed to render user interface")?;
+                }
                 Err(e) => eprintln!("Error receiving assistant response: {}", e),
             }
         }

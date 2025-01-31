@@ -5,12 +5,13 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::ListState,
 };
+use rayon::prelude::*;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::{easy::HighlightLines, parsing::SyntaxSet};
 
 const EMBEDDED_THEME: &[u8] = include_bytes!("../catppuccin-mocha.tmTheme");
 
-fn load_theme() -> Theme {
+pub fn load_theme() -> Theme {
     let mut buff = std::io::Cursor::new(EMBEDDED_THEME);
     ThemeSet::load_from_reader(&mut buff).unwrap_or_else(|_| {
         let ts = ThemeSet::load_defaults();
@@ -21,12 +22,12 @@ fn load_theme() -> Theme {
 pub fn create_highlighted_code<'a>(
     code: impl Into<String>,
     language: impl Into<String>,
+    theme: &Theme,
 ) -> Text<'a> {
     // Load syntax set and theme
     let code = code.into();
     let language = language.into();
     let ps = SyntaxSet::load_defaults_nonewlines();
-    // let ts = ThemeSet::load_defaults();
 
     // Get syntax reference for the specified language
     let syntax = ps
@@ -34,8 +35,7 @@ pub fn create_highlighted_code<'a>(
         .unwrap_or_else(|| ps.find_syntax_plain_text());
 
     // Create highlighter with default theme
-    let theme = load_theme();
-    let mut h = HighlightLines::new(syntax, &theme);
+    let mut h = HighlightLines::new(syntax, theme);
 
     // Create highlighted lines
     let code_lines: Vec<Line> = code
@@ -46,7 +46,7 @@ pub fn create_highlighted_code<'a>(
                 .expect("Error highlighting line");
 
             let spans: Vec<Span> = highlights
-                .into_iter()
+                .into_par_iter()
                 .map(|(style, content)| {
                     Span::styled(
                         content.to_string(),

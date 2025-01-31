@@ -2,12 +2,14 @@ use ::dirs::home_dir;
 use anyhow::{Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
+use syntect::highlighting::Theme;
 
 use std::fs;
 
 use ratatui::{
     buffer::Buffer,
     style::{Color, Style},
+    text::Line,
     widgets::Block,
 };
 use tui_textarea::TextArea;
@@ -15,7 +17,7 @@ use tui_textarea::TextArea;
 use crate::{
     ai::MODELS,
     chats::ChatList,
-    snippets::{find_fenced_code_snippets, SnippetItem},
+    snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
     storage::{
         create_db_conversation, delete_conversation, delete_message, insert_message,
         list_all_conversations, list_all_messages,
@@ -155,6 +157,10 @@ pub struct App<'a> {
     pub chat_list: ChatList,
     /// Selected text
     pub selection: Selection,
+    /// Highlighting theme
+    pub theme: Theme,
+    /// Cached highlighted lines
+    pub cached_lines: Vec<Line<'a>>,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -190,6 +196,8 @@ impl Default for App<'_> {
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
+            theme: load_theme(),
+            cached_lines: Vec::new(),
         }
     }
 }
@@ -322,6 +330,10 @@ impl<'a> App<'a> {
                 (provider, model, false)
             }
         }));
+    }
+
+    pub fn update_cached_lines<'b: 'a>(&mut self, new_lines: Vec<Line<'b>>) {
+        self.cached_lines = new_lines;
     }
 
     pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {

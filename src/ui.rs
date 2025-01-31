@@ -10,11 +10,13 @@ use ratatui::{
     },
     Frame,
 };
+use rayon::prelude::*;
+use syntect::highlighting::Theme;
 use tui_big_text::{BigText, PixelSize};
 
 use crate::{
     app::{App, AppMode, Message},
-    snippets::create_highlighted_code,
+    snippets::{capitalize, create_highlighted_code},
     storage::list_all_messages,
 };
 
@@ -48,53 +50,86 @@ fn left_aligned_rect(r: Rect, p: u16) -> Rect {
     Layout::horizontal([Constraint::Fill(1), Constraint::Percentage(100 - p)]).split(r)[0]
 }
 
-fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
-    let messages: Vec<Line> = app
-        .messages
-        .iter()
+fn process_code_blocks(text: impl Into<String>, width: usize, theme: &Theme) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let mut in_code_block = false;
+    let mut code_buffer = String::new();
+    let mut language = String::new();
+    let text = text.into();
+
+    for line in text.lines() {
+        if line.starts_with("```") {
+            if in_code_block {
+                // End of code block
+                if !code_buffer.is_empty() {
+                    let highlighted = if !language.is_empty() {
+                        create_highlighted_code(&code_buffer, capitalize(&language), theme)
+                    } else {
+                        Text::from(code_buffer.clone())
+                    };
+                    lines.push(Line::from(format!("```{}", &language)));
+                    lines.extend(highlighted.lines);
+                    lines.push(Line::from("```"));
+                }
+                code_buffer.clear();
+                language.clear();
+                in_code_block = false;
+            } else {
+                // Start of code block
+                language = line.trim_start_matches('`').to_string();
+                in_code_block = true;
+            }
+        } else if in_code_block {
+            code_buffer.push_str(line);
+            code_buffer.push('\n');
+        } else {
+            // Regular text - wrap it
+            let wrapped = textwrap::wrap(line, width - 3);
+            lines.extend(wrapped.into_iter().map(|l| Line::from(l.to_string())));
+        }
+    }
+    lines
+}
+
+pub fn style_messages<'a>(
+    messages: &'a [Message],
+    width: usize,
+    theme: &'a Theme,
+) -> Vec<Line<'a>> {
+    messages
+        .into_par_iter()
         .flat_map(|m| {
-            let wrapped_message = textwrap::wrap(m.as_ref(), messages_area.width as usize - 3);
             let mut line_vec = Vec::new();
             match m {
-                Message::User(_) => {
+                Message::User(text) => {
                     line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
                     line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-                    line_vec.extend(
-                        wrapped_message
-                            .into_iter()
-                            .map(|l| Line::from(Span::raw(l).yellow())),
-                    );
+                    line_vec.extend(process_code_blocks(text, width, theme));
                     line_vec.push(Line::from(Span::raw("").bold().yellow()));
                 }
-                Message::Assistant(_) => {
+                Message::Assistant(text) => {
                     line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
                     line_vec.push(Line::from(Span::raw("---").bold().green()));
-                    line_vec.extend(
-                        wrapped_message
-                            .into_iter()
-                            .map(|l| Line::from(Span::raw(l).green())),
-                    );
+                    line_vec.extend(process_code_blocks(text, width, theme));
                     line_vec.push(Line::from(Span::raw("").bold().green()));
                 }
-                Message::Error(_) => {
+                Message::Error(text) => {
                     line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
                     line_vec.push(Line::from(Span::raw("---").bold().red()));
-                    line_vec.extend(
-                        wrapped_message
-                            .into_iter()
-                            .map(|l| Line::from(Span::raw(l).red())),
-                    );
+                    line_vec.extend(process_code_blocks(text, width, theme));
                     line_vec.push(Line::from(Span::raw("").bold().red()));
                 }
             }
             line_vec
         })
-        .collect();
+        .collect()
+}
 
+fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
         .end_symbol(Some("↓"));
-
+    let messages = style_messages(&app.messages, messages_area.width as usize, &app.theme);
     let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
 
     let messages_text = Text::from(messages);
@@ -130,7 +165,6 @@ fn render_init_screen(f: &mut Frame, area: Rect) {
         .pixel_size(PixelSize::Full)
         .lines(vec!["AIT".into()])
         .build();
-    // let text = Text::raw("Hi there");
     let centered_area = center_rect(area, Constraint::Length(26), Constraint::Length(8)); // 3 8x8
                                                                                           // characters
     f.render_widget(big_text, centered_area);
@@ -202,7 +236,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let preview_block_content = Block::new().padding(Padding::uniform(1));
             if let Some(preview_text) = snippet {
                 let snippet_text = if let Some(lang) = &preview_text.language {
-                    create_highlighted_code(&preview_text.text, lang)
+                    create_highlighted_code(&preview_text.text, lang, &app.theme)
                 } else {
                     Text::from(preview_text.text.as_str()).magenta()
                 };
