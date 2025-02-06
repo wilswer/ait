@@ -90,40 +90,6 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
     lines
 }
 
-// pub fn style_messages<'a>(
-//     messages: &'a [Message],
-//     width: usize,
-//     theme: &'a Theme,
-// ) -> Vec<Line<'a>> {
-//     messages
-//         .iter()
-//         .flat_map(|m| {
-//             let mut line_vec = Vec::new();
-//             match m {
-//                 Message::User(text) => {
-//                     line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
-//                     line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-//                     line_vec.extend(process_code_blocks(text, width, theme));
-//                     line_vec.push(Line::from(Span::raw("").bold().yellow()));
-//                 }
-//                 Message::Assistant(text) => {
-//                     line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-//                     line_vec.push(Line::from(Span::raw("---").bold().green()));
-//                     line_vec.extend(process_code_blocks(text, width, theme));
-//                     line_vec.push(Line::from(Span::raw("").bold().green()));
-//                 }
-//                 Message::Error(text) => {
-//                     line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
-//                     line_vec.push(Line::from(Span::raw("---").bold().red()));
-//                     line_vec.extend(process_code_blocks(text, width, theme));
-//                     line_vec.push(Line::from(Span::raw("").bold().red()));
-//                 }
-//             }
-//             line_vec
-//         })
-//         .collect()
-// }
-
 pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Line<'a>> {
     let mut line_vec = Vec::new();
     match message {
@@ -148,39 +114,6 @@ pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Li
     }
     line_vec
 }
-
-// pub fn style_app_messages<'a>(app: &'a mut App<'a>) {
-//     if let Some(TerminalSize { width, height: _ }) = app.size {
-//         app.cached_lines = app
-//             .messages
-//             .iter()
-//             .flat_map(|m| {
-//                 let mut line_vec = Vec::new();
-//                 match m {
-//                     Message::User(text) => {
-//                         line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
-//                         line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-//                         line_vec.extend(process_code_blocks(text, width as usize, &app.theme));
-//                         line_vec.push(Line::from(Span::raw("").bold().yellow()));
-//                     }
-//                     Message::Assistant(text) => {
-//                         line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-//                         line_vec.push(Line::from(Span::raw("---").bold().green()));
-//                         line_vec.extend(process_code_blocks(text, width as usize, &app.theme));
-//                         line_vec.push(Line::from(Span::raw("").bold().green()));
-//                     }
-//                     Message::Error(text) => {
-//                         line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
-//                         line_vec.push(Line::from(Span::raw("---").bold().red()));
-//                         line_vec.extend(process_code_blocks(text, width as usize, &app.theme));
-//                         line_vec.push(Line::from(Span::raw("").bold().red()));
-//                     }
-//                 }
-//                 line_vec
-//             })
-//             .collect()
-//     }
-// }
 
 fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
