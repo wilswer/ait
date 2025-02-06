@@ -31,21 +31,17 @@ async fn main() -> AppResult<()> {
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend).context("Failed to create terminal")?;
+    app.set_terminal_size(terminal.size()?.width, terminal.size()?.height);
     let events = EventHandler::new(250);
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
 
     // Create a channel to receive the assistant responses
     let (assistant_response_tx, mut assistant_response_rx) = mpsc::channel(32);
-    let mut rendered = false;
     // Start the main loop.
     while app.running {
-        if !rendered {
-            // Render the user interface.
-            tui.draw(&mut app)
-                .context("Failed to render user interface")?;
-            rendered = true;
-        }
+        tui.draw(&mut app)
+            .context("Failed to render user interface")?;
         // Handle events.
         match tui
             .events
@@ -56,15 +52,13 @@ async fn main() -> AppResult<()> {
             Event::Tick => app.tick(),
             Event::Key(key_event) => {
                 handle_key_events(key_event, &mut app).context("Error handling key events")?;
-                tui.draw(&mut app)
-                    .context("Failed to render user interface")?;
             }
             Event::Mouse(mouse_event) => {
                 handle_mouse_events(mouse_event, &mut app)?;
-                tui.draw(&mut app)
-                    .context("Failed to render user interface")?;
             }
-            Event::Resize(_, _) => {}
+            Event::Resize(x, y) => {
+                app.set_terminal_size(x, y);
+            }
         }
 
         // Check for a new query and spawn a task to handle it
@@ -93,8 +87,6 @@ async fn main() -> AppResult<()> {
                     app.receive_message(response)
                         .await
                         .context("Error while receiving message")?;
-                    tui.draw(&mut app)
-                        .context("Failed to render user interface")?;
                 }
                 Err(e) => eprintln!("Error receiving assistant response: {}", e),
             }

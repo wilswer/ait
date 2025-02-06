@@ -22,6 +22,7 @@ use crate::{
         create_db_conversation, delete_conversation, delete_message, insert_message,
         list_all_conversations, list_all_messages,
     },
+    ui::style_message,
 };
 use crate::{models::ModelList, snippets::SnippetList};
 
@@ -124,6 +125,12 @@ pub enum AppMode {
     Help,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TerminalSize {
+    pub width: u16,
+    pub height: u16,
+}
+
 /// App holds the state of the application
 pub struct App<'a> {
     /// Input text area
@@ -159,6 +166,8 @@ pub struct App<'a> {
     pub selection: Selection,
     /// Highlighting theme
     pub theme: Theme,
+    /// Terminal size
+    pub size: Option<TerminalSize>,
     /// Cached highlighted lines
     pub cached_lines: Vec<Line<'a>>,
 }
@@ -197,6 +206,7 @@ impl Default for App<'_> {
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
             theme: load_theme(),
+            size: None,
             cached_lines: Vec::new(),
         }
     }
@@ -222,6 +232,36 @@ impl<'a> App<'a> {
             .context("Failed to create conversation in db")?;
         self.conversation_id = Some(conv_id);
         Ok(conv_id)
+    }
+
+    pub fn set_terminal_size(&mut self, width: u16, height: u16) {
+        self.size = Some(TerminalSize { width, height });
+    }
+
+    // pub fn cache_lines<'b: 'a>(&'b mut self) {
+    //     if let Some(TerminalSize { width, height: _ }) = self.size {
+    //         let lines = style_messages(&self.messages, width as usize, &self.theme);
+    //         self.cached_lines = lines;
+    //     }
+    // }
+    pub fn add_cached_lines(&mut self, message: Message) {
+        if let Some(TerminalSize { width, height: _ }) = self.size {
+            self.cached_lines
+                .extend(style_message(message, width as usize, self.theme.clone()));
+        }
+    }
+
+    pub fn recache_lines(&mut self, messages: Vec<Message>) {
+        self.cached_lines.clear();
+        if let Some(TerminalSize { width, height: _ }) = self.size {
+            for message in messages {
+                self.cached_lines.extend(style_message(
+                    message,
+                    width as usize,
+                    self.theme.clone(),
+                ));
+            }
+        }
     }
 
     fn write_chat_log(&self) -> AppResult<()> {
@@ -318,6 +358,7 @@ impl<'a> App<'a> {
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
         }
+        self.add_cached_lines(message.clone());
         self.messages.push(message);
         Ok(())
     }
@@ -330,10 +371,6 @@ impl<'a> App<'a> {
                 (provider, model, false)
             }
         }));
-    }
-
-    pub fn update_cached_lines<'b: 'a>(&mut self, new_lines: Vec<Line<'b>>) {
-        self.cached_lines = new_lines;
     }
 
     pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {
@@ -354,6 +391,7 @@ impl<'a> App<'a> {
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
         }
+        self.add_cached_lines(message.clone());
         self.messages.push(message);
         Ok(())
     }
@@ -486,8 +524,10 @@ impl<'a> App<'a> {
             delete_conversation(chat_id)?;
             self.chat_list.items.remove(i);
             self.messages.clear();
+            self.cached_lines.clear();
             self.messages = list_all_messages(chat_id)?;
             self.conversation_id = None;
+            self.recache_lines(self.messages.clone());
         }
         Ok(())
     }
@@ -499,7 +539,8 @@ impl<'a> App<'a> {
 
     pub fn new_chat(&mut self) {
         if !self.messages.is_empty() {
-            self.messages = Vec::new();
+            self.messages.clear();
+            self.cached_lines.clear();
             self.conversation_id = None;
             self.has_unprocessed_messages = false;
             self.snippet_list = SnippetList::new();
@@ -523,6 +564,7 @@ impl<'a> App<'a> {
                 }
             }
         }
+        self.recache_lines(self.messages.clone());
 
         // Clear snippet list and find fenced code snippets
         self.snippet_list.clear();
@@ -560,7 +602,7 @@ impl<'a> App<'a> {
             self.messages.clear();
             self.messages = list_all_messages(self.chat_list.items[i].chat_id)?;
             self.snippet_list.clear();
-            for message in self.messages.iter() {
+            for message in self.messages.iter_mut() {
                 let message_content = message.as_ref();
                 let discovered_snippets = find_fenced_code_snippets(
                     message_content.split('\n').map(|s| s.to_string()).collect(),
@@ -571,6 +613,7 @@ impl<'a> App<'a> {
                     .collect();
                 self.snippet_list.items.extend(snippet_items);
             }
+            self.recache_lines(self.messages.clone());
             self.vertical_scroll = 0;
         }
         Ok(())

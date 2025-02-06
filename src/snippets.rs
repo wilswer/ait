@@ -5,7 +5,6 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::ListState,
 };
-use rayon::prelude::*;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::{easy::HighlightLines, parsing::SyntaxSet};
 
@@ -46,7 +45,7 @@ pub fn create_highlighted_code<'a>(
                 .expect("Error highlighting line");
 
             let spans: Vec<Span> = highlights
-                .into_par_iter()
+                .into_iter()
                 .map(|(style, content)| {
                     Span::styled(
                         content.to_string(),
