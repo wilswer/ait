@@ -238,12 +238,6 @@ impl<'a> App<'a> {
         self.size = Some(TerminalSize { width, height });
     }
 
-    // pub fn cache_lines<'b: 'a>(&'b mut self) {
-    //     if let Some(TerminalSize { width, height: _ }) = self.size {
-    //         let lines = style_messages(&self.messages, width as usize, &self.theme);
-    //         self.cached_lines = lines;
-    //     }
-    // }
     pub fn add_cached_lines(&mut self, message: Message) {
         if let Some(TerminalSize { width, height: _ }) = self.size {
             self.cached_lines
