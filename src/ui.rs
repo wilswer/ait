@@ -15,7 +15,7 @@ use tui_big_text::{BigText, PixelSize};
 
 use crate::{
     app::{App, AppMode, Message},
-    snippets::{capitalize, create_highlighted_code},
+    snippets::{create_highlighted_code, translate_language_name_to_syntect_name},
     storage::list_all_messages,
 };
 
@@ -55,27 +55,41 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
     let mut code_buffer = String::new();
     let mut language = String::new();
     let text = text.into();
+    let mut nspaces = 0;
 
     for line in text.lines() {
-        if line.starts_with("```") {
+        if line.trim_start().starts_with("```") {
             if in_code_block {
                 // End of code block
                 if !code_buffer.is_empty() {
                     let highlighted = if !language.is_empty() {
-                        create_highlighted_code(&code_buffer, capitalize(&language), &theme)
+                        create_highlighted_code(
+                            &code_buffer,
+                            translate_language_name_to_syntect_name(&language),
+                            &theme,
+                        )
                     } else {
                         Text::from(code_buffer.clone())
                     };
-                    lines.push(Line::from(format!("```{}", &language)));
+                    lines.push(
+                        Line::from(format!("{}```{}", " ".repeat(nspaces), &language))
+                            .style(Style::default().fg(Color::Gray)),
+                    );
                     lines.extend(highlighted.lines);
-                    lines.push(Line::from("```"));
+                    lines.push(
+                        Line::from(format!("{}```", " ".repeat(nspaces)))
+                            .style(Style::default().fg(Color::Gray)),
+                    );
                 }
                 code_buffer.clear();
                 language.clear();
                 in_code_block = false;
+                // Assume no indentation
+                nspaces = 0;
             } else {
                 // Start of code block
-                language = line.trim_start_matches('`').to_string();
+                nspaces = line.len() - line.trim_start_matches(' ').len();
+                language = line.trim_start().trim_start_matches('`').to_string();
                 in_code_block = true;
             }
         } else if in_code_block {

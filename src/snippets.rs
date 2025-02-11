@@ -157,7 +157,7 @@ pub fn find_fenced_code_snippets(messages: Vec<String>) -> Vec<CodeSnippet> {
             } else {
                 // Extract language name after ```
                 let trimmed = line.trim_start();
-                current_language = capitalize(trimmed[3..].trim());
+                current_language = translate_language_name_to_syntect_name(trimmed[3..].trim());
             }
             in_code_block = !in_code_block;
         } else if in_code_block {
@@ -170,11 +170,20 @@ pub fn find_fenced_code_snippets(messages: Vec<String>) -> Vec<CodeSnippet> {
     snippets
 }
 
-pub fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+pub fn translate_language_name_to_syntect_name(s: &str) -> String {
+    match s {
+        // Special cases
+        "tex" | "latex" => "LaTeX".to_string(),
+        "ocaml" => "OCaml".to_string(),
+        "bash" => "Bourne Again Shell (bash)".to_string(),
+        // Probably more special cases to come, otherwise just capitalize it
+        _ => {
+            let mut c = s.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        }
     }
 }
 
