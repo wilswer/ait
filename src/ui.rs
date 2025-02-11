@@ -73,12 +73,12 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                     };
                     lines.push(
                         Line::from(format!("{}```{}", " ".repeat(nspaces), &language))
-                            .style(Style::default().fg(Color::Gray)),
+                            .style(Style::default().fg(Color::DarkGray)),
                     );
                     lines.extend(highlighted.lines);
                     lines.push(
                         Line::from(format!("{}```", " ".repeat(nspaces)))
-                            .style(Style::default().fg(Color::Gray)),
+                            .style(Style::default().fg(Color::DarkGray)),
                     );
                 }
                 code_buffer.clear();
