@@ -17,11 +17,30 @@ use ait::tui::Tui;
 async fn main() -> AppResult<()> {
     let cli = Cli::parse();
     let temperature = cli.temperature;
-
     create_db().context("Failed to create database")?;
 
     // Create an application.
-    let mut app = App::new(&cli.system_prompt);
+    let maybe_context = cli.read().context("Could not read from file or stdin.")?;
+
+    let system_prompt = if let Some(context) = maybe_context {
+        if !context.is_empty() {
+            format!(
+                r#"
+    You are a helpful assistant.
+    Answer the user's query using the provided context.
+    Context:
+    
+    {}
+    "#,
+                context
+            )
+        } else {
+            cli.system_prompt.clone()
+        }
+    } else {
+        cli.system_prompt.clone()
+    };
+    let mut app = App::new(&system_prompt);
     let models = get_models()
         .await
         .context("Failed to find models from providers")?;
@@ -70,7 +89,7 @@ async fn main() -> AppResult<()> {
             let (system_prompt, temperature) = if selected_model_name.starts_with("o1") {
                 (None, None)
             } else {
-                (Some(cli.system_prompt.clone()), Some(temperature)) // This clone is necessary for the async task
+                (Some(system_prompt.clone()), Some(temperature)) // This clone is necessary for the async task
             };
             task::spawn(async move {
                 let assistant_response =
