@@ -41,6 +41,43 @@ To submit queries to the model providers, you either need to obtain an API key a
 set the appropriate environment variable OR you need a running
 [Ollama](https://ollama.com/) instance on `http://localhost:11434`.
 
+To start the TUI simply run
+
+```bash
+ait
+```
+
+If you want to provide a custom system prompt, it can be achieved like this:
+
+```bash
+ait --system-prompt "You are a helpful, friendly assistant."
+```
+
+If you want to add context to your conversation, use the `--context` argument.
+
+```bash
+ait --context my_file.txt
+```
+
+`ait` can also read from stdin to add context:
+
+```bash
+cat my_file.txt | ait
+```
+
+A powerful pattern is to use a text serializer such as
+[`yek`](https://github.com/bodo-run/yek) and use this as context input:
+
+```bash
+yek my_file.txt | ait
+```
+
+Or serialize all file in a directory and add as context:
+
+```bash
+yek my_dir | ait
+```
+
 ## Chat history
 
 Chat history is stored as a `sqlite` database (facilitated by the
