@@ -29,7 +29,7 @@ async fn main() -> AppResult<()> {
     You are a helpful assistant.
     Answer the user's query using the provided context.
     Context:
-    
+
     {}
     "#,
                 context
