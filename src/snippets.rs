@@ -176,6 +176,7 @@ pub fn translate_language_name_to_syntect_name(s: &str) -> String {
         "tex" | "latex" => "LaTeX".to_string(),
         "ocaml" => "OCaml".to_string(),
         "bash" => "Bourne Again Shell (bash)".to_string(),
+        "sql" => "SQL".to_string(),
         // Probably more special cases to come, otherwise just capitalize it
         _ => {
             let mut c = s.chars();
