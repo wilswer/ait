@@ -1,12 +1,14 @@
 use anyhow::Context;
 use clap::Parser;
+use futures::StreamExt;
+use genai::chat::{ChatStreamEvent, StreamChunk};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::mpsc;
 use tokio::task;
 
-use ait::ai::{assistant_response, get_models};
-use ait::app::{App, AppResult};
+use ait::ai::{assistant_response_streaming, get_models};
+use ait::app::{App, AppResult, Message};
 use ait::cli::Cli;
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
@@ -51,12 +53,15 @@ async fn main() -> AppResult<()> {
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend).context("Failed to create terminal")?;
     app.set_terminal_size(terminal.size()?.width, terminal.size()?.height);
-    let events = EventHandler::new(250);
+    let events = EventHandler::new(50);
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
 
     // Create a channel to receive the assistant responses
     let (assistant_response_tx, mut assistant_response_rx) = mpsc::channel(32);
+    // Create additional channels for incomplete and complete messages
+    let (incomplete_tx, mut incomplete_rx) = mpsc::channel(32);
+    let (complete_tx, mut complete_rx) = mpsc::channel(32);
     // Start the main loop.
     while app.running {
         tui.draw(&mut app)
@@ -92,23 +97,66 @@ async fn main() -> AppResult<()> {
                 (Some(system_prompt.clone()), Some(temperature)) // This clone is necessary for the async task
             };
             task::spawn(async move {
-                let assistant_response =
-                    assistant_response(&messages, &selected_model_name, system_prompt, temperature)
-                        .await;
+                let assistant_response = assistant_response_streaming(
+                    &messages,
+                    &selected_model_name,
+                    system_prompt,
+                    temperature,
+                )
+                .await;
                 let _ = assistant_response_tx.send(assistant_response).await;
             });
         }
 
-        // Check for a response from the assistant and process it
+        // In the message processing part
         if let Ok(assistant_response) = assistant_response_rx.try_recv() {
-            match assistant_response {
-                Ok(response) => {
-                    app.receive_message(response)
-                        .await
-                        .context("Error while receiving message")?;
+            let incomplete_tx = incomplete_tx.clone();
+            let complete_tx = complete_tx.clone();
+            app.is_streaming = true;
+
+            task::spawn(async move {
+                match assistant_response {
+                    Ok(mut stream) => {
+                        let mut captured_content = String::new();
+                        while let Some(Ok(stream_event)) = stream.next().await {
+                            match stream_event {
+                                ChatStreamEvent::Start => {
+                                    let _ = incomplete_tx.send("".to_string()).await;
+                                }
+                                ChatStreamEvent::Chunk(StreamChunk { content })
+                                | ChatStreamEvent::ReasoningChunk(StreamChunk { content }) => {
+                                    if !content.is_empty() {
+                                        captured_content.push_str(&content);
+                                        let _ = incomplete_tx.send(captured_content.clone()).await;
+                                    }
+                                }
+                                ChatStreamEvent::End(_) => {
+                                    let _ = incomplete_tx.send(captured_content.clone()).await;
+                                    app.is_streaming = false;
+                                }
+                            }
+                        }
+                        let _ = complete_tx.send(captured_content).await;
+                        app.is_streaming = false;
+                    }
+                    Err(e) => eprintln!("Error receiving assistant response: {}", e),
                 }
-                Err(e) => eprintln!("Error receiving assistant response: {}", e),
-            }
+            });
+        }
+
+        // Handle incomplete messages
+        if let Ok(content) = incomplete_rx.try_recv() {
+            app.receive_incomplete_message(&content)
+                .await
+                .context("Error while receiving incomplete message")?;
+        }
+
+        // Handle complete messages
+        if let Ok(content) = complete_rx.try_recv() {
+            app.is_streaming = false;
+            app.receive_message(Message::Assistant(content))
+                .await
+                .context("Error while receiving message")?;
         }
     }
 

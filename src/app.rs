@@ -91,6 +91,27 @@ pub enum Message {
     Error(String),
 }
 
+#[derive(Debug, Clone)]
+pub enum PartialMessage {
+    Start,
+    Continue(String),
+    End,
+}
+
+pub fn partial_messages_to_string(partial_messages: Vec<PartialMessage>) -> String {
+    let mut result = String::new();
+
+    for message in partial_messages {
+        match message {
+            PartialMessage::Start => (), // Do nothing for Start
+            PartialMessage::Continue(s) => result.push_str(&s),
+            PartialMessage::End => (), // Do nothing for End
+        }
+    }
+
+    result
+}
+
 impl From<String> for Message {
     fn from(message: String) -> Self {
         Message::User(message)
@@ -170,6 +191,8 @@ pub struct App<'a> {
     pub size: Option<TerminalSize>,
     /// Cached highlighted lines
     pub cached_lines: Vec<Line<'a>>,
+    /// Is the app receiving streaming messages
+    pub is_streaming: bool,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -208,6 +231,7 @@ impl Default for App<'_> {
             theme: load_theme(),
             size: None,
             cached_lines: Vec::new(),
+            is_streaming: false,
         }
     }
 }
@@ -368,6 +392,10 @@ impl<'a> App<'a> {
     }
 
     pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {
+        self.is_streaming = false;
+        if let Some(Message::Assistant(_)) = self.messages.last() {
+            self.messages.pop();
+        }
         let message_content = message.as_ref();
         let discovered_snippets =
             find_fenced_code_snippets(message_content.split('\n').map(|s| s.to_string()).collect());
@@ -387,6 +415,16 @@ impl<'a> App<'a> {
         }
         self.add_cached_lines(message.clone());
         self.messages.push(message);
+        Ok(())
+    }
+
+    pub async fn receive_incomplete_message(&mut self, captured_content: &str) -> AppResult<()> {
+        if captured_content.is_empty() {
+            self.messages.push(Message::Assistant("".to_string()));
+        }
+        if let Some(Message::Assistant(last)) = self.messages.last_mut() {
+            *last = captured_content.to_string();
+        }
         Ok(())
     }
 

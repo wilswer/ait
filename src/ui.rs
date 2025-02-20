@@ -129,12 +129,57 @@ pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Li
     line_vec
 }
 
+fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line> {
+    let mut line_vec = Vec::new();
+    for message in messages {
+        match message {
+            Message::User(m) => {
+                let wrapped_message = textwrap::wrap(m, width - 3);
+                line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
+                line_vec.push(Line::from(Span::raw("---").bold().yellow()));
+                line_vec.extend(
+                    wrapped_message
+                        .into_iter()
+                        .map(|l| Line::from(Span::raw(l))),
+                );
+                line_vec.push(Line::from(Span::raw("")));
+            }
+            Message::Assistant(m) => {
+                let wrapped_message = textwrap::wrap(m, width - 3);
+                line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+                line_vec.push(Line::from(Span::raw("---").bold().green()));
+                line_vec.extend(
+                    wrapped_message
+                        .into_iter()
+                        .map(|l| Line::from(Span::raw(l))),
+                );
+                line_vec.push(Line::from(Span::raw("")));
+            }
+            Message::Error(m) => {
+                let wrapped_message = textwrap::wrap(m, width - 3);
+                line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
+                line_vec.push(Line::from(Span::raw("---").bold().red()));
+                line_vec.extend(
+                    wrapped_message
+                        .into_iter()
+                        .map(|l| Line::from(Span::raw(l).red())),
+                );
+                line_vec.push(Line::from(Span::raw("").bold().red()));
+            }
+        }
+    }
+    line_vec
+}
+
 fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
         .end_symbol(Some("↓"));
-    // let messages = style_messages(&app.messages, messages_area.width as usize, &app.theme);
-    let messages = app.cached_lines.clone();
+    let messages = if app.is_streaming {
+        messages_to_lines(&app.messages, messages_area.width as usize)
+    } else {
+        app.cached_lines.clone()
+    };
     let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
 
     let messages_text = Text::from(messages);

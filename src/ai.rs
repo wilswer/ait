@@ -1,5 +1,5 @@
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage, ChatOptions, ChatRequest};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStream};
 use genai::{Client, ClientBuilder, ClientConfig};
 
 use crate::app::{AppResult, Message};
@@ -103,4 +103,39 @@ pub async fn assistant_response(
     };
 
     Ok(chat_res)
+}
+
+pub async fn assistant_response_streaming(
+    messages: &[Message],
+    model: &str,
+    system_prompt: Option<String>,
+    temperature: Option<f64>,
+) -> AppResult<ChatStream> {
+    let chat_messages = messages
+        .iter()
+        .map(|m| match m {
+            Message::User(m) => ChatMessage::user(m),
+            Message::Assistant(m) => ChatMessage::assistant(m),
+            _ => ChatMessage::assistant(""),
+        })
+        .collect::<Vec<ChatMessage>>();
+    let mut chat_req = if let Some(system_prompt) = system_prompt {
+        ChatRequest::new(vec![ChatMessage::system(system_prompt)])
+    } else {
+        ChatRequest::new(vec![])
+    };
+
+    for chat_message in chat_messages {
+        chat_req = chat_req.append_message(chat_message);
+    }
+    let chat_opts = if let Some(temp) = temperature {
+        ChatOptions::default().with_temperature(temp)
+    } else {
+        ChatOptions::default()
+    };
+    let client_config = ClientConfig::default().with_chat_options(chat_opts);
+
+    let client = ClientBuilder::default().with_config(client_config).build();
+    let chat_res = client.exec_chat_stream(model, chat_req, None).await?;
+    Ok(chat_res.stream)
 }
