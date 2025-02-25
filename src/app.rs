@@ -218,13 +218,13 @@ impl Default for App<'_> {
             #[cfg(not(target_os = "linux"))]
             clipboard: Clipboard::new().unwrap(),
             model_list: ModelList::from_iter(MODELS.map(|(provider, model)| {
-                if model == "claude-3-5-sonnet-latest" {
+                if model == "claude-3-7-sonnet-latest" {
                     (provider, model, true)
                 } else {
                     (provider, model, false)
                 }
             })),
-            selected_model_name: "claude-3-5-sonnet-latest".to_string(),
+            selected_model_name: "claude-3-7-sonnet-latest".to_string(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),

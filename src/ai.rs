@@ -4,11 +4,12 @@ use genai::{Client, ClientBuilder, ClientConfig};
 
 use crate::app::{AppResult, Message};
 
-pub const MODELS: [(&str, &str); 5] = [
+pub const MODELS: [(&str, &str); 6] = [
     ("OpenAI", "gpt-4o-mini"),
     ("OpenAI", "gpt-4o"),
     ("Anthropic", "claude-3-5-sonnet-latest"),
     ("Anthropic", "claude-3-haiku-20240307"),
+    ("Anthropic", "claude-3-7-sonnet-latest"),
     ("Ollama", "gemma:2b"),
 ];
 
@@ -53,7 +54,7 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
             Err(_) => Vec::new(),
         };
         if kind == AdapterKind::Anthropic {
-            models_provider.push((kind.as_str().into(), "claude-3-5-sonnet-latest".to_string()))
+            models_provider.push((kind.as_str().into(), "claude-3-7-sonnet-latest".to_string()))
         }
         models.extend(models_provider);
     }
