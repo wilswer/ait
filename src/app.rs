@@ -2,12 +2,14 @@ use ::dirs::home_dir;
 use anyhow::{Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
+use syntect::highlighting::Theme;
 
 use std::fs;
 
 use ratatui::{
     buffer::Buffer,
     style::{Color, Style},
+    text::Line,
     widgets::Block,
 };
 use tui_textarea::TextArea;
@@ -15,11 +17,12 @@ use tui_textarea::TextArea;
 use crate::{
     ai::MODELS,
     chats::ChatList,
-    snippets::{find_fenced_code_snippets, SnippetItem},
+    snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
     storage::{
         create_db_conversation, delete_conversation, delete_message, insert_message,
         list_all_conversations, list_all_messages,
     },
+    ui::style_message,
 };
 use crate::{models::ModelList, snippets::SnippetList};
 
@@ -88,6 +91,27 @@ pub enum Message {
     Error(String),
 }
 
+#[derive(Debug, Clone)]
+pub enum PartialMessage {
+    Start,
+    Continue(String),
+    End,
+}
+
+pub fn partial_messages_to_string(partial_messages: Vec<PartialMessage>) -> String {
+    let mut result = String::new();
+
+    for message in partial_messages {
+        match message {
+            PartialMessage::Start => (), // Do nothing for Start
+            PartialMessage::Continue(s) => result.push_str(&s),
+            PartialMessage::End => (), // Do nothing for End
+        }
+    }
+
+    result
+}
+
 impl From<String> for Message {
     fn from(message: String) -> Self {
         Message::User(message)
@@ -120,6 +144,12 @@ pub enum AppMode {
     SnippetSelection,
     ShowHistory,
     Help,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TerminalSize {
+    pub width: u16,
+    pub height: u16,
 }
 
 /// App holds the state of the application
@@ -155,6 +185,14 @@ pub struct App<'a> {
     pub chat_list: ChatList,
     /// Selected text
     pub selection: Selection,
+    /// Highlighting theme
+    pub theme: Theme,
+    /// Terminal size
+    pub size: Option<TerminalSize>,
+    /// Cached highlighted lines
+    pub cached_lines: Vec<Line<'a>>,
+    /// Is the app receiving streaming messages
+    pub is_streaming: bool,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -180,16 +218,20 @@ impl Default for App<'_> {
             #[cfg(not(target_os = "linux"))]
             clipboard: Clipboard::new().unwrap(),
             model_list: ModelList::from_iter(MODELS.map(|(provider, model)| {
-                if model == "claude-3-5-sonnet-latest" {
+                if model == "claude-3-7-sonnet-latest" {
                     (provider, model, true)
                 } else {
                     (provider, model, false)
                 }
             })),
-            selected_model_name: "claude-3-5-sonnet-latest".to_string(),
-            snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false))),
+            selected_model_name: "claude-3-7-sonnet-latest".to_string(),
+            snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
+            theme: load_theme(),
+            size: None,
+            cached_lines: Vec::new(),
+            is_streaming: false,
         }
     }
 }
@@ -214,6 +256,30 @@ impl<'a> App<'a> {
             .context("Failed to create conversation in db")?;
         self.conversation_id = Some(conv_id);
         Ok(conv_id)
+    }
+
+    pub fn set_terminal_size(&mut self, width: u16, height: u16) {
+        self.size = Some(TerminalSize { width, height });
+    }
+
+    pub fn add_cached_lines(&mut self, message: Message) {
+        if let Some(TerminalSize { width, height: _ }) = self.size {
+            self.cached_lines
+                .extend(style_message(message, width as usize, self.theme.clone()));
+        }
+    }
+
+    pub fn recache_lines(&mut self, messages: Vec<Message>) {
+        self.cached_lines.clear();
+        if let Some(TerminalSize { width, height: _ }) = self.size {
+            for message in messages {
+                self.cached_lines.extend(style_message(
+                    message,
+                    width as usize,
+                    self.theme.clone(),
+                ));
+            }
+        }
     }
 
     fn write_chat_log(&self) -> AppResult<()> {
@@ -310,6 +376,7 @@ impl<'a> App<'a> {
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
         }
+        self.add_cached_lines(message.clone());
         self.messages.push(message);
         Ok(())
     }
@@ -325,12 +392,16 @@ impl<'a> App<'a> {
     }
 
     pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {
+        self.is_streaming = false;
+        if let Some(Message::Assistant(_)) = self.messages.last() {
+            self.messages.pop();
+        }
         let message_content = message.as_ref();
         let discovered_snippets =
             find_fenced_code_snippets(message_content.split('\n').map(|s| s.to_string()).collect());
         let snippet_items: Vec<SnippetItem> = discovered_snippets
-            .iter()
-            .map(|snippet| snippet.to_string().into())
+            .into_iter()
+            .map(|snippet| snippet.into())
             .collect();
         self.snippet_list.items.extend(snippet_items);
         self.has_unprocessed_messages = false;
@@ -342,7 +413,18 @@ impl<'a> App<'a> {
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
         }
+        self.add_cached_lines(message.clone());
         self.messages.push(message);
+        Ok(())
+    }
+
+    pub async fn receive_incomplete_message(&mut self, captured_content: &str) -> AppResult<()> {
+        if captured_content.is_empty() {
+            self.messages.push(Message::Assistant("".to_string()));
+        }
+        if let Some(Message::Assistant(last)) = self.messages.last_mut() {
+            *last = captured_content.to_string();
+        }
         Ok(())
     }
 
@@ -417,11 +499,11 @@ impl<'a> App<'a> {
         self.snippet_list.state.select_last();
     }
 
-    pub fn get_snippet_text(&self) -> Option<&String> {
+    pub fn get_snippet(&self) -> Option<&SnippetItem> {
         self.snippet_list
             .state
             .selected()
-            .map(|i| &self.snippet_list.items[i].text)
+            .map(|i| &self.snippet_list.items[i])
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -474,8 +556,10 @@ impl<'a> App<'a> {
             delete_conversation(chat_id)?;
             self.chat_list.items.remove(i);
             self.messages.clear();
+            self.cached_lines.clear();
             self.messages = list_all_messages(chat_id)?;
             self.conversation_id = None;
+            self.recache_lines(self.messages.clone());
         }
         Ok(())
     }
@@ -487,7 +571,8 @@ impl<'a> App<'a> {
 
     pub fn new_chat(&mut self) {
         if !self.messages.is_empty() {
-            self.messages = Vec::new();
+            self.messages.clear();
+            self.cached_lines.clear();
             self.conversation_id = None;
             self.has_unprocessed_messages = false;
             self.snippet_list = SnippetList::new();
@@ -511,6 +596,7 @@ impl<'a> App<'a> {
                 }
             }
         }
+        self.recache_lines(self.messages.clone());
 
         // Clear snippet list and find fenced code snippets
         self.snippet_list.clear();
@@ -520,8 +606,8 @@ impl<'a> App<'a> {
                 message_content.split('\n').map(|s| s.to_string()).collect(),
             );
             let snippet_items: Vec<SnippetItem> = discovered_snippets
-                .iter()
-                .map(|snippet| snippet.to_string().into())
+                .into_iter()
+                .map(|snippet| snippet.into())
                 .collect();
             self.snippet_list.items.extend(snippet_items);
         }
@@ -548,17 +634,18 @@ impl<'a> App<'a> {
             self.messages.clear();
             self.messages = list_all_messages(self.chat_list.items[i].chat_id)?;
             self.snippet_list.clear();
-            for message in self.messages.iter() {
+            for message in self.messages.iter_mut() {
                 let message_content = message.as_ref();
                 let discovered_snippets = find_fenced_code_snippets(
                     message_content.split('\n').map(|s| s.to_string()).collect(),
                 );
                 let snippet_items: Vec<SnippetItem> = discovered_snippets
-                    .iter()
-                    .map(|snippet| snippet.to_string().into())
+                    .into_iter()
+                    .map(|snippet| snippet.into())
                     .collect();
                 self.snippet_list.items.extend(snippet_items);
             }
+            self.recache_lines(self.messages.clone());
             self.vertical_scroll = 0;
         }
         Ok(())
