@@ -20,7 +20,7 @@ use crate::{
     snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
     storage::{
         create_db_conversation, delete_conversation, delete_message, insert_message,
-        list_all_conversations, list_all_messages,
+        list_all_messages, list_conversations,
     },
     ui::style_message,
 };
@@ -541,7 +541,7 @@ impl<'a> App<'a> {
     }
 
     pub fn set_chat_list(&mut self) -> AppResult<()> {
-        let chats = list_all_conversations()?;
+        let chats = list_conversations(None)?;
         let chats = chats
             .into_iter()
             .map(|(id, started_at)| (id, started_at, false))
