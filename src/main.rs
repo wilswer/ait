@@ -82,6 +82,7 @@ Context:
             }
             Event::Resize(x, y) => {
                 app.set_terminal_size(x, y);
+                app.recache_lines(app.messages.clone());
             }
         }
 

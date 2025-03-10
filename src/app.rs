@@ -264,8 +264,11 @@ impl<'a> App<'a> {
 
     pub fn add_cached_lines(&mut self, message: Message) {
         if let Some(TerminalSize { width, height: _ }) = self.size {
-            self.cached_lines
-                .extend(style_message(message, width as usize, self.theme.clone()));
+            self.cached_lines.extend(style_message(
+                message,
+                (width - 3) as usize,
+                self.theme.clone(),
+            ));
         }
     }
 
@@ -275,7 +278,7 @@ impl<'a> App<'a> {
             for message in messages {
                 self.cached_lines.extend(style_message(
                     message,
-                    width as usize,
+                    (width - 3) as usize,
                     self.theme.clone(),
                 ));
             }
