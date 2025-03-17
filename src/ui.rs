@@ -65,11 +65,15 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                     let highlighted = if !language.is_empty() {
                         create_highlighted_code(
                             &code_buffer,
-                            translate_language_name_to_syntect_name(&language),
+                            translate_language_name_to_syntect_name(Some(&language)),
                             &theme,
                         )
                     } else {
-                        Text::from(code_buffer.clone())
+                        create_highlighted_code(
+                            &code_buffer,
+                            translate_language_name_to_syntect_name(None),
+                            &theme,
+                        )
                     };
                     lines.push(
                         Line::from(format!("{}```{}", " ".repeat(nspaces), &language))
