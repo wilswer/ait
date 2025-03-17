@@ -110,7 +110,7 @@ pub fn list_conversations(query_filter: Option<String>) -> AppResult<Vec<(i64, S
     let conversation_ids = if let Some(filter) = query_filter {
         let filter_param = format!("%{}%", filter);
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT c.conversation_id, c.started_at 
+            "SELECT DISTINCT c.conversation_id, c.started_at
              FROM Conversations c
              JOIN Messages m ON c.conversation_id = m.conversation_id
              WHERE m.message_text LIKE ?1
