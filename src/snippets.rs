@@ -177,7 +177,7 @@ pub fn translate_language_name_to_syntect_name(s: Option<&str>) -> String {
             // Special cases
             "tex" | "latex" => "LaTeX".to_string(),
             "ocaml" => "OCaml".to_string(),
-            "bash" => "Bourne Again Shell (bash)".to_string(),
+            "bash" | "sh" => "Bourne Again Shell (bash)".to_string(),
             "sql" => "SQL".to_string(),
             "json" => "JSON".to_string(),
             "yaml" => "YAML".to_string(),
