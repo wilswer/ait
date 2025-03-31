@@ -137,3 +137,75 @@ pub async fn assistant_response_streaming(
     let chat_res = client.exec_chat_stream(model, chat_req, None).await?;
     Ok(chat_res.stream)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Message;
+    use futures::StreamExt;
+    use genai::chat::{ChatStreamEvent, StreamChunk};
+    use std::env;
+
+    #[tokio::test]
+    async fn test_assistant_response_streaming() {
+        // Set up test environment
+        // You might need to set an API key for the test to work
+        if env::var("OPENAI_API_KEY").is_err() {
+            println!("Skipping test_assistant_response_streaming: OPENAI_API_KEY not set");
+            return;
+        }
+
+        // Create test messages
+        let messages = vec![Message::User("Hello, how are you?".to_string())];
+
+        // Use a model that's likely to be available
+        let model = "o3-mini-low";
+        let system_prompt = Some("You are a helpful assistant.".to_string());
+        let temperature = Some(0.7);
+
+        // Get streaming response
+        let result =
+            assistant_response_streaming(&messages, model, system_prompt, temperature).await;
+
+        // Check if we got a valid stream
+        assert!(
+            result.is_ok(),
+            "Failed to get streaming response: {:?}",
+            result.err()
+        );
+
+        let mut stream = result.unwrap();
+
+        // Collect some chunks to verify the stream works
+        let mut chunks_received = 0;
+
+        // Process up to 5 chunks or until stream ends
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    // Check if we received any content
+                    match chunk {
+                        ChatStreamEvent::Start => {}
+                        ChatStreamEvent::Chunk(StreamChunk { content })
+                        | ChatStreamEvent::ReasoningChunk(StreamChunk { content }) => {
+                            if !content.is_empty() {
+                                chunks_received += 1;
+                            }
+                        }
+                        ChatStreamEvent::End(_) => {
+                            break;
+                        }
+                    }
+                    if chunks_received >= 5 {
+                        break; // Don't process the entire response
+                    }
+                }
+                Err(e) => {
+                    panic!("Error in stream: {:?}", e);
+                }
+            }
+        }
+
+        assert!(chunks_received > 0, "No chunks received from stream");
+    }
+}

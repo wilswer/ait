@@ -92,11 +92,12 @@ Context:
             let assistant_response_tx = assistant_response_tx.clone();
             let messages = app.messages.clone(); // This clone is necessary for the async task
             let selected_model_name = app.selected_model_name.clone(); // This clone is necessary for the async task
-            let (system_prompt, temperature) = if selected_model_name.starts_with("o1") {
-                (None, None)
-            } else {
-                (Some(system_prompt.clone()), Some(temperature)) // This clone is necessary for the async task
-            };
+            let (system_prompt, temperature) =
+                if selected_model_name.starts_with("o1") | selected_model_name.starts_with("o3") {
+                    (None, None)
+                } else {
+                    (Some(system_prompt.clone()), Some(temperature)) // This clone is necessary for the async task
+                };
             task::spawn(async move {
                 let assistant_response = assistant_response_streaming(
                     &messages,
