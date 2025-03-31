@@ -18,7 +18,6 @@ use crate::{
     snippets::{create_highlighted_code, translate_language_name_to_syntect_name},
     storage::list_all_messages,
 };
-
 pub const SELECTED_STYLE: Style = Style::new()
     .add_modifier(Modifier::BOLD)
     .fg(Color::LightBlue)
@@ -69,11 +68,8 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                             &theme,
                         )
                     } else {
-                        create_highlighted_code(
-                            &code_buffer,
-                            translate_language_name_to_syntect_name(None),
-                            &theme,
-                        )
+                        let wrapped = textwrap::wrap(&code_buffer, width - 3);
+                        Text::from(wrapped.join("\n"))
                     };
                     lines.push(
                         Line::from(format!("{}```{}", " ".repeat(nspaces), &language))

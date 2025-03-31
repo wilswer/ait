@@ -191,7 +191,7 @@ pub fn translate_language_name_to_syntect_name(s: Option<&str>) -> String {
             }
         }
     } else {
-        "Bourne Again Shell (bash)".to_string() // Default to bash if nothing given
+        "Plain Text".to_string() // Default to plain text if nothing given
     }
 }
 
