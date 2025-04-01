@@ -4,12 +4,13 @@ use genai::{Client, ClientBuilder, ClientConfig};
 
 use crate::app::{AppResult, Message};
 
-pub const MODELS: [(&str, &str); 6] = [
+pub const MODELS: [(&str, &str); 7] = [
     ("OpenAI", "gpt-4o-mini"),
     ("OpenAI", "gpt-4o"),
     ("Anthropic", "claude-3-5-sonnet-latest"),
     ("Anthropic", "claude-3-haiku-20240307"),
     ("Anthropic", "claude-3-7-sonnet-latest"),
+    ("Gemini", "gemini-2.5-pro-exp-03-25"),
     ("Ollama", "gemma:2b"),
 ];
 
@@ -55,6 +56,12 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
         };
         models.extend(models_provider);
     }
+    for (p, m) in MODELS {
+        if !models.contains(&(p.to_string(), m.to_string())) {
+            models.push((p.to_string(), m.to_string()));
+        }
+    }
+    models.sort();
     Ok(models)
 }
 
