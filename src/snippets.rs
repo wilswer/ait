@@ -181,6 +181,9 @@ pub fn translate_language_name_to_syntect_name(s: Option<&str>) -> String {
             "sql" => "SQL".to_string(),
             "json" => "JSON".to_string(),
             "yaml" => "YAML".to_string(),
+            "css" => "CSS".to_string(),
+            "html" => "HTML".to_string(),
+            "javascript" => "JavaScript".to_string(),
             // Probably more special cases to come, otherwise just capitalize it
             _ => {
                 let mut c = lang.chars();
