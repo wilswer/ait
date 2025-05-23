@@ -10,7 +10,7 @@ pub const MODELS: [(&str, &str); 7] = [
     ("Anthropic", "claude-3-5-sonnet-latest"),
     ("Anthropic", "claude-3-haiku-20240307"),
     ("Anthropic", "claude-3-7-sonnet-latest"),
-    ("Gemini", "gemini-2.5-pro-exp-03-25"),
+    ("Gemini", "gemini-2.5-pro-preview-05-06"),
     ("Ollama", "gemma:2b"),
 ];
 
