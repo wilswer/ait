@@ -86,12 +86,9 @@ impl EventHandler {
     /// This function will always block the current thread if
     /// there is no data available and it's possible for more data to be sent.
     pub async fn next(&mut self) -> AppResult<Event> {
-        self.receiver.recv().await.ok_or(
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "This is an IO error",
-            ))
-            .into(),
-        )
+        self.receiver
+            .recv()
+            .await
+            .ok_or(Box::new(std::io::Error::other("This is an IO error")).into())
     }
 }

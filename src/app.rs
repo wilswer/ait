@@ -290,13 +290,13 @@ impl<'a> App<'a> {
         for message in self.messages.iter() {
             match message {
                 Message::User(message) => {
-                    chat_log.push_str(&format!("User: {}\n", message));
+                    chat_log.push_str(&format!("User: {message}\n"));
                 }
                 Message::Assistant(message) => {
-                    chat_log.push_str(&format!("Assistant: {}\n", message));
+                    chat_log.push_str(&format!("Assistant: {message}\n"));
                 }
                 Message::Error(message) => {
-                    chat_log.push_str(&format!("Error: {}\n", message));
+                    chat_log.push_str(&format!("Error: {message}\n"));
                 }
             }
         }
@@ -440,11 +440,11 @@ impl<'a> App<'a> {
 
     #[cfg(not(target_os = "linux"))]
     pub fn yank_latest_assistant_message(&mut self) {
-        let assistant_messages = self.messages.iter().filter_map(|m| match m {
+        let mut assistant_messages = self.messages.iter().filter_map(|m| match m {
             Message::Assistant(message) => Some(message),
             _ => None,
         });
-        if let Some(message) = assistant_messages.last() {
+        if let Some(message) = assistant_messages.next_back() {
             self.clipboard.set_text(message).unwrap();
         }
     }

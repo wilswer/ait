@@ -104,7 +104,7 @@ pub async fn assistant_response(
                 Message::Assistant("NO RESPONSE".to_string())
             }
         }
-        Err(e) => Message::Error(format!("Error: {}", e)),
+        Err(e) => Message::Error(format!("Error: {e}")),
     };
 
     Ok(chat_res)
@@ -208,7 +208,7 @@ mod tests {
                     }
                 }
                 Err(e) => {
-                    panic!("Error in stream: {:?}", e);
+                    panic!("Error in stream: {e}");
                 }
             }
         }

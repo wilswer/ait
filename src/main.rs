@@ -32,9 +32,8 @@ You are a helpful assistant.
 Answer the user's query using the provided context.
 Context:
 
-{}
-    "#,
-                context
+{context}
+    "#
             )
         } else {
             cli.system_prompt.clone()
@@ -141,7 +140,7 @@ Context:
                         let _ = complete_tx.send(captured_content).await;
                         app.is_streaming = false;
                     }
-                    Err(e) => eprintln!("Error receiving assistant response: {}", e),
+                    Err(e) => eprintln!("Error receiving assistant response: {e}"),
                 }
             });
         }

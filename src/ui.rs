@@ -311,9 +311,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .unwrap_or([].to_vec())
                     .into_iter()
                     .map(|m| match m {
-                        Message::User(t) => format!("USER: {}\n", t),
-                        Message::Assistant(t) => format!("ASSISTANT: {}\n", t),
-                        Message::Error(t) => format!("ERROR: {}\n", t),
+                        Message::User(t) => format!("USER: {t}\n"),
+                        Message::Assistant(t) => format!("ASSISTANT: {t}\n"),
+                        Message::Error(t) => format!("ERROR: {t}\n"),
                     })
                     .collect::<Vec<String>>()
                     .join("\n");
