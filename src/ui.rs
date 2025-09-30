@@ -129,7 +129,7 @@ pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Li
     line_vec
 }
 
-fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line> {
+fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
     let mut line_vec = Vec::new();
     for message in messages {
         match message {

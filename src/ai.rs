@@ -16,7 +16,7 @@ pub const MODELS: [(&str, &str); 7] = [
 
 fn get_api_key_name(kind: &AdapterKind) -> &'static str {
     match kind {
-        AdapterKind::OpenAI => "OPENAI_API_KEY",
+        AdapterKind::OpenAI | AdapterKind::OpenAIResp => "OPENAI_API_KEY",
         AdapterKind::Ollama => "",
         AdapterKind::Gemini => "GEMINI_API_KEY",
         AdapterKind::Anthropic => "ANTHROPIC_API_KEY",
@@ -24,6 +24,10 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::Cohere => "COHERE_API_KEY",
         AdapterKind::Xai => "XAI_API_KEY",
         AdapterKind::DeepSeek => "DEEPSEEK_API_KEY",
+        AdapterKind::Fireworks => "FIREWORKS_API_KEY",
+        AdapterKind::Together => "TOGETHER_API_KEY",
+        AdapterKind::Nebius => "NEBIUS_API_KEY",
+        AdapterKind::Zhipu => "ZHIPU_API_KEY",
     }
 }
 
@@ -98,7 +102,7 @@ pub async fn assistant_response(
     let client = ClientBuilder::default().with_config(client_config).build();
     let chat_res = match client.exec_chat(model, chat_req, None).await {
         Ok(res) => {
-            if let Some(m) = res.content_text_into_string() {
+            if let Some(m) = res.into_first_text() {
                 Message::Assistant(m)
             } else {
                 Message::Assistant("NO RESPONSE".to_string())
@@ -201,6 +205,9 @@ mod tests {
                         }
                         ChatStreamEvent::End(_) => {
                             break;
+                        }
+                        ChatStreamEvent::ToolCallChunk(_) => {
+                            unimplemented!("Tool call not implemented")
                         }
                     }
                     if chunks_received >= 5 {

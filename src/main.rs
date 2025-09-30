@@ -135,6 +135,9 @@ Context:
                                     let _ = incomplete_tx.send(captured_content.clone()).await;
                                     app.is_streaming = false;
                                 }
+                                ChatStreamEvent::ToolCallChunk(_) => {
+                                    unimplemented!("Tool call not implemented");
+                                }
                             }
                         }
                         let _ = complete_tx.send(captured_content).await;
