@@ -8,9 +8,9 @@ pub const MODELS: [(&str, &str); 7] = [
     ("OpenAI", "gpt-4o-mini"),
     ("OpenAI", "gpt-4o"),
     ("Anthropic", "claude-3-5-sonnet-latest"),
-    ("Anthropic", "claude-3-haiku-20240307"),
     ("Anthropic", "claude-3-7-sonnet-latest"),
     ("Gemini", "gemini-2.5-pro-preview-05-06"),
+    ("Gemini", "gemini-3-pro-preview"),
     ("Ollama", "gemma:2b"),
 ];
 
@@ -27,7 +27,7 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::Fireworks => "FIREWORKS_API_KEY",
         AdapterKind::Together => "TOGETHER_API_KEY",
         AdapterKind::Nebius => "NEBIUS_API_KEY",
-        AdapterKind::Zhipu => "ZHIPU_API_KEY",
+        AdapterKind::Zai => "ZAI_API_KEY",
     }
 }
 
