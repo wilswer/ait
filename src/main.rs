@@ -131,9 +131,11 @@ Context:
                                         let _ = incomplete_tx.send(captured_content.clone()).await;
                                     }
                                 }
+                                ChatStreamEvent::ThoughtSignatureChunk(StreamChunk {
+                                    content: _,
+                                }) => {}
                                 ChatStreamEvent::End(_) => {
                                     let _ = incomplete_tx.send(captured_content.clone()).await;
-                                    app.is_streaming = false;
                                 }
                                 ChatStreamEvent::ToolCallChunk(_) => {
                                     unimplemented!("Tool call not implemented");
@@ -141,7 +143,6 @@ Context:
                             }
                         }
                         let _ = complete_tx.send(captured_content).await;
-                        app.is_streaming = false;
                     }
                     Err(e) => eprintln!("Error receiving assistant response: {e}"),
                 }

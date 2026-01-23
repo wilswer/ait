@@ -3,6 +3,7 @@ use crate::app::{App, AppMode, AppResult};
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::event::{MouseEvent, MouseEventKind};
+use ratatui_explorer::Input;
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
@@ -43,6 +44,12 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.set_app_mode(AppMode::Editing);
             }
             KeyCode::Char('n') => app.new_chat(),
+            KeyCode::Char('f') => {
+                app.set_app_mode(AppMode::ExploreFiles);
+            }
+            KeyCode::Char('c') => {
+                app.set_app_mode(AppMode::ShowContext);
+            }
             _ => {}
         },
         AppMode::Editing => match code {
@@ -115,6 +122,30 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                     .context("Error when copying snippet to clipboard")?;
                 app.set_app_mode(AppMode::Normal);
             }
+            _ => {}
+        },
+        AppMode::ExploreFiles => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.set_app_mode(AppMode::Normal),
+            KeyCode::Char('h') | KeyCode::Left => app.file_explorer.handle(Input::Left)?,
+            KeyCode::Char('l') | KeyCode::Right => app.file_explorer.handle(Input::Right)?,
+            KeyCode::Char('j') | KeyCode::Down => app.file_explorer.handle(Input::Down)?,
+            KeyCode::Char('k') | KeyCode::Up => app.file_explorer.handle(Input::Up)?,
+            KeyCode::Enter => {
+                if app.file_explorer.current().is_file() {
+                    app.add_to_context(app.file_explorer.current().clone());
+                    app.set_app_mode(AppMode::Normal);
+                }
+            }
+            KeyCode::Char('d') => {
+                if app.file_explorer.current().is_file() {
+                    app.remove_from_context(&app.file_explorer.current().clone());
+                    app.set_app_mode(AppMode::Normal);
+                }
+            }
+            _ => {}
+        },
+        AppMode::ShowContext => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.set_app_mode(AppMode::Normal),
             _ => {}
         },
         AppMode::Help => match key_event.code {

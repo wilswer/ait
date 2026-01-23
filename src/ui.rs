@@ -5,8 +5,8 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Wrap,
+        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph,
+        Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
     Frame,
 };
@@ -14,7 +14,7 @@ use syntect::highlighting::Theme;
 use tui_big_text::{BigText, PixelSize};
 
 use crate::{
-    app::{App, AppMode, Message},
+    app::{get_file_content, App, AppMode, Message},
     snippets::{create_highlighted_code, translate_language_name_to_syntect_name},
     storage::list_all_messages,
 };
@@ -416,6 +416,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .wrap(Wrap { trim: true });
             f.render_widget(help_message, area);
         }
+        AppMode::ExploreFiles => {
+            let block = Block::bordered().title("Select File");
+            let area = centered_rect(80, 60, messages_area);
+            f.render_widget(Clear, area); //this clears out the background
+            f.render_widget(block, area);
+            render_file_explorer(f, area, app);
+        }
+        AppMode::ShowContext => {
+            let block = Block::bordered().title("Files Added to Context");
+            let area = centered_rect(80, 60, messages_area);
+            f.render_widget(Clear, area); //this clears out the background
+            f.render_widget(block, area);
+            render_context_list(f, area, app);
+        }
     }
 
     let msg = match app.app_mode {
@@ -546,4 +560,43 @@ fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
     // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
     // same method name `render`.
     f.render_stateful_widget(list, area, &mut app.chat_list.state);
+}
+
+fn render_file_explorer(f: &mut Frame, area: Rect, app: &mut App) {
+    let layout = Layout::horizontal([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]);
+    let file_content = get_file_content(app.file_explorer.current());
+
+    let file_content = match file_content {
+        Ok(file_content) => file_content,
+        _ => "Couldn't load file.".into(),
+    };
+
+    let chunks = layout.split(area);
+
+    f.render_widget(&app.file_explorer.widget(), chunks[0]);
+    f.render_widget(Clear, chunks[1]);
+    f.render_widget(
+        Paragraph::new(file_content).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double),
+        ),
+        chunks[1],
+    );
+}
+
+fn render_context_list(f: &mut Frame, area: Rect, app: &mut App) {
+    if let Some(context) = &app.current_context {
+        let text_block = Block::new().padding(Padding::uniform(1));
+
+        let msg: Vec<Line<'_>> = context
+            .iter()
+            .map(|f| Line::from(f.path().to_string_lossy()))
+            .collect();
+        let text = Text::from(msg).patch_style(Style::default());
+        let context_text = Paragraph::new(text)
+            .block(text_block)
+            .wrap(Wrap { trim: true });
+        f.render_widget(context_text, area);
+    };
 }

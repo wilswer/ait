@@ -5,13 +5,15 @@ use arboard::Clipboard;
 use syntect::highlighting::Theme;
 
 use std::fs;
+use std::{borrow::Cow, fs::read_to_string, io};
 
 use ratatui::{
     buffer::Buffer,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::Line,
-    widgets::Block,
+    widgets::{Block, Borders},
 };
+use ratatui_explorer::{File, FileExplorer};
 use tui_textarea::TextArea;
 
 use crate::{
@@ -25,6 +27,34 @@ use crate::{
     ui::style_message,
 };
 use crate::{models::ModelList, snippets::SnippetList};
+
+pub fn get_file_content(file: &File) -> io::Result<Cow<'_, str>> {
+    // If the path is a file, read its content.
+    if file.is_file() {
+        read_to_string(file.path()).map(Into::into)
+    } else if file.is_dir() {
+        Ok("".into())
+    } else {
+        Ok("<not a regular file>".into())
+    }
+}
+
+fn get_theme() -> ratatui_explorer::Theme {
+    ratatui_explorer::Theme::default()
+        .with_block(Block::default().borders(Borders::ALL))
+        .with_dir_style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .with_highlight_dir_style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+                .bg(Color::DarkGray),
+        )
+        .with_scroll_padding(1)
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Selection {
@@ -143,6 +173,8 @@ pub enum AppMode {
     ModelSelection,
     SnippetSelection,
     ShowHistory,
+    ExploreFiles,
+    ShowContext,
     Help,
 }
 
@@ -193,6 +225,10 @@ pub struct App<'a> {
     pub cached_lines: Vec<Line<'a>>,
     /// Is the app receiving streaming messages
     pub is_streaming: bool,
+    /// File explorer
+    pub file_explorer: FileExplorer,
+    /// Current context
+    pub current_context: Option<Vec<File>>,
 }
 
 fn styled_input_textarea() -> TextArea<'static> {
@@ -232,6 +268,9 @@ impl Default for App<'_> {
             size: None,
             cached_lines: Vec::new(),
             is_streaming: false,
+            file_explorer: FileExplorer::with_theme(get_theme())
+                .expect("Could not construct file explorer."),
+            current_context: None,
         }
     }
 }
@@ -308,6 +347,26 @@ impl<'a> App<'a> {
         Ok(())
     }
 
+    pub fn add_to_context(&mut self, new_context: File) {
+        if let Some(mut current_context) = self.current_context.clone() {
+            if !current_context.contains(&new_context) {
+                current_context.push(new_context);
+                self.current_context = Some(current_context)
+            }
+        } else {
+            self.current_context = Some(vec![new_context]);
+        }
+    }
+
+    pub fn remove_from_context(&mut self, context: &File) {
+        if let Some(mut current_context) = self.current_context.clone() {
+            if let Some(idx) = current_context.iter().position(|f| f == context) {
+                current_context.remove(idx);
+                self.current_context = Some(current_context)
+            }
+        };
+    }
+
     fn get_max_scroll(&self) -> AppResult<usize> {
         let (width, _) =
             crossterm::terminal::size().context("Could not get terminal size from crossterm")?;
@@ -349,7 +408,20 @@ impl<'a> App<'a> {
     }
 
     pub fn submit_message(&mut self) -> AppResult<()> {
-        let text = self.input_textarea.lines().join("\n");
+        let mut text = self.input_textarea.lines().join("\n");
+        if let Some(context) = &self.current_context {
+            let mut additional_context = "\n\nINFO FOR LLMs\nThe user also provided the following context, please use it (if relevant) when providing an answer:".to_string();
+            for file in context {
+                let context_str = get_file_content(file)?;
+                additional_context.push_str(&format!(
+                    "\n---\nFile name: {}\n{}",
+                    file.name(),
+                    context_str
+                ));
+            }
+            text.push_str(&additional_context);
+            self.current_context = None;
+        }
         if text.is_empty() {
             return Ok(());
         }
