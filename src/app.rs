@@ -117,8 +117,6 @@ impl Selection {
 pub enum Message {
     User(String),
     Assistant(String),
-    // TODO: don't show errors as messages, show in popup
-    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -159,7 +157,6 @@ impl AsRef<str> for Message {
         match self {
             Message::User(message) => message.as_str(),
             Message::Assistant(message) => message.as_str(),
-            Message::Error(message) => message.as_str(),
         }
     }
 }
@@ -176,6 +173,13 @@ pub enum AppMode {
     ExploreFiles,
     ShowContext,
     Help,
+    Notify { notification: Notification },
+}
+
+#[derive(Debug, Clone)]
+pub enum Notification {
+    Info(String),
+    Error(String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -333,9 +337,6 @@ impl<'a> App<'a> {
                 }
                 Message::Assistant(message) => {
                     chat_log.push_str(&format!("Assistant: {message}\n"));
-                }
-                Message::Error(message) => {
-                    chat_log.push_str(&format!("Error: {message}\n"));
                 }
             }
         }

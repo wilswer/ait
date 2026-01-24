@@ -52,7 +52,6 @@ pub fn insert_message(conversation_id: i64, message: &Message) -> AppResult<()> 
     let (sender, message_text) = match message {
         Message::User(text) => ("human", text),
         Message::Assistant(text) => ("assistant", text),
-        _ => return Ok(()),
     };
     conn.execute(
         "INSERT INTO Messages (conversation_id, sender, message_text) VALUES (?1, ?2, ?3)",
@@ -70,7 +69,6 @@ pub fn delete_message(conversation_id: i64, message: &Message) -> AppResult<()> 
     let (sender, message_text) = match message {
         Message::User(text) => ("human", text),
         Message::Assistant(text) => ("assistant", text),
-        _ => return Ok(()),
     };
 
     conn.execute(
@@ -170,7 +168,7 @@ impl From<DBMessage> for Message {
         let sender = match db_message.sender.as_str() {
             "human" => Message::User(db_message.message_text),
             "assistant" => Message::Assistant(db_message.message_text),
-            _ => Message::Error("Unknown sender type".to_string()),
+            _ => Message::Assistant("Error".to_string()),
         };
         sender
     }

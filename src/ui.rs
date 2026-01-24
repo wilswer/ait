@@ -14,7 +14,7 @@ use syntect::highlighting::Theme;
 use tui_big_text::{BigText, PixelSize};
 
 use crate::{
-    app::{get_file_content, App, AppMode, Message},
+    app::{get_file_content, App, AppMode, Message, Notification},
     snippets::{create_highlighted_code, translate_language_name_to_syntect_name},
     storage::list_all_messages,
 };
@@ -119,12 +119,6 @@ pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Li
             line_vec.extend(process_code_blocks(text, width, theme));
             line_vec.push(Line::from(Span::raw("").bold().green()));
         }
-        Message::Error(text) => {
-            line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
-            line_vec.push(Line::from(Span::raw("---").bold().red()));
-            line_vec.extend(process_code_blocks(text, width, theme));
-            line_vec.push(Line::from(Span::raw("").bold().red()));
-        }
     }
     line_vec
 }
@@ -154,17 +148,6 @@ fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
                         .map(|l| Line::from(Span::raw(l))),
                 );
                 line_vec.push(Line::from(Span::raw("")));
-            }
-            Message::Error(m) => {
-                let wrapped_message = textwrap::wrap(m, width - 3);
-                line_vec.push(Line::from(Span::raw("ERROR:").bold().red()));
-                line_vec.push(Line::from(Span::raw("---").bold().red()));
-                line_vec.extend(
-                    wrapped_message
-                        .into_iter()
-                        .map(|l| Line::from(Span::raw(l).red())),
-                );
-                line_vec.push(Line::from(Span::raw("").bold().red()));
             }
         }
     }
@@ -252,7 +235,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     let [help_area, messages_area, input_area] = vertical.areas(f.area());
 
-    match app.app_mode {
+    match &app.app_mode {
         AppMode::Normal => {
             if !app.messages.is_empty() {
                 render_messages(f, app, messages_area);
@@ -313,7 +296,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .map(|m| match m {
                         Message::User(t) => format!("USER: {t}\n"),
                         Message::Assistant(t) => format!("ASSISTANT: {t}\n"),
-                        Message::Error(t) => format!("ERROR: {t}\n"),
                     })
                     .collect::<Vec<String>>()
                     .join("\n");
@@ -429,6 +411,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
             f.render_widget(Clear, area); //this clears out the background
             f.render_widget(block, area);
             render_context_list(f, area, app);
+        }
+        AppMode::Notify { notification } => {
+            let block = Block::bordered().title("Notification");
+            let area = centered_rect(40, 40, messages_area);
+            f.render_widget(Clear, area); //this clears out the background
+            f.render_widget(block, area);
+            render_notification(f, area, notification);
         }
     }
 
@@ -599,4 +588,18 @@ fn render_context_list(f: &mut Frame, area: Rect, app: &mut App) {
             .wrap(Wrap { trim: true });
         f.render_widget(context_text, area);
     };
+}
+
+fn render_notification(f: &mut Frame, area: Rect, notification: &Notification) {
+    let text_block = Block::new().padding(Padding::uniform(1));
+    let text = match notification {
+        Notification::Info(message) => Text::from(message.clone()).patch_style(Style::default()),
+        Notification::Error(message) => {
+            Text::from(message.clone()).patch_style(Style::default().fg(Color::Red))
+        }
+    };
+    let context_text = Paragraph::new(text)
+        .block(text_block)
+        .wrap(Wrap { trim: true });
+    f.render_widget(context_text, area);
 }

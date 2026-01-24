@@ -1,19 +1,27 @@
 use anyhow::Context;
 use clap::Parser;
 use futures::StreamExt;
-use genai::chat::{ChatStreamEvent, StreamChunk};
+use genai::chat::ChatStreamEvent;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::mpsc;
 use tokio::task;
 
 use ait::ai::{assistant_response_streaming, get_models};
-use ait::app::{App, AppResult, Message};
+use ait::app::{App, AppMode, AppResult, Message, Notification};
 use ait::cli::Cli;
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
 use ait::storage::create_db;
 use ait::tui::Tui;
+
+#[derive(Debug, Clone)]
+pub enum Action {
+    StreamStart,
+    StreamPartial(String),
+    StreamComplete(String),
+    Error(String),
+}
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
@@ -56,11 +64,7 @@ Context:
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
 
-    // Create a channel to receive the assistant responses
-    let (assistant_response_tx, mut assistant_response_rx) = mpsc::channel(32);
-    // Create additional channels for incomplete and complete messages
-    let (incomplete_tx, mut incomplete_rx) = mpsc::channel(32);
-    let (complete_tx, mut complete_rx) = mpsc::channel(32);
+    let (action_tx, mut action_rx) = mpsc::channel(32);
     // Start the main loop.
     while app.running {
         tui.draw(&mut app)
@@ -85,86 +89,98 @@ Context:
             }
         }
 
-        // Check for a new query and spawn a task to handle it
         if app.has_unprocessed_messages {
             app.has_unprocessed_messages = false;
-            let assistant_response_tx = assistant_response_tx.clone();
-            let messages = app.messages.clone(); // This clone is necessary for the async task
-            let selected_model_name = app.selected_model_name.clone(); // This clone is necessary for the async task
-            let (system_prompt, temperature) =
-                if selected_model_name.starts_with("o1") | selected_model_name.starts_with("o3") {
+
+            // Clone data needed for the task
+            let messages = app.messages.clone();
+            let selected_model = app.selected_model_name.clone();
+            let (sys_prompt, temp) =
+                if selected_model.starts_with("o1") || selected_model.starts_with("o3") {
                     (None, None)
                 } else {
-                    (Some(system_prompt.clone()), Some(temperature)) // This clone is necessary for the async task
+                    (Some(system_prompt.clone()), Some(temperature))
                 };
-            task::spawn(async move {
-                let assistant_response = assistant_response_streaming(
-                    &messages,
-                    &selected_model_name,
-                    system_prompt,
-                    temperature,
-                )
-                .await;
-                let _ = assistant_response_tx.send(assistant_response).await;
-            });
-        }
 
-        // In the message processing part
-        if let Ok(assistant_response) = assistant_response_rx.try_recv() {
-            let incomplete_tx = incomplete_tx.clone();
-            let complete_tx = complete_tx.clone();
-            app.is_streaming = true;
+            // Clone the single action channel
+            let tx = action_tx.clone();
 
+            // Spawn ONE task that does everything (Call API + Process Stream)
             task::spawn(async move {
-                match assistant_response {
+                // A. Call the API
+                let response =
+                    assistant_response_streaming(&messages, &selected_model, sys_prompt, temp)
+                        .await;
+
+                match response {
                     Ok(mut stream) => {
-                        let mut captured_content = String::new();
-                        while let Some(Ok(stream_event)) = stream.next().await {
-                            match stream_event {
-                                ChatStreamEvent::Start => {
-                                    let _ = incomplete_tx.send("".to_string()).await;
-                                }
-                                ChatStreamEvent::Chunk(StreamChunk { content })
-                                | ChatStreamEvent::ReasoningChunk(StreamChunk { content }) => {
-                                    if !content.is_empty() {
-                                        captured_content.push_str(&content);
-                                        let _ = incomplete_tx.send(captured_content.clone()).await;
+                        // B. Process the stream immediately here
+                        let mut full_content = String::new();
+
+                        // Notify main thread we started
+                        let _ = tx.send(Action::StreamStart).await;
+
+                        while let Some(result) = stream.next().await {
+                            match result {
+                                Ok(event) => match event {
+                                    ChatStreamEvent::Start => {} // Already handled
+                                    ChatStreamEvent::Chunk(chunk)
+                                    | ChatStreamEvent::ReasoningChunk(chunk) => {
+                                        if !chunk.content.is_empty() {
+                                            full_content.push_str(&chunk.content);
+                                            // Send partial update
+                                            let _ = tx
+                                                .send(Action::StreamPartial(full_content.clone()))
+                                                .await;
+                                        }
                                     }
-                                }
-                                ChatStreamEvent::ThoughtSignatureChunk(StreamChunk {
-                                    content: _,
-                                }) => {}
-                                ChatStreamEvent::End(_) => {
-                                    let _ = incomplete_tx.send(captured_content.clone()).await;
-                                }
-                                ChatStreamEvent::ToolCallChunk(_) => {
-                                    unimplemented!("Tool call not implemented");
+                                    ChatStreamEvent::End(_) => {}
+                                    _ => {} // Ignore others
+                                },
+                                Err(e) => {
+                                    let _ = tx
+                                        .send(Action::Error(format!("Stream error: {}", e)))
+                                        .await;
+                                    return; // Stop processing
                                 }
                             }
                         }
-                        let _ = complete_tx.send(captured_content).await;
+                        // Send final complete message
+                        let _ = tx.send(Action::StreamComplete(full_content)).await;
                     }
-                    Err(e) => eprintln!("Error receiving assistant response: {e}"),
+                    Err(e) => {
+                        // API Connection failed
+                        let _ = tx.send(Action::Error(format!("API Error: {}", e))).await;
+                    }
                 }
             });
         }
 
-        // Handle incomplete messages
-        if let Ok(content) = incomplete_rx.try_recv() {
-            app.receive_incomplete_message(&content)
-                .await
-                .context("Error while receiving incomplete message")?;
-        }
-
-        // Handle complete messages
-        if let Ok(content) = complete_rx.try_recv() {
-            app.is_streaming = false;
-            app.receive_message(Message::Assistant(content))
-                .await
-                .context("Error while receiving message")?;
+        // --- 2. HANDLING THE RESULTS ---
+        // We drain the channel so we process all pending updates in one tick
+        while let Ok(action) = action_rx.try_recv() {
+            match action {
+                Action::StreamStart => {
+                    app.is_streaming = true;
+                    // Optional: clear previous incomplete buffer if needed
+                    app.receive_incomplete_message("").await?;
+                }
+                Action::StreamPartial(content) => {
+                    app.receive_incomplete_message(&content).await?;
+                }
+                Action::StreamComplete(content) => {
+                    app.is_streaming = false;
+                    app.receive_message(Message::Assistant(content)).await?;
+                }
+                Action::Error(err_msg) => {
+                    app.is_streaming = false;
+                    app.set_app_mode(AppMode::Notify {
+                        notification: Notification::Error(err_msg),
+                    });
+                }
+            }
         }
     }
-
     // Exit the user interface.
     tui.exit().context("Failed during application shutdown")?;
     Ok(())

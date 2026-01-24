@@ -82,7 +82,6 @@ pub async fn assistant_response(
         .map(|m| match m {
             Message::User(m) => ChatMessage::user(m),
             Message::Assistant(m) => ChatMessage::assistant(m),
-            _ => ChatMessage::assistant(""),
         })
         .collect::<Vec<ChatMessage>>();
     let mut chat_req = if let Some(system_prompt) = system_prompt {
@@ -102,18 +101,17 @@ pub async fn assistant_response(
     let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
     let client = ClientBuilder::default().with_config(client_config).build();
-    let chat_res = match client.exec_chat(model, chat_req, None).await {
+    match client.exec_chat(model, chat_req, None).await {
         Ok(res) => {
-            if let Some(m) = res.into_first_text() {
+            let chat_res = if let Some(m) = res.into_first_text() {
                 Message::Assistant(m)
             } else {
                 Message::Assistant("NO RESPONSE".to_string())
-            }
+            };
+            Ok(chat_res)
         }
-        Err(e) => Message::Error(format!("Error: {e}")),
-    };
-
-    Ok(chat_res)
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub async fn assistant_response_streaming(
@@ -127,7 +125,6 @@ pub async fn assistant_response_streaming(
         .map(|m| match m {
             Message::User(m) => ChatMessage::user(m),
             Message::Assistant(m) => ChatMessage::assistant(m),
-            _ => ChatMessage::assistant(""),
         })
         .collect::<Vec<ChatMessage>>();
     let mut chat_req = if let Some(system_prompt) = system_prompt {

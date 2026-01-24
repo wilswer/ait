@@ -1,4 +1,4 @@
-use crate::app::{App, AppMode, AppResult};
+use crate::app::{App, AppMode, AppResult, Notification};
 
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -133,18 +133,32 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Enter => {
                 if app.file_explorer.current().is_file() {
                     app.add_to_context(app.file_explorer.current().clone());
-                    app.set_app_mode(AppMode::Normal);
+                    app.set_app_mode(AppMode::Notify {
+                        notification: Notification::Info(format!(
+                            "File {} added to context!",
+                            app.file_explorer.current().name()
+                        )),
+                    })
                 }
             }
             KeyCode::Char('d') => {
                 if app.file_explorer.current().is_file() {
                     app.remove_from_context(&app.file_explorer.current().clone());
-                    app.set_app_mode(AppMode::Normal);
+                    app.set_app_mode(AppMode::Notify {
+                        notification: Notification::Info(format!(
+                            "File {} removed from context!",
+                            app.file_explorer.current().name()
+                        )),
+                    })
                 }
             }
             _ => {}
         },
         AppMode::ShowContext => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.set_app_mode(AppMode::Normal),
+            _ => {}
+        },
+        AppMode::Notify { notification: _ } => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.set_app_mode(AppMode::Normal),
             _ => {}
         },
