@@ -312,7 +312,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             }
         }
         AppMode::Help => {
-            let block = Block::bordered().title("Help");
+            let block = Block::bordered().title("Help - Use j/k or Up/Down to scroll");
             let area = centered_rect(50, 60, messages_area);
             f.render_widget(Clear, area); //this clears out the background
             f.render_widget(block, area);
@@ -330,7 +330,22 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "h".bold(),
                 " to browse previous conversations, ".into(),
                 "s".bold(),
-                " to browse code snippets.".into(),
+                " to browse code snippets, ".into(),
+                "f".bold(),
+                " to explore files, ".into(),
+                "c".bold(),
+                " to view context files, ".into(),
+                "n".bold(),
+                " to start a new chat, ".into(),
+                "r".bold(),
+                " to redo last message. ".into(),
+                "Scroll with ".into(),
+                "j/k or Up/Down".bold(),
+                ", ".into(),
+                "g".bold(),
+                " for top, ".into(),
+                "G".bold(),
+                " for bottom.".into(),
             ];
             let editing_keys = vec![
                 "Press ".into(),
@@ -365,6 +380,22 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to copy snippet to the clipboard (not linux yet), and return to 'normal' mode."
                     .into(),
             ];
+            let file_explorer_keys = vec![
+                "Press ".into(),
+                "h/j/k/l or arrows".bold(),
+                " to navigate directories and files. Press ".into(),
+                "Enter".bold(),
+                " to add a file to context. Press ".into(),
+                "d".bold(),
+                " to remove the selected file from context. Press ".into(),
+                "Esc/q".bold(),
+                " to return to 'normal' mode.".into(),
+            ];
+            let context_keys = vec![
+                "Files added to context will be automatically included in your next message to the LLM. Press ".into(),
+                "Esc/q/Enter".bold(),
+                " to return to 'normal' mode.".into(),
+            ];
             let msg = vec![
                 Line::from(Span::raw("Welcome to AI in the Terminal! ").bold()),
                 Line::from(""),
@@ -390,13 +421,34 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Line::from(""),
                 Line::from(Span::raw("When browsing snippets, you can:").bold()),
                 Line::from(snippet_keys),
+                Line::from(""),
+                Line::from(Span::raw("When exploring files, you can:").bold()),
+                Line::from(file_explorer_keys),
+                Line::from(""),
+                Line::from(Span::raw("When viewing context:").bold()),
+                Line::from(context_keys),
             ];
             let help_text_block = Block::new().padding(Padding::uniform(1));
             let text = Text::from(msg).patch_style(Style::default());
             let help_message = Paragraph::new(text)
+                .scroll((app.help_scroll as u16, 0))
                 .block(help_text_block)
                 .wrap(Wrap { trim: true });
             f.render_widget(help_message, area);
+
+            // Add scrollbar
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓"));
+            let mut scrollbar_state = ScrollbarState::new(30).position(app.help_scroll);
+            f.render_stateful_widget(
+                scrollbar,
+                area.inner(Margin {
+                    vertical: 1,
+                    horizontal: 0,
+                }),
+                &mut scrollbar_state,
+            );
         }
         AppMode::ExploreFiles => {
             let block = Block::bordered().title("Select File");
@@ -429,6 +481,61 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to stop editing. Press ".into(),
                 "CONTROL + S (C-s)".bold(),
                 " to submit the message.".into(),
+            ]
+        }
+        AppMode::ExploreFiles => {
+            vec![
+                "Navigate: ".into(),
+                "h/j/k/l or arrows".bold(),
+                ". ".into(),
+                "Enter".bold(),
+                " to add file to context. ".into(),
+                "d".bold(),
+                " to remove from context. ".into(),
+                "Esc/q".bold(),
+                " to exit.".into(),
+            ]
+        }
+        AppMode::ShowContext => {
+            vec![
+                "These files will be included in your next message. Press ".into(),
+                "Esc/q/Enter".bold(),
+                " to return.".into(),
+            ]
+        }
+        AppMode::ModelSelection => {
+            vec![
+                "Navigate: ".into(),
+                "j/k or Up/Down".bold(),
+                ". Press ".into(),
+                "Enter".bold(),
+                " to select model. ".into(),
+                "Esc/q".bold(),
+                " to cancel.".into(),
+            ]
+        }
+        AppMode::ShowHistory => {
+            vec![
+                "Navigate: ".into(),
+                "j/k or Up/Down".bold(),
+                ". ".into(),
+                "Enter".bold(),
+                " to select chat. ".into(),
+                "d".bold(),
+                " to delete chat. ".into(),
+                "Esc/q".bold(),
+                " to cancel.".into(),
+            ]
+        }
+        AppMode::SnippetSelection => {
+            vec![
+                "Navigate: ".into(),
+                "j/k or Up/Down".bold(),
+                ". Press ".into(),
+                "Enter/y".bold(),
+                " to copy snippet. ".into(),
+                "Esc/q".bold(),
+                " to cancel.".into(),
             ]
         }
         _ => {
