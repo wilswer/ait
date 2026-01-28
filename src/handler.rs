@@ -164,7 +164,20 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
         },
         AppMode::Help => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                app.reset_help_scroll();
                 app.set_app_mode(AppMode::Normal)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.increment_help_scroll(30);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.decrement_help_scroll();
+            }
+            KeyCode::Char('g') => {
+                app.reset_help_scroll();
+            }
+            KeyCode::Char('G') => {
+                app.help_scroll = 30;
             }
             _ => {}
         },

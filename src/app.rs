@@ -204,6 +204,8 @@ pub struct App<'a> {
     pub messages: Vec<Message>,
     /// Vertical scroll
     pub vertical_scroll: usize,
+    /// Help text scroll
+    pub help_scroll: usize,
     /// Is the application running?
     pub running: bool,
     /// System clipboard.
@@ -254,6 +256,7 @@ impl Default for App<'_> {
             // user_messages: Vec::new(),
             // assistant_messages: Vec::new(),
             vertical_scroll: 0,
+            help_scroll: 0,
             running: true,
             #[cfg(not(target_os = "linux"))]
             clipboard: Clipboard::new().unwrap(),
@@ -406,6 +409,20 @@ impl<'a> App<'a> {
     pub fn scroll_to_bottom(&mut self) -> AppResult<()> {
         self.vertical_scroll = self.get_max_scroll().context("Unable to get max scroll")?;
         Ok(())
+    }
+
+    pub fn increment_help_scroll(&mut self, max_scroll: usize) {
+        if self.help_scroll < max_scroll {
+            self.help_scroll += 1;
+        }
+    }
+
+    pub fn decrement_help_scroll(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(1);
+    }
+
+    pub fn reset_help_scroll(&mut self) {
+        self.help_scroll = 0;
     }
 
     pub fn submit_message(&mut self) -> AppResult<()> {
