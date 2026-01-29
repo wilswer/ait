@@ -82,6 +82,21 @@ yek my_dir | ait
 
 Chat history is stored as a `sqlite` database (facilitated by the
 [`rusqlite`](https://github.com/rusqlite/rusqlite) crate)
-in the users cache directory in the home directory (`~/.cache/ait/chats.db`).
-In addition, `ait` will store a log of the latest chat
-in the user's home directory, `~/.cache/ait/latest-chat.log` on macOS and Linux.
+in the platform's standard data directory:
+
+- macOS: `~/Library/Application Support/ait/chats.db`
+- Linux: `~/.local/share/ait/chats.db`
+- Windows: `%APPDATA%\ait\chats.db`
+
+In addition, `ait` will store a log of the latest chat in the platform's cache directory:
+
+- macOS: `~/Library/Caches/ait/latest-chat.log`
+- Linux: `~/.cache/ait/latest-chat.log`
+- Windows: `%LOCALAPPDATA%\ait\latest-chat.log`
+
+I'm probably the only one using this tool but for users of `ait` version 0.5.1 and
+earlier, to keep your old database, simply copy it from the previous location:
+
+```bash
+cp ~/.cache/ait/chats.db <new platform specific location according to list above>
+```

@@ -1,4 +1,3 @@
-use ::dirs::home_dir;
 use anyhow::{Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
@@ -22,8 +21,8 @@ use crate::{
     chats::ChatList,
     snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
     storage::{
-        create_db_conversation, delete_conversation, delete_message, insert_message,
-        list_all_conversations, list_all_messages,
+        create_db_conversation, delete_conversation, delete_message, get_cache_dir,
+        insert_message, list_all_conversations, list_all_messages,
     },
     ui::style_message,
 };
@@ -344,9 +343,9 @@ impl<'a> App<'a> {
                 }
             }
         }
-        let mut path = home_dir().context("Cannot find home directory")?;
-        path.push(".cache/ait");
-        fs::create_dir_all(&path).context("Could not create cache directory")?;
+        let cache_dir = get_cache_dir()?;
+        fs::create_dir_all(&cache_dir).context("Could not create cache directory")?;
+        let mut path = cache_dir;
         path.push("latest-chat.log");
         fs::write(&path, chat_log).context("Unable to write chat log")?;
         Ok(())

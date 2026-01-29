@@ -1,18 +1,36 @@
 use std::fs;
+use std::path::PathBuf;
 
-use ::dirs::home_dir;
 use anyhow::Context;
+use directories::ProjectDirs;
 use rusqlite::{params, Connection};
 
 use crate::app::{AppResult, Message};
 
+fn get_data_dir() -> AppResult<PathBuf> {
+    let project_dirs = ProjectDirs::from("", "", "ait")
+        .context("Could not determine project directories")?;
+    Ok(project_dirs.data_dir().to_path_buf())
+}
+
+pub fn get_cache_dir() -> AppResult<PathBuf> {
+    let project_dirs = ProjectDirs::from("", "", "ait")
+        .context("Could not determine project directories")?;
+    Ok(project_dirs.cache_dir().to_path_buf())
+}
+
+fn get_db_path() -> AppResult<PathBuf> {
+    let mut path = get_data_dir()?;
+    path.push("chats.db");
+    Ok(path)
+}
+
 pub fn create_db() -> AppResult<()> {
     // Connect to the SQLite database (or create it if it doesn't exist)
-    let mut path = home_dir().context("Cannot find home directory")?;
-    path.push(".cache/ait");
-    fs::create_dir_all(&path).context("Could not create cache directory")?;
-    path.push("chats.db");
-    let conn = Connection::open(path).context("Could not open db connection")?;
+    let data_dir = get_data_dir()?;
+    fs::create_dir_all(&data_dir).context("Could not create data directory")?;
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not open db connection")?;
 
     // Create the Conversations table
     conn.execute(
@@ -44,10 +62,8 @@ pub fn create_db() -> AppResult<()> {
 
 pub fn insert_message(conversation_id: i64, message: &Message) -> AppResult<()> {
     // Connect to the SQLite database
-    let mut path = home_dir().context("Cannot find home directory")?;
-    path.push(".cache/ait");
-    path.push("chats.db");
-    let conn = Connection::open(path)?;
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path)?;
     // Insert the message into the Messages table
     let (sender, message_text) = match message {
         Message::User(text) => ("human", text),
@@ -61,10 +77,8 @@ pub fn insert_message(conversation_id: i64, message: &Message) -> AppResult<()> 
 }
 
 pub fn delete_message(conversation_id: i64, message: &Message) -> AppResult<()> {
-    let mut path = home_dir().context("Cannot find home directory")?;
-    path.push(".cache/ait");
-    path.push("chats.db");
-    let conn = Connection::open(path).context("Could not connect to database")?;
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not connect to database")?;
 
     let (sender, message_text) = match message {
         Message::User(text) => ("human", text),
@@ -82,10 +96,8 @@ pub fn delete_message(conversation_id: i64, message: &Message) -> AppResult<()> 
 
 pub fn create_db_conversation(system_prompt: &str) -> AppResult<i64> {
     // Connect to the SQLite database
-    let mut path = home_dir().context("Cannot find home directory")?;
-    path.push(".cache/ait");
-    path.push("chats.db");
-    let conn = Connection::open(path).context("Could not connect to database")?;
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not connect to database")?;
     conn.execute(
         "INSERT INTO Conversations (system_prompt) VALUES (?1)",
         params![system_prompt],
@@ -98,10 +110,8 @@ pub fn create_db_conversation(system_prompt: &str) -> AppResult<i64> {
 
 pub fn list_all_conversations() -> AppResult<Vec<(i64, String)>> {
     // Connect to the SQLite database
-    let mut path = home_dir().context("Cannot find home directory")?;
-    path.push(".cache/ait");
-    path.push("chats.db");
-    let conn = Connection::open(path).context("Could not connect to database")?;
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not connect to database")?;
     // Query the Conversations table for all conversation IDs
     let mut stmt = conn.prepare(
         "SELECT conversation_id, started_at FROM Conversations ORDER BY conversation_id DESC",
@@ -115,10 +125,8 @@ pub fn list_all_conversations() -> AppResult<Vec<(i64, String)>> {
 
 pub fn list_all_messages(conversation_id: i64) -> AppResult<Vec<Message>> {
     // Connect to the SQLite database
-    let mut path = home_dir().context("Cannot find home directory")?;
-    path.push(".cache/ait");
-    path.push("chats.db");
-    let conn = Connection::open(path).context("Could not connect to database")?;
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not connect to database")?;
     // Query the Messages table for all messages in the specified conversation
     let mut stmt = conn.prepare("SELECT * FROM Messages WHERE conversation_id = ?1")?;
     let messages = stmt
@@ -139,10 +147,8 @@ pub fn list_all_messages(conversation_id: i64) -> AppResult<Vec<Message>> {
 
 pub fn delete_conversation(conversation_id: i64) -> AppResult<()> {
     // Connect to the SQLite database
-    let mut path = home_dir().context("Cannot find home directory")?;
-    path.push(".cache/ait");
-    path.push("chats.db");
-    let conn = Connection::open(path).context("Could not connect to database")?;
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not connect to database")?;
     // Delete the messages from the Messages table
     conn.execute(
         "DELETE FROM Messages WHERE conversation_id = ?1",
