@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 use syntect::highlighting::Theme;
+use syntect::parsing::SyntaxSet;
 
 use std::fs;
 use std::{borrow::Cow, fs::read_to_string, io};
@@ -428,12 +429,24 @@ impl<'a> App<'a> {
     pub fn submit_message(&mut self) -> AppResult<()> {
         let mut text = self.input_textarea.lines().join("\n");
         if let Some(context) = &self.current_context {
+            let ps = SyntaxSet::load_defaults_newlines();
             let mut additional_context = "\n\nINFO FOR LLMs\nThe user also provided the following context, please use it (if relevant) when providing an answer:".to_string();
             for file in context {
+                let extension = if let Some((_, extension)) = file.name().split_once(".") {
+                    extension
+                } else {
+                    ""
+                };
+                let syntax_name = if let Some(syntax) = ps.find_syntax_by_extension(extension) {
+                    syntax.name.to_string()
+                } else {
+                    "Plain Text".to_string()
+                };
                 let context_str = get_file_content(file)?;
                 additional_context.push_str(&format!(
-                    "\n---\nFile name: {}\n{}",
+                    "\n---\nFile name: {}\nContent:\n```{}\n{}\n```",
                     file.name(),
+                    syntax_name.to_lowercase(),
                     context_str
                 ));
             }
