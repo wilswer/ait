@@ -21,8 +21,8 @@ use crate::{
     chats::ChatList,
     snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
     storage::{
-        create_db_conversation, delete_conversation, delete_message, get_cache_dir,
-        insert_message, list_all_conversations, list_all_messages,
+        create_db_conversation, delete_conversation, delete_message, get_cache_dir, insert_message,
+        list_all_conversations, list_all_messages,
     },
     ui::style_message,
 };
@@ -261,13 +261,13 @@ impl Default for App<'_> {
             #[cfg(not(target_os = "linux"))]
             clipboard: Clipboard::new().unwrap(),
             model_list: ModelList::from_iter(MODELS.map(|(provider, model)| {
-                if model == "claude-3-7-sonnet-latest" {
+                if model == "gemini-3-pro-preview" {
                     (provider, model, true)
                 } else {
                     (provider, model, false)
                 }
             })),
-            selected_model_name: "claude-3-7-sonnet-latest".to_string(),
+            selected_model_name: "gemini-3-pro-preview".to_string(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
