@@ -267,7 +267,7 @@ impl Default for App<'_> {
                     (provider, model, false)
                 }
             })),
-            selected_model_name: "gemini-3-pro-preview".to_string(),
+            selected_model_name: "gemini-3.1-pro-preview".to_string(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
