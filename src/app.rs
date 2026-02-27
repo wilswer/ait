@@ -231,6 +231,10 @@ pub struct App<'a> {
     pub cached_lines: Vec<Line<'a>>,
     /// Is the app receiving streaming messages
     pub is_streaming: bool,
+    /// Is the app waiting for a response
+    pub is_waiting_for_response: bool,
+    /// Spinner animation frame counter
+    pub spinner_frame: usize,
     /// File explorer
     pub file_explorer: FileExplorer,
     /// Current context
@@ -275,6 +279,8 @@ impl Default for App<'_> {
             size: None,
             cached_lines: Vec::new(),
             is_streaming: false,
+            is_waiting_for_response: false,
+            spinner_frame: 0,
             file_explorer: FileExplorer::with_theme(get_theme())
                 .expect("Could not construct file explorer."),
             current_context: None,
@@ -291,7 +297,11 @@ impl<'a> App<'a> {
     }
 
     /// Handles the tick event of the terminal.
-    pub fn tick(&self) {}
+    pub fn tick(&mut self) {
+        if self.is_waiting_for_response {
+            self.spinner_frame = self.spinner_frame.wrapping_add(1);
+        }
+    }
 
     pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
         self.app_mode = new_app_mode;
@@ -680,6 +690,8 @@ impl<'a> App<'a> {
             self.cached_lines.clear();
             self.conversation_id = None;
             self.has_unprocessed_messages = false;
+            self.is_waiting_for_response = false;
+            self.is_streaming = false;
             self.snippet_list = SnippetList::new();
         }
     }

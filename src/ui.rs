@@ -18,6 +18,8 @@ use crate::{
     snippets::{create_highlighted_code, translate_language_name_to_syntect_name},
     storage::list_all_messages,
 };
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 pub const SELECTED_STYLE: Style = Style::new()
     .add_modifier(Modifier::BOLD)
     .fg(Color::LightBlue)
@@ -158,11 +160,23 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
         .end_symbol(Some("↓"));
-    let messages = if app.is_streaming {
+    let mut messages = if app.is_streaming {
         messages_to_lines(&app.messages, messages_area.width as usize)
     } else {
         app.cached_lines.clone()
     };
+
+    if app.is_waiting_for_response {
+        let frame = SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()];
+        messages.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+        messages.push(Line::from(Span::raw("---").bold().green()));
+        messages.push(
+            Line::from(Span::raw(format!("{frame} Thinking...")))
+                .style(Style::default().fg(Color::DarkGray)),
+        );
+        messages.push(Line::from(Span::raw("")));
+    }
+
     let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
 
     let messages_text = Text::from(messages);

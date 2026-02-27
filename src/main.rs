@@ -91,6 +91,7 @@ Context:
 
         if app.has_unprocessed_messages {
             app.has_unprocessed_messages = false;
+            app.is_waiting_for_response = true;
 
             // Clone data needed for the task
             let messages = app.messages.clone();
@@ -161,11 +162,12 @@ Context:
         while let Ok(action) = action_rx.try_recv() {
             match action {
                 Action::StreamStart => {
-                    app.is_streaming = true;
                     // Optional: clear previous incomplete buffer if needed
                     app.receive_incomplete_message("").await?;
                 }
                 Action::StreamPartial(content) => {
+                    app.is_streaming = true;
+                    app.is_waiting_for_response = false;
                     app.receive_incomplete_message(&content).await?;
                 }
                 Action::StreamComplete(content) => {
@@ -173,6 +175,8 @@ Context:
                     app.receive_message(Message::Assistant(content)).await?;
                 }
                 Action::Error(err_msg) => {
+                    app.is_waiting_for_response = false;
+                    app.has_unprocessed_messages = false;
                     app.is_streaming = false;
                     app.set_app_mode(AppMode::Notify {
                         notification: Notification::Error(err_msg),
