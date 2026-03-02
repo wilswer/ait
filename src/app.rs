@@ -265,7 +265,7 @@ impl Default for App<'_> {
             #[cfg(not(target_os = "linux"))]
             clipboard: Clipboard::new().unwrap(),
             model_list: ModelList::from_iter(MODELS.map(|(provider, model)| {
-                if model == "gemini-3-pro-preview" {
+                if model == "gemini-3.1-pro-preview" {
                     (provider, model, true)
                 } else {
                     (provider, model, false)
