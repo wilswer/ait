@@ -5,8 +5,8 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph,
-        Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+        Block, BorderType, Borders, Clear, FrameExt, HighlightSpacing, List, ListItem, Padding,
+        Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
     Frame,
 };
@@ -683,7 +683,7 @@ fn render_file_explorer(f: &mut Frame, area: Rect, app: &mut App) {
 
     let chunks = layout.split(area);
 
-    f.render_widget(&app.file_explorer.widget(), chunks[0]);
+    f.render_widget_ref(app.file_explorer.widget(), chunks[0]);
     f.render_widget(Clear, chunks[1]);
     f.render_widget(
         Paragraph::new(file_content).block(

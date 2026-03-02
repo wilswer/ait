@@ -14,7 +14,7 @@ use ratatui::{
     widgets::{Block, Borders},
 };
 use ratatui_explorer::{File, FileExplorer};
-use tui_textarea::TextArea;
+use ratatui_textarea::TextArea;
 
 use crate::{
     ai::MODELS,

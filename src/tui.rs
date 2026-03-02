@@ -25,7 +25,10 @@ pub struct Tui<B: Backend> {
     pub events: EventHandler,
 }
 
-impl<B: Backend> Tui<B> {
+impl<B: Backend> Tui<B>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     /// Constructs a new instance of [`Tui`].
     pub fn new(terminal: Terminal<B>, events: EventHandler) -> Self {
         Self { terminal, events }
