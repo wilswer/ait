@@ -4,12 +4,12 @@ use genai::{Client, ClientBuilder, ClientConfig};
 
 use crate::app::{AppResult, Message};
 
-pub const MODELS: [(&str, &str); 8] = [
-    ("OpenAI", "gpt-4o-mini"),
-    ("OpenAI", "gpt-4o"),
-    ("Anthropic", "claude-3-5-sonnet-latest"),
-    ("Anthropic", "claude-3-7-sonnet-latest"),
-    ("Gemini", "gemini-2.5-pro-preview-05-06"),
+pub const MODELS: [(&str, &str); 7] = [
+    ("OpenAI", "gpt-5-mini"),
+    ("OpenAI", "gpt-5-nano"),
+    ("Anthropic", "claude-haiku-4-5"),
+    ("Anthropic", "claude-sonnet-4-6"),
+    ("Anthropic", "claude-opus-4-6"),
     ("Gemini", "gemini-3-pro-preview"),
     ("Gemini", "gemini-3.1-pro-preview"),
     ("Ollama", "gemma:2b"),
