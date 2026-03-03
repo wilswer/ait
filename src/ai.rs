@@ -12,7 +12,6 @@ pub const MODELS: [(&str, &str); 7] = [
     ("Anthropic", "claude-opus-4-6"),
     ("Gemini", "gemini-3-pro-preview"),
     ("Gemini", "gemini-3.1-pro-preview"),
-    ("Ollama", "gemma:2b"),
 ];
 
 fn get_api_key_name(kind: &AdapterKind) -> &'static str {
