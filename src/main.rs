@@ -26,7 +26,6 @@ pub enum Action {
 #[tokio::main]
 async fn main() -> AppResult<()> {
     let cli = Cli::parse();
-    let temperature = cli.temperature;
     create_db().context("Failed to create database")?;
 
     // Create an application.
@@ -96,12 +95,11 @@ Context:
             // Clone data needed for the task
             let messages = app.messages.clone();
             let selected_model = app.selected_model_name.clone();
-            let (sys_prompt, temp) =
-                if selected_model.starts_with("o1") || selected_model.starts_with("o3") {
-                    (None, None)
-                } else {
-                    (Some(system_prompt.clone()), Some(temperature))
-                };
+            let sys_prompt = if selected_model.starts_with("gpt") {
+                None
+            } else {
+                Some(system_prompt.clone())
+            };
 
             // Clone the single action channel
             let tx = action_tx.clone();
@@ -110,8 +108,7 @@ Context:
             task::spawn(async move {
                 // A. Call the API
                 let response =
-                    assistant_response_streaming(&messages, &selected_model, sys_prompt, temp)
-                        .await;
+                    assistant_response_streaming(&messages, &selected_model, sys_prompt).await;
 
                 match response {
                     Ok(mut stream) => {

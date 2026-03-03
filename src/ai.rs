@@ -75,7 +75,6 @@ pub async fn assistant_response(
     messages: &[Message],
     model: &str,
     system_prompt: Option<String>,
-    temperature: Option<f64>,
 ) -> AppResult<Message> {
     let chat_messages = messages
         .iter()
@@ -93,11 +92,7 @@ pub async fn assistant_response(
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
-    let chat_opts = if let Some(temp) = temperature {
-        ChatOptions::default().with_temperature(temp)
-    } else {
-        ChatOptions::default()
-    };
+    let chat_opts = ChatOptions::default();
     let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
     let client = ClientBuilder::default().with_config(client_config).build();
@@ -118,7 +113,6 @@ pub async fn assistant_response_streaming(
     messages: &[Message],
     model: &str,
     system_prompt: Option<String>,
-    temperature: Option<f64>,
 ) -> AppResult<ChatStream> {
     let chat_messages = messages
         .iter()
@@ -136,11 +130,7 @@ pub async fn assistant_response_streaming(
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
-    let chat_opts = if let Some(temp) = temperature {
-        ChatOptions::default().with_temperature(temp)
-    } else {
-        ChatOptions::default()
-    };
+    let chat_opts = ChatOptions::default();
     let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
     let client = ClientBuilder::default().with_config(client_config).build();
