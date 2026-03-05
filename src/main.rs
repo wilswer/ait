@@ -20,6 +20,7 @@ pub enum Action {
     StreamStart,
     StreamPartial(String),
     StreamComplete(String),
+    StreamCancelled(String),
     Error(String),
 }
 
@@ -64,10 +65,14 @@ Context:
     tui.init().context("Failed to initialize terminal")?;
 
     let (action_tx, mut action_rx) = mpsc::channel(32);
+
+    let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
+
     // Start the main loop.
     while app.running {
         tui.draw(&mut app)
             .context("Failed to render user interface")?;
+
         // Handle events.
         match tui
             .events
@@ -77,6 +82,15 @@ Context:
         {
             Event::Tick => app.tick(),
             Event::Key(key_event) => {
+                if key_event.code == crossterm::event::KeyCode::Char('u')
+                    && app.app_mode == AppMode::Normal
+                {
+                    // If we have an active stream, send the cancel signal
+                    if let Some(tx) = current_cancel_tx.take() {
+                        let _ = tx.try_send(());
+                    }
+                }
+
                 handle_key_events(key_event, &mut app).context("Error handling key events")?;
             }
             Event::Mouse(mouse_event) => {
@@ -101,50 +115,56 @@ Context:
                 Some(system_prompt.clone())
             };
 
-            // Clone the single action channel
             let tx = action_tx.clone();
 
-            // Spawn ONE task that does everything (Call API + Process Stream)
+            let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+            current_cancel_tx = Some(cancel_tx);
+
+            // Spawn ONE task that does everything
             task::spawn(async move {
-                // A. Call the API
                 let response =
                     assistant_response_streaming(&messages, &selected_model, sys_prompt).await;
 
                 match response {
                     Ok(mut stream) => {
-                        // B. Process the stream immediately here
                         let mut full_content = String::new();
-
-                        // Notify main thread we started
                         let _ = tx.send(Action::StreamStart).await;
 
-                        while let Some(result) = stream.next().await {
-                            match result {
-                                Ok(event) => match event {
-                                    ChatStreamEvent::Start => {} // Already handled
-                                    ChatStreamEvent::Chunk(chunk)
-                                    | ChatStreamEvent::ReasoningChunk(chunk) => {
-                                        if !chunk.content.is_empty() {
-                                            full_content.push_str(&chunk.content);
-                                            // Send partial update
-                                            let _ = tx
-                                                .send(Action::StreamPartial(full_content.clone()))
-                                                .await;
+                        // Use tokio::select! to listen for chunks OR a cancellation signal
+                        loop {
+                            tokio::select! {
+                                // Listens for our cancel signal
+                                _ = cancel_rx.recv() => {
+                                    let _ = tx.send(Action::StreamCancelled(full_content)).await;
+                                    break;
+                                }
+                                // Listens for the next chunk from the AI
+                                result_opt = stream.next() => {
+                                    match result_opt {
+                                        Some(Ok(event)) => match event {
+                                            ChatStreamEvent::Start => {}
+                                            ChatStreamEvent::Chunk(chunk) | ChatStreamEvent::ReasoningChunk(chunk) => {
+                                                if !chunk.content.is_empty() {
+                                                    full_content.push_str(&chunk.content);
+                                                    let _ = tx.send(Action::StreamPartial(full_content.clone())).await;
+                                                }
+                                            }
+                                            ChatStreamEvent::End(_) => {}
+                                            _ => {}
+                                        },
+                                        Some(Err(e)) => {
+                                            let _ = tx.send(Action::Error(format!("Stream error: {}", e))).await;
+                                            break;
+                                        }
+                                        None => {
+                                            // Stream is finished naturally
+                                            let _ = tx.send(Action::StreamComplete(full_content)).await;
+                                            break;
                                         }
                                     }
-                                    ChatStreamEvent::End(_) => {}
-                                    _ => {} // Ignore others
-                                },
-                                Err(e) => {
-                                    let _ = tx
-                                        .send(Action::Error(format!("Stream error: {}", e)))
-                                        .await;
-                                    return; // Stop processing
                                 }
                             }
                         }
-                        // Send final complete message
-                        let _ = tx.send(Action::StreamComplete(full_content)).await;
                     }
                     Err(e) => {
                         // API Connection failed
@@ -155,11 +175,9 @@ Context:
         }
 
         // --- 2. HANDLING THE RESULTS ---
-        // We drain the channel so we process all pending updates in one tick
         while let Ok(action) = action_rx.try_recv() {
             match action {
                 Action::StreamStart => {
-                    // Optional: clear previous incomplete buffer if needed
                     app.receive_incomplete_message("").await?;
                 }
                 Action::StreamPartial(content) => {
@@ -169,6 +187,13 @@ Context:
                 }
                 Action::StreamComplete(content) => {
                     app.is_streaming = false;
+                    app.receive_message(Message::Assistant(content)).await?;
+                }
+                // 6. Handle the StreamCancelled action
+                Action::StreamCancelled(content) => {
+                    app.is_streaming = false;
+                    app.is_waiting_for_response = false;
+                    // Persist whatever portion of the message was generated before stopping
                     app.receive_message(Message::Assistant(content)).await?;
                 }
                 Action::Error(err_msg) => {

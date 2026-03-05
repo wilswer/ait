@@ -163,7 +163,7 @@ impl AsRef<str> for Message {
 /// Application result type.
 pub type AppResult<T> = Result<T>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
     Normal,
     Editing,
@@ -176,7 +176,7 @@ pub enum AppMode {
     Notify { notification: Notification },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Notification {
     Info(String),
     Error(String),

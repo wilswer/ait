@@ -351,6 +351,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to view context files, ".into(),
                 "n".bold(),
                 " to start a new chat, ".into(),
+                "u".bold(),
+                " to interrupt the message currently being received, ".into(),
                 "r".bold(),
                 " to redo last message. ".into(),
                 "Scroll with ".into(),

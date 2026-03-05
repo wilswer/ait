@@ -40,8 +40,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 let _ = app.scroll_to_bottom();
             }
             KeyCode::Char('r') => {
-                app.redo_last_message()?;
-                app.set_app_mode(AppMode::Editing);
+                if !app.has_unprocessed_messages && !app.is_waiting_for_response {
+                    app.redo_last_message()?;
+                    app.set_app_mode(AppMode::Editing);
+                }
             }
             KeyCode::Char('n') => app.new_chat(),
             KeyCode::Char('f') => {
