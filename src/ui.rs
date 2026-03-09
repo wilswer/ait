@@ -703,7 +703,7 @@ fn render_context_list(f: &mut Frame, area: Rect, app: &mut App) {
 
         let msg: Vec<Line<'_>> = context
             .iter()
-            .map(|f| Line::from(f.path().to_string_lossy()))
+            .map(|f| Line::from(f.path.to_string_lossy()))
             .collect();
         let text = Text::from(msg).patch_style(Style::default());
         let context_text = Paragraph::new(text)

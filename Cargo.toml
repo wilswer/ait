@@ -19,7 +19,7 @@ directories = "6.0"
 futures = "0.3"
 genai = "0.5"
 ratatui = { version = "0.30", features = ["unstable-widget-ref"] }
-ratatui-explorer = {git = "https://github.com/tatounee/ratatui-explorer.git", rev="6ae483b"}
+ratatui-explorer = "0.3.0"
 rusqlite = { version = "0.38", features = ["bundled"] }
 syntect = "5.2"
 textwrap = "0.16"

@@ -140,7 +140,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                     app.set_app_mode(AppMode::Notify {
                         notification: Notification::Info(format!(
                             "File {} added to context!",
-                            app.file_explorer.current().name()
+                            &app.file_explorer.current().name
                         )),
                     })
                 }
@@ -151,7 +151,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                     app.set_app_mode(AppMode::Notify {
                         notification: Notification::Info(format!(
                             "File {} removed from context!",
-                            app.file_explorer.current().name()
+                            &app.file_explorer.current().name
                         )),
                     })
                 }

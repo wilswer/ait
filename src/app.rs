@@ -13,7 +13,7 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders},
 };
-use ratatui_explorer::{File, FileExplorer};
+use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
 
 use crate::{
@@ -31,8 +31,8 @@ use crate::{models::ModelList, snippets::SnippetList};
 pub fn get_file_content(file: &File) -> io::Result<Cow<'_, str>> {
     // If the path is a file, read its content.
     if file.is_file() {
-        read_to_string(file.path()).map(Into::into)
-    } else if file.is_dir() {
+        read_to_string(&file.path).map(Into::into)
+    } else if file.is_dir {
         Ok("".into())
     } else {
         Ok("<not a regular file>".into())
@@ -281,7 +281,7 @@ impl Default for App<'_> {
             is_streaming: false,
             is_waiting_for_response: false,
             spinner_frame: 0,
-            file_explorer: FileExplorer::with_theme(get_theme())
+            file_explorer: FileExplorerBuilder::build_with_theme(get_theme())
                 .expect("Could not construct file explorer."),
             current_context: None,
         }
@@ -441,7 +441,7 @@ impl<'a> App<'a> {
             let ps = SyntaxSet::load_defaults_newlines();
             let mut additional_context = "\n\nINFO FOR LLMs\nThe user also provided the following context, please use it (if relevant) when providing an answer:".to_string();
             for file in context {
-                let extension = if let Some((_, extension)) = file.name().split_once(".") {
+                let extension = if let Some((_, extension)) = file.name.split_once(".") {
                     extension
                 } else {
                     ""
@@ -454,7 +454,7 @@ impl<'a> App<'a> {
                 let context_str = get_file_content(file)?;
                 additional_context.push_str(&format!(
                     "\n---\nFile name: {}\nContent:\n```{}\n{}\n```",
-                    file.name(),
+                    &file.name,
                     syntax_name.to_lowercase(),
                     context_str
                 ));
