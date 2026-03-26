@@ -22,7 +22,7 @@ use crate::{
     snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
     storage::{
         create_db_conversation, delete_conversation, delete_message, get_cache_dir, insert_message,
-        list_all_conversations, list_all_messages, touch_conversation,
+        list_all_messages, list_conversations, touch_conversation,
     },
     ui::style_message,
 };
@@ -170,6 +170,7 @@ pub enum AppMode {
     ModelSelection,
     SnippetSelection,
     ShowHistory,
+    FilterHistory,
     ExploreFiles,
     ShowContext,
     Help,
@@ -239,11 +240,13 @@ pub struct App<'a> {
     pub file_explorer: FileExplorer,
     /// Current context
     pub current_context: Option<Vec<File>>,
+    /// Search bar.
+    pub search_bar: TextArea<'a>,
 }
 
-fn styled_input_textarea() -> TextArea<'static> {
+pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
     let mut input_textarea = TextArea::default();
-    input_textarea.set_block(Block::bordered().title("Input"));
+    input_textarea.set_block(Block::bordered().title(title));
     input_textarea.set_style(Style::default().fg(Color::Yellow));
     input_textarea
 }
@@ -251,7 +254,7 @@ fn styled_input_textarea() -> TextArea<'static> {
 impl Default for App<'_> {
     fn default() -> Self {
         Self {
-            input_textarea: styled_input_textarea(),
+            input_textarea: styled_textarea("Input"),
             app_mode: AppMode::Normal,
             system_prompt: "You are a helpful, friendly assistant.",
             conversation_id: None,
@@ -284,6 +287,7 @@ impl Default for App<'_> {
             file_explorer: FileExplorerBuilder::build_with_theme(get_theme())
                 .expect("Could not construct file explorer."),
             current_context: None,
+            search_bar: styled_textarea("Search"),
         }
     }
 }
@@ -480,7 +484,7 @@ impl<'a> App<'a> {
         }
 
         self.has_unprocessed_messages = true;
-        self.input_textarea = styled_input_textarea();
+        self.input_textarea = styled_textarea("Input");
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()
             .context("Unable to write submitted message to chat log")?;
@@ -657,8 +661,8 @@ impl<'a> App<'a> {
         self.chat_list.state.select_last();
     }
 
-    pub fn set_chat_list(&mut self) -> AppResult<()> {
-        let chats = list_all_conversations()?;
+    pub fn set_chat_list(&mut self, query_filter: Option<String>) -> AppResult<()> {
+        let chats = list_conversations(query_filter)?;
         let chats = chats
             .into_iter()
             .map(|(id, started_at)| (id, started_at, false))
@@ -706,7 +710,7 @@ impl<'a> App<'a> {
             }
             match m {
                 Message::User(s) => {
-                    self.input_textarea = styled_input_textarea();
+                    self.input_textarea = styled_textarea("Input");
                     self.input_textarea.insert_str(s);
                     break;
                 }
@@ -745,6 +749,7 @@ impl<'a> App<'a> {
 
     pub fn set_chat(&mut self) -> AppResult<()> {
         if let Some(i) = self.chat_list.state.selected() {
+            self.search_bar = styled_textarea("Search");
             for item in self.chat_list.items.iter_mut() {
                 item.selected = false;
             }

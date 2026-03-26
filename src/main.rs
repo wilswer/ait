@@ -55,7 +55,7 @@ Context:
         .await
         .context("Failed to find models from providers")?;
     app.set_models(models);
-    app.set_chat_list()?;
+    app.set_chat_list(None)?;
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());

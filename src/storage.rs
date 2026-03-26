@@ -145,18 +145,35 @@ pub fn create_db_conversation(system_prompt: &str) -> AppResult<i64> {
     Ok(conversation_id)
 }
 
-pub fn list_all_conversations() -> AppResult<Vec<(i64, String)>> {
+pub fn list_conversations(query_filter: Option<String>) -> AppResult<Vec<(i64, String)>> {
     // Connect to the SQLite database
     let db_path = get_db_path()?;
     let conn = Connection::open(db_path).context("Could not connect to database")?;
-    // Query the Conversations table for all conversation IDs
-    let mut stmt = conn.prepare(
-        "SELECT conversation_id, COALESCE(updated_at, started_at) FROM Conversations ORDER BY COALESCE(updated_at, started_at) DESC",
-    )?;
-    let conversation_ids = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .context("Failed to query conversations table")?
-        .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+    let conversation_ids = if let Some(filter) = query_filter {
+        let filter_param = format!("%{}%", filter);
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT c.conversation_id, COALESCE(c.updated_at, c.started_at)
+             FROM Conversations c
+             JOIN Messages m ON c.conversation_id = m.conversation_id
+             WHERE m.message_text LIKE ?1
+             ORDER BY COALESCE(c.updated_at, c.started_at) DESC",
+        )?;
+        let res = stmt
+            .query_map(params![filter_param], |row| Ok((row.get(0)?, row.get(1)?)))
+            .context("Failed to query conversations table with filter")?
+            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+        res
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id, COALESCE(updated_at, started_at) FROM Conversations ORDER BY COALESCE(updated_at, started_at) DESC",
+        )?;
+        let res = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .context("Failed to query conversations table")?
+            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+        res
+    };
+
     Ok(conversation_ids)
 }
 

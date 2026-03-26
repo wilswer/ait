@@ -239,15 +239,21 @@ pub fn render(f: &mut Frame, app: &mut App) {
         _ => Constraint::Length(0),
     };
 
+    let searchbar_constraint = match app.app_mode {
+        AppMode::FilterHistory => Constraint::Max(3),
+        _ => Constraint::Length(0),
+    };
+
     let vertical = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
         input_area_constraint,
+        searchbar_constraint,
     ]);
 
     let vertical = vertical.margin(1);
 
-    let [help_area, messages_area, input_area] = vertical.areas(f.area());
+    let [help_area, messages_area, input_area, searchbar_area] = vertical.areas(f.area());
 
     match &app.app_mode {
         AppMode::Normal => {
@@ -262,74 +268,44 @@ pub fn render(f: &mut Frame, app: &mut App) {
             f.render_widget(&app.input_textarea, input_area);
         }
         AppMode::ModelSelection => {
-            let block = Block::bordered().title("Select Model");
             let area = centered_rect(40, 50, messages_area);
-            f.render_widget(Clear, area); //this clears out the background
-            f.render_widget(block, area);
+            render_popup(f, Block::bordered().title("Select Model"), area);
             render_model_list(f, area, app);
         }
         AppMode::SnippetSelection => {
-            let block = Block::bordered().title("Select Snippet");
             let area = left_aligned_rect(messages_area, 25);
-            f.render_widget(Clear, area); //this clears out the background
-            f.render_widget(block, area);
+            render_popup(f, Block::bordered().title("Select Snippet"), area);
             render_snippet_list(f, area, app);
 
-            let preview_block = Block::bordered().title("Snippet Preview");
             let preview_area = right_aligned_rect(messages_area, 75);
-            f.render_widget(Clear, preview_area); //this clears out the background
-            f.render_widget(preview_block, preview_area);
-            let snippet = app.get_snippet();
-            let preview_block_content = Block::new().padding(Padding::uniform(1));
-            if let Some(preview_text) = snippet {
-                let snippet_text = if let Some(lang) = &preview_text.language {
-                    create_highlighted_code(&preview_text.text, lang, &app.theme)
+            render_popup(f, Block::bordered().title("Snippet Preview"), preview_area);
+            if let Some(snippet) = app.get_snippet() {
+                let snippet_text = if let Some(lang) = &snippet.language {
+                    create_highlighted_code(&snippet.text, lang, &app.theme)
                 } else {
-                    Text::from(preview_text.text.as_str()).magenta()
+                    Text::from(snippet.text.as_str()).magenta()
                 };
-                let snippet_paragraph = Paragraph::new(snippet_text).block(preview_block_content);
-                f.render_widget(snippet_paragraph, preview_area);
+                f.render_widget(
+                    Paragraph::new(snippet_text)
+                        .block(Block::new().padding(Padding::uniform(1))),
+                    preview_area,
+                );
             }
         }
         AppMode::ShowHistory => {
-            let block = Block::bordered().title("Select Chat");
-            let area = left_aligned_rect(messages_area, 25);
-            f.render_widget(Clear, area); //this clears out the background
-            f.render_widget(block, area);
-            render_chat_history_list(f, area, app);
-
-            let preview_block = Block::bordered().title("Chat Preview");
-            let preview_area = right_aligned_rect(messages_area, 75);
-            f.render_widget(Clear, preview_area); //this clears out the background
-            f.render_widget(preview_block, preview_area);
-            let chat_id = app.get_selected_chat_id();
-            let preview_text = if let Some(id) = chat_id {
-                let text = list_all_messages(*id)
-                    .unwrap_or([].to_vec())
-                    .into_iter()
-                    .map(|m| match m {
-                        Message::User(t) => format!("USER: {t}\n"),
-                        Message::Assistant(t) => format!("ASSISTANT: {t}\n"),
-                    })
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                Some(text)
-            } else {
-                None
-            };
-            let preview_block_content = Block::new().padding(Padding::uniform(1));
-            if let Some(preview_text) = preview_text {
-                let snippet_paragraph = Paragraph::new(Text::from(preview_text.as_str()).magenta())
-                    .wrap(Wrap { trim: true })
-                    .block(preview_block_content);
-                f.render_widget(snippet_paragraph, preview_area);
-            }
+            render_chat_history_panel(f, messages_area, app);
+        }
+        AppMode::FilterHistory => {
+            render_chat_history_panel(f, messages_area, app);
+            f.render_widget(&app.search_bar, searchbar_area);
         }
         AppMode::Help => {
-            let block = Block::bordered().title("Help - Use j/k or Up/Down to scroll");
             let area = centered_rect(50, 60, messages_area);
-            f.render_widget(Clear, area); //this clears out the background
-            f.render_widget(block, area);
+            render_popup(
+                f,
+                Block::bordered().title("Help - Use j/k or Up/Down to scroll"),
+                area,
+            );
 
             let normal_keys = vec![
                 "Press ".into(),
@@ -383,6 +359,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Press ".into(),
                 "Up/Down".bold(),
                 " to select chat, or press ".into(),
+                "/".bold(),
+                " to search chats by message content, or press ".into(),
                 "CONTROL + r (C-r)".bold(),
                 " to delete the selected chat, or press ".into(),
                 "Enter".bold(),
@@ -467,24 +445,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
             );
         }
         AppMode::ExploreFiles => {
-            let block = Block::bordered().title("Select File");
             let area = centered_rect(80, 60, messages_area);
-            f.render_widget(Clear, area); //this clears out the background
-            f.render_widget(block, area);
+            render_popup(f, Block::bordered().title("Select File"), area);
             render_file_explorer(f, area, app);
         }
         AppMode::ShowContext => {
-            let block = Block::bordered().title("Files Added to Context");
             let area = centered_rect(80, 60, messages_area);
-            f.render_widget(Clear, area); //this clears out the background
-            f.render_widget(block, area);
+            render_popup(f, Block::bordered().title("Files Added to Context"), area);
             render_context_list(f, area, app);
         }
         AppMode::Notify { notification } => {
-            let block = Block::bordered().title("Notification");
             let area = centered_rect(40, 40, messages_area);
-            f.render_widget(Clear, area); //this clears out the background
-            f.render_widget(block, area);
+            render_popup(f, Block::bordered().title("Notification"), area);
             render_notification(f, area, notification);
         }
     }
@@ -537,6 +509,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 ". ".into(),
                 "Enter".bold(),
                 " to select chat. ".into(),
+                "/".bold(),
+                " to search. ".into(),
                 "CONTROL + r (C-r)".bold(),
                 " to delete chat. ".into(),
                 "Esc/q".bold(),
@@ -594,6 +568,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 }
 
+fn styled_list<'a>(items: Vec<ListItem<'a>>, block: Block<'a>) -> List<'a> {
+    List::new(items)
+        .block(block)
+        .highlight_style(SELECTED_STYLE)
+        .highlight_symbol(">")
+        .highlight_spacing(HighlightSpacing::Always)
+}
+
+fn render_popup(f: &mut Frame, block: Block, area: Rect) {
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+}
+
 fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
     if app.model_list.items.is_empty() {
@@ -606,25 +593,12 @@ fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
         f.render_widget(p, area);
         return;
     }
-    // Iterate through all elements in the `items` and stylize them.
     let items: Vec<ListItem> = app.model_list.items.iter().map(ListItem::from).collect();
-
-    // Create a List from all list items and highlight the currently selected one
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(SELECTED_STYLE)
-        .highlight_symbol(">")
-        .highlight_spacing(HighlightSpacing::Always);
-
-    // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
-    // same method name `render`.
-    f.render_stateful_widget(list, area, &mut app.model_list.state);
+    f.render_stateful_widget(styled_list(items, block), area, &mut app.model_list.state);
 }
 
 fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
-
-    // Iterate through all elements in the `items` and stylize them.
     let items: Vec<ListItem> = app
         .snippet_list
         .items
@@ -638,40 +612,47 @@ fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {
             ))
         })
         .collect();
-
-    // Create a List from all list items and highlight the currently selected one
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(SELECTED_STYLE)
-        .highlight_symbol(">")
-        .highlight_spacing(HighlightSpacing::Always);
-
-    // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
-    // same method name `render`.
-    f.render_stateful_widget(list, area, &mut app.snippet_list.state);
+    f.render_stateful_widget(styled_list(items, block), area, &mut app.snippet_list.state);
 }
 
 fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
-
-    // Iterate through all elements in the `items` and stylize them.
     let items: Vec<ListItem> = app
         .chat_list
         .items
         .iter()
         .map(|c| ListItem::from(format!("Chat created {}", c.started_at)))
         .collect();
+    f.render_stateful_widget(styled_list(items, block), area, &mut app.chat_list.state);
+}
 
-    // Create a List from all list items and highlight the currently selected one
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(SELECTED_STYLE)
-        .highlight_symbol(">")
-        .highlight_spacing(HighlightSpacing::Always);
+fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) {
+    let area = left_aligned_rect(messages_area, 25);
+    render_popup(f, Block::bordered().title("Select Chat"), area);
+    render_chat_history_list(f, area, app);
 
-    // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
-    // same method name `render`.
-    f.render_stateful_widget(list, area, &mut app.chat_list.state);
+    let preview_area = right_aligned_rect(messages_area, 75);
+    render_popup(f, Block::bordered().title("Chat Preview"), preview_area);
+
+    let preview_text = app.get_selected_chat_id().map(|id| {
+        list_all_messages(*id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| match m {
+                Message::User(t) => format!("USER: {t}\n"),
+                Message::Assistant(t) => format!("ASSISTANT: {t}\n"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+    if let Some(text) = preview_text {
+        f.render_widget(
+            Paragraph::new(Text::from(text.as_str()).magenta())
+                .wrap(Wrap { trim: true })
+                .block(Block::new().padding(Padding::uniform(1))),
+            preview_area,
+        );
+    }
 }
 
 fn render_file_explorer(f: &mut Frame, area: Rect, app: &mut App) {

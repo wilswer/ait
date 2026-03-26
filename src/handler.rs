@@ -1,4 +1,4 @@
-use crate::app::{App, AppMode, AppResult, Notification};
+use crate::app::{styled_textarea, App, AppMode, AppResult, Notification};
 
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -21,7 +21,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
             KeyCode::Char('i') => app.set_app_mode(AppMode::Editing),
             KeyCode::Char('h') => {
-                app.set_chat_list()?;
+                let query_filter = app.search_bar.lines().first();
+                app.set_chat_list(query_filter.map(|x| x.to_string()))?;
                 app.set_app_mode(AppMode::ShowHistory)
             }
             KeyCode::Char('?') => app.set_app_mode(AppMode::Help),
@@ -91,8 +92,12 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('r') => {
                 if modifiers.contains(KeyModifiers::CONTROL) {
                     app.delete_selected_chat()?;
-                    app.set_chat_list()?;
+                    let query_filter = app.search_bar.lines().first();
+                    app.set_chat_list(query_filter.map(|x| x.to_string()))?;
                 }
+            }
+            KeyCode::Char('/') => {
+                app.set_app_mode(AppMode::FilterHistory);
             }
             _ => {}
         },
@@ -184,6 +189,20 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.help_scroll = 30;
             }
             _ => {}
+        },
+        AppMode::FilterHistory => match code {
+            // Exit editing mode on `ESC`
+            KeyCode::Enter => app.set_app_mode(AppMode::ShowHistory),
+            KeyCode::Esc => {
+                app.search_bar = styled_textarea("Search");
+                app.set_app_mode(AppMode::ShowHistory);
+                app.set_chat_list(None)?;
+            }
+            _ => {
+                app.search_bar.input(key_event);
+                let query_filter = app.search_bar.lines().first().cloned();
+                app.set_chat_list(query_filter)?;
+            }
         },
     }
     Ok(())
