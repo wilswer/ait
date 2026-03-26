@@ -12,7 +12,7 @@ use ait::app::{App, AppMode, AppResult, Message, Notification};
 use ait::cli::Cli;
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
-use ait::storage::create_db;
+use ait::storage::{create_db, migrate_db};
 use ait::tui::Tui;
 
 #[derive(Debug, Clone)]
@@ -28,6 +28,7 @@ pub enum Action {
 async fn main() -> AppResult<()> {
     let cli = Cli::parse();
     create_db().context("Failed to create database")?;
+    migrate_db().context("Failed to migrate database")?;
 
     // Create an application.
     let maybe_context = cli.read().context("Could not read from file or stdin.")?;

@@ -22,7 +22,7 @@ use crate::{
     snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
     storage::{
         create_db_conversation, delete_conversation, delete_message, get_cache_dir, insert_message,
-        list_all_conversations, list_all_messages,
+        list_all_conversations, list_all_messages, touch_conversation,
     },
     ui::style_message,
 };
@@ -524,9 +524,11 @@ impl<'a> App<'a> {
             .context("Unable to write received message to chat log")?;
         if let Some(id) = self.conversation_id {
             insert_message(id, &message)?;
+            touch_conversation(id)?;
         } else {
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
+            touch_conversation(id)?;
         }
         self.add_cached_lines(message.clone());
         self.messages.push(message);

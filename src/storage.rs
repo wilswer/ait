@@ -8,14 +8,14 @@ use rusqlite::{params, Connection};
 use crate::app::{AppResult, Message};
 
 fn get_data_dir() -> AppResult<PathBuf> {
-    let project_dirs = ProjectDirs::from("", "", "ait")
-        .context("Could not determine project directories")?;
+    let project_dirs =
+        ProjectDirs::from("", "", "ait").context("Could not determine project directories")?;
     Ok(project_dirs.data_dir().to_path_buf())
 }
 
 pub fn get_cache_dir() -> AppResult<PathBuf> {
-    let project_dirs = ProjectDirs::from("", "", "ait")
-        .context("Could not determine project directories")?;
+    let project_dirs =
+        ProjectDirs::from("", "", "ait").context("Could not determine project directories")?;
     Ok(project_dirs.cache_dir().to_path_buf())
 }
 
@@ -37,7 +37,8 @@ pub fn create_db() -> AppResult<()> {
         "CREATE TABLE IF NOT EXISTS Conversations (
             conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
             system_prompt TEXT NOT NULL,
-            started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME
         )",
         [],
     )
@@ -57,6 +58,42 @@ pub fn create_db() -> AppResult<()> {
     )
     .context("Failed to create messages table")?;
 
+    Ok(())
+}
+
+pub fn migrate_db() -> AppResult<()> {
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not open db connection")?;
+
+    // Add updated_at column if it doesn't exist (existing rows will have NULL)
+    let column_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('Conversations') WHERE name = 'updated_at'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .context("Failed to check for updated_at column")?
+        > 0;
+
+    if !column_exists {
+        conn.execute(
+            "ALTER TABLE Conversations ADD COLUMN updated_at DATETIME",
+            [],
+        )
+        .context("Failed to add updated_at column to Conversations")?;
+    }
+
+    Ok(())
+}
+
+pub fn touch_conversation(conversation_id: i64) -> AppResult<()> {
+    let db_path = get_db_path()?;
+    let conn = Connection::open(db_path).context("Could not open db connection")?;
+    conn.execute(
+        "UPDATE Conversations SET updated_at = CURRENT_TIMESTAMP WHERE conversation_id = ?1",
+        params![conversation_id],
+    )
+    .context("Failed to update conversation updated_at")?;
     Ok(())
 }
 
@@ -114,7 +151,7 @@ pub fn list_all_conversations() -> AppResult<Vec<(i64, String)>> {
     let conn = Connection::open(db_path).context("Could not connect to database")?;
     // Query the Conversations table for all conversation IDs
     let mut stmt = conn.prepare(
-        "SELECT conversation_id, started_at FROM Conversations ORDER BY conversation_id DESC",
+        "SELECT conversation_id, COALESCE(updated_at, started_at) FROM Conversations ORDER BY COALESCE(updated_at, started_at) DESC",
     )?;
     let conversation_ids = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
