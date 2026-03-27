@@ -17,7 +17,7 @@ clap = { version = "4.5", features = ["derive"] }
 crossterm = { version = "0.29", features = ["event-stream", "use-dev-tty", "libc"] }
 directories = "6.0"
 futures = "0.3"
-genai = "0.5"
+genai = "0.6.0-beta.11"
 ratatui = { version = "0.30", features = ["unstable-widget-ref"] }
 ratatui-explorer = "0.3.0"
 rusqlite = { version = "0.39", features = ["bundled"] }

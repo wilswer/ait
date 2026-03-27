@@ -51,7 +51,7 @@ Context:
         cli.system_prompt.clone()
     };
     let mut app = App::new(&system_prompt);
-    let models = get_models()
+    let models = get_models(cli.ollama_host.as_deref())
         .await
         .context("Failed to find models from providers")?;
     app.set_models(models);
@@ -115,6 +115,7 @@ Context:
             } else {
                 Some(system_prompt.clone())
             };
+            let ollama_host = cli.ollama_host.clone();
 
             let tx = action_tx.clone();
 
@@ -124,7 +125,7 @@ Context:
             // Spawn ONE task that does everything
             task::spawn(async move {
                 let response =
-                    assistant_response_streaming(&messages, &selected_model, sys_prompt).await;
+                    assistant_response_streaming(&messages, &selected_model, sys_prompt, ollama_host.as_deref()).await;
 
                 match response {
                     Ok(mut stream) => {

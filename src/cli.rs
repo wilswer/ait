@@ -14,6 +14,9 @@ pub struct Cli {
     /// Context input file path. If not provided, reads from stdin
     #[arg(short, long)]
     context: Option<PathBuf>,
+    /// Ollama host URL (e.g. http://192.168.1.10:11434/v1/). Defaults to http://localhost:11434/v1/
+    #[arg(long)]
+    pub ollama_host: Option<String>,
 }
 
 impl Cli {

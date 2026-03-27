@@ -1,6 +1,7 @@
 use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStream};
-use genai::{Client, ClientBuilder, ClientConfig};
+use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
+use genai::{Client, ClientBuilder, ClientConfig, ModelIden, ServiceTarget};
 
 use crate::app::{AppResult, Message};
 
@@ -30,10 +31,41 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::Zai => "ZAI_API_KEY",
         AdapterKind::BigModel => "BIGMODEL_API_KEY",
         AdapterKind::Mimo => "MIMO_API_KEY",
+        AdapterKind::Aliyun => "ALIYUN_API_KEY",
     }
 }
 
-pub async fn get_models() -> AppResult<Vec<(String, String)>> {
+fn build_client(ollama_host: Option<&str>) -> Client {
+    let chat_opts = ChatOptions::default();
+    let client_config = ClientConfig::default().with_chat_options(chat_opts);
+    let builder = ClientBuilder::default().with_config(client_config);
+
+    if let Some(host) = ollama_host {
+        let host = host.to_string();
+        let resolver = ServiceTargetResolver::from_resolver_fn(
+            move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
+                if service_target.model.adapter_kind == AdapterKind::Ollama {
+                    let endpoint = Endpoint::from_owned(host.clone());
+                    let auth = AuthData::from_single("ollama");
+                    let model =
+                        ModelIden::new(AdapterKind::Ollama, service_target.model.model_name);
+                    Ok(ServiceTarget {
+                        endpoint,
+                        auth,
+                        model,
+                    })
+                } else {
+                    Ok(service_target)
+                }
+            },
+        );
+        builder.with_service_target_resolver(resolver).build()
+    } else {
+        builder.build()
+    }
+}
+
+pub async fn get_models(ollama_host: Option<&str>) -> AppResult<Vec<(String, String)>> {
     const KINDS: &[AdapterKind] = &[
         AdapterKind::OpenAI,
         AdapterKind::Ollama,
@@ -45,21 +77,19 @@ pub async fn get_models() -> AppResult<Vec<(String, String)>> {
         AdapterKind::DeepSeek,
     ];
 
-    let client = Client::default();
+    let client = build_client(ollama_host);
     let mut models = Vec::new();
     for &kind in KINDS {
         let env_name = get_api_key_name(&kind);
         if !env_name.is_empty() && std::env::var(env_name).is_err() {
             continue;
         }
-        let models_provider_res = client.all_model_names(kind).await;
-        let models_provider = match models_provider_res {
-            Ok(m) => m
-                .into_iter()
-                .map(|m| (kind.as_str().to_string(), m))
-                .collect::<Vec<(String, String)>>(),
-            Err(_) => Vec::new(),
-        };
+        let models_provider = client
+            .all_model_names(kind)
+            .await?
+            .into_iter()
+            .map(|m| (kind.as_str().to_string(), m))
+            .collect::<Vec<(String, String)>>();
         models.extend(models_provider);
     }
     for (p, m) in MODELS {
@@ -75,6 +105,7 @@ pub async fn assistant_response(
     messages: &[Message],
     model: &str,
     system_prompt: Option<String>,
+    ollama_host: Option<&str>,
 ) -> AppResult<Message> {
     let chat_messages = messages
         .iter()
@@ -92,10 +123,8 @@ pub async fn assistant_response(
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
-    let chat_opts = ChatOptions::default();
-    let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
-    let client = ClientBuilder::default().with_config(client_config).build();
+    let client = build_client(ollama_host);
     match client.exec_chat(model, chat_req, None).await {
         Ok(res) => {
             let chat_res = if let Some(m) = res.into_first_text() {
@@ -113,6 +142,7 @@ pub async fn assistant_response_streaming(
     messages: &[Message],
     model: &str,
     system_prompt: Option<String>,
+    ollama_host: Option<&str>,
 ) -> AppResult<ChatStream> {
     let chat_messages = messages
         .iter()
@@ -130,10 +160,8 @@ pub async fn assistant_response_streaming(
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
-    let chat_opts = ChatOptions::default();
-    let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
-    let client = ClientBuilder::default().with_config(client_config).build();
+    let client = build_client(ollama_host);
     let chat_res = client.exec_chat_stream(model, chat_req, None).await?;
     Ok(chat_res.stream)
 }
