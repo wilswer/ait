@@ -484,7 +484,7 @@ impl<'a> App<'a> {
         }
 
         self.has_unprocessed_messages = true;
-        self.input_textarea = styled_textarea("Input");
+        self.reset_input_textarea();
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()
             .context("Unable to write submitted message to chat log")?;
@@ -702,6 +702,14 @@ impl<'a> App<'a> {
         }
     }
 
+    pub fn reset_searchbar(&mut self) {
+        self.search_bar = styled_textarea("Search")
+    }
+
+    pub fn reset_input_textarea(&mut self) {
+        self.input_textarea = styled_textarea("Input")
+    }
+
     pub fn redo_last_message(&mut self) -> AppResult<()> {
         self.has_unprocessed_messages = false;
         while let Some(m) = self.messages.pop() {
@@ -710,7 +718,7 @@ impl<'a> App<'a> {
             }
             match m {
                 Message::User(s) => {
-                    self.input_textarea = styled_textarea("Input");
+                    self.reset_input_textarea();
                     self.input_textarea.insert_str(s);
                     break;
                 }
@@ -749,7 +757,7 @@ impl<'a> App<'a> {
 
     pub fn set_chat(&mut self) -> AppResult<()> {
         if let Some(i) = self.chat_list.state.selected() {
-            self.search_bar = styled_textarea("Search");
+            self.reset_searchbar();
             for item in self.chat_list.items.iter_mut() {
                 item.selected = false;
             }

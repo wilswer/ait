@@ -1,4 +1,4 @@
-use crate::app::{styled_textarea, App, AppMode, AppResult, Notification};
+use crate::app::{App, AppMode, AppResult, Notification};
 
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -194,7 +194,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             // Exit editing mode on `ESC`
             KeyCode::Enter => app.set_app_mode(AppMode::ShowHistory),
             KeyCode::Esc => {
-                app.search_bar = styled_textarea("Search");
+                app.reset_searchbar();
                 app.set_app_mode(AppMode::ShowHistory);
                 app.set_chat_list(None)?;
             }
