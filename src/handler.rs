@@ -79,7 +79,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
         },
         AppMode::ShowHistory => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('q') => app.set_app_mode(AppMode::Normal),
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.reset_searchbar();
+                app.set_app_mode(AppMode::Normal);
+            }
             KeyCode::Char('h') | KeyCode::Left => app.select_no_chat(),
             KeyCode::Char('j') | KeyCode::Down => app.select_next_chat(),
             KeyCode::Char('k') | KeyCode::Up => app.select_previous_chat(),
@@ -191,8 +194,18 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             _ => {}
         },
         AppMode::FilterHistory => match code {
-            // Exit editing mode on `ESC`
-            KeyCode::Enter => app.set_app_mode(AppMode::ShowHistory),
+            KeyCode::Enter => {
+                app.set_chat()?;
+                app.set_app_mode(AppMode::Normal);
+            }
+            KeyCode::Up => {
+                app.set_app_mode(AppMode::ShowHistory);
+                app.select_previous_chat();
+            }
+            KeyCode::Down => {
+                app.set_app_mode(AppMode::ShowHistory);
+                app.select_next_chat();
+            }
             KeyCode::Esc => {
                 app.reset_searchbar();
                 app.set_app_mode(AppMode::ShowHistory);
