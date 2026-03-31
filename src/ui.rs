@@ -1,5 +1,3 @@
-use std::cmp::min;
-
 use ratatui::{
     layout::{Alignment, Constraint, Flex, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -604,11 +602,17 @@ fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            ListItem::from(format!(
-                "Snippet {}: {}...",
-                i + 1,
-                s.text[..min(10, s.text.len())].to_owned()
-            ))
+            // Collect up to 11 chars to see if we need an ellipsis
+            let chars: Vec<char> = s.text.chars().take(11).collect();
+            let display_text = if chars.len() > 10 {
+                // If it's longer than 10, take 10 and add "..."
+                let truncated: String = chars.into_iter().take(10).collect();
+                format!("{}...", truncated)
+            } else {
+                // Otherwise, just use the text as is
+                chars.into_iter().collect()
+            };
+            ListItem::from(format!("Snippet {}: {}", i + 1, display_text))
         })
         .collect();
     f.render_stateful_widget(styled_list(items, block), area, &mut app.snippet_list.state);
