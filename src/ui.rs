@@ -286,8 +286,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Text::from(snippet.text.as_str()).magenta()
                 };
                 f.render_widget(
-                    Paragraph::new(snippet_text)
-                        .block(Block::new().padding(Padding::uniform(1))),
+                    Paragraph::new(snippet_text).block(Block::new().padding(Padding::uniform(1))),
                     preview_area,
                 );
             }
