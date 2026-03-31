@@ -394,13 +394,7 @@ impl<'a> App<'a> {
 
     fn get_max_scroll(&self) -> AppResult<usize> {
         let total_lines = self.cached_lines.len();
-        // Subtract the messages viewport height: outer margin (top+bottom=2) +
-        // help row (1) + messages block border (top+bottom=2) = 5 rows overhead.
-        let viewport_height = self
-            .size
-            .map(|s| s.height.saturating_sub(5) as usize)
-            .unwrap_or(0);
-        Ok(total_lines.saturating_sub(viewport_height))
+        Ok(total_lines.saturating_sub(2)) // Make last line visible
     }
 
     pub fn increment_vertical_scroll(&mut self) -> AppResult<()> {
@@ -440,6 +434,8 @@ impl<'a> App<'a> {
     }
 
     pub fn submit_message(&mut self) -> AppResult<()> {
+        self.scroll_to_bottom()
+            .context("Scrolling to bottom failed.")?;
         let mut text = self.input_textarea.lines().join("\n");
         if let Some(context) = &self.current_context {
             let ps = SyntaxSet::load_defaults_newlines();
