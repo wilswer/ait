@@ -13,7 +13,10 @@ use tui_big_text::{BigText, PixelSize};
 
 use crate::{
     app::{get_file_content, App, AppMode, Message, Notification},
-    snippets::{create_highlighted_code, parse_message_segments, translate_language_name_to_syntect_name, MessageSegment},
+    snippets::{
+        create_highlighted_code, parse_message_segments, translate_language_name_to_syntect_name,
+        MessageSegment,
+    },
     storage::list_all_messages,
 };
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -48,6 +51,164 @@ fn left_aligned_rect(r: Rect, p: u16) -> Rect {
     Layout::horizontal([Constraint::Fill(1), Constraint::Percentage(100 - p)]).split(r)[0]
 }
 
+/// Parse a single line for inline markdown markers (`**bold**`, `*italic*`, `` `code` ``).
+/// Returns a vec of styled [`Span`]s.
+fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current = String::new();
+    let mut rest = text;
+
+    while !rest.is_empty() {
+        if rest.starts_with("**") {
+            if let Some(end) = rest[2..].find("**") {
+                if !current.is_empty() {
+                    spans.push(Span::raw(std::mem::take(&mut current)));
+                }
+                spans.push(Span::styled(
+                    rest[2..2 + end].to_string(),
+                    Style::default().bold(),
+                ));
+                rest = &rest[2 + end + 2..];
+                continue;
+            }
+        }
+        if rest.starts_with('*') {
+            // single star italic — only if there is a closing *
+            if let Some(end) = rest[1..].find('*') {
+                let inner = &rest[1..1 + end];
+                if !inner.is_empty() && !inner.contains('\n') {
+                    if !current.is_empty() {
+                        spans.push(Span::raw(std::mem::take(&mut current)));
+                    }
+                    spans.push(Span::styled(inner.to_string(), Style::default().italic()));
+                    rest = &rest[1 + end + 1..];
+                    continue;
+                }
+            }
+        }
+        if rest.starts_with('`') {
+            if let Some(end) = rest[1..].find('`') {
+                let inner = &rest[1..1 + end];
+                if !inner.is_empty() {
+                    if !current.is_empty() {
+                        spans.push(Span::raw(std::mem::take(&mut current)));
+                    }
+                    spans.push(Span::styled(
+                        inner.to_string(),
+                        Style::default().fg(Color::Yellow),
+                    ));
+                    rest = &rest[1 + end + 1..];
+                    continue;
+                }
+            }
+        }
+        let c = rest.chars().next().unwrap();
+        current.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+
+    if !current.is_empty() {
+        spans.push(Span::raw(current));
+    }
+    spans
+}
+
+/// Render a markdown text segment into styled [`Line`]s, with word-wrapping.
+fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+
+        if trimmed.is_empty() {
+            lines.push(Line::default());
+            continue;
+        }
+
+        // Horizontal rule
+        if trimmed == "---" || trimmed == "===" || trimmed == "***" {
+            lines.push(Line::from("─".repeat(width)).style(Style::default().fg(Color::DarkGray)));
+            continue;
+        }
+
+        // ATX headings: # / ## / ###
+        if trimmed.starts_with('#') {
+            let level = trimmed.chars().take_while(|&c| c == '#').count().min(6);
+            let heading_text = trimmed[level..].trim();
+            let style = match level {
+                1 => Style::default().bold().fg(Color::LightBlue),
+                2 => Style::default().bold().fg(Color::Cyan),
+                _ => Style::default().bold(),
+            };
+            let prefix = format!("{} ", "#".repeat(level));
+            let wrap_width = width.saturating_sub(prefix.len());
+            for (i, chunk) in textwrap::wrap(heading_text, wrap_width).iter().enumerate() {
+                let pfx = if i == 0 {
+                    prefix.clone()
+                } else {
+                    " ".repeat(prefix.len())
+                };
+                let mut spans = vec![Span::styled(pfx, style)];
+                for s in parse_inline_markdown(chunk.as_ref()) {
+                    spans.push(Span::styled(s.content.into_owned(), style.patch(s.style)));
+                }
+                lines.push(Line::from(spans));
+            }
+            continue;
+        }
+
+        // Unordered list item: - / * / +
+        let is_unordered =
+            trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ");
+        if is_unordered {
+            let item_text = &trimmed[2..];
+            let bullet_prefix = format!("{}• ", " ".repeat(indent));
+            let cont_prefix = format!("{}  ", " ".repeat(indent));
+            let wrap_width = width.saturating_sub(bullet_prefix.len());
+            for (i, chunk) in textwrap::wrap(item_text, wrap_width).iter().enumerate() {
+                let pfx = if i == 0 {
+                    bullet_prefix.clone()
+                } else {
+                    cont_prefix.clone()
+                };
+                let mut spans = vec![Span::styled(pfx, Style::default().fg(Color::DarkGray))];
+                spans.extend(parse_inline_markdown(chunk.as_ref()));
+                lines.push(Line::from(spans));
+            }
+            continue;
+        }
+
+        // Ordered list item: 1. / 12. etc.
+        let num_end = trimmed.find(". ").unwrap_or(0);
+        let is_ordered = num_end > 0 && trimmed[..num_end].chars().all(|c| c.is_ascii_digit());
+        if is_ordered {
+            let num_prefix = format!("{}{}. ", " ".repeat(indent), &trimmed[..num_end]);
+            let cont_prefix = " ".repeat(indent + num_end + 2).to_string();
+            let item_text = &trimmed[num_end + 2..];
+            let wrap_width = width.saturating_sub(num_prefix.len());
+            for (i, chunk) in textwrap::wrap(item_text, wrap_width).iter().enumerate() {
+                let pfx = if i == 0 {
+                    num_prefix.clone()
+                } else {
+                    cont_prefix.clone()
+                };
+                let mut spans = vec![Span::styled(pfx, Style::default().fg(Color::DarkGray))];
+                spans.extend(parse_inline_markdown(chunk.as_ref()));
+                lines.push(Line::from(spans));
+            }
+            continue;
+        }
+
+        // Regular paragraph text
+        for chunk in textwrap::wrap(line, width) {
+            lines.push(Line::from(parse_inline_markdown(chunk.as_ref())));
+        }
+    }
+
+    lines
+}
+
 fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
     let text = text.into();
@@ -55,12 +216,15 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
     for segment in parse_message_segments(&text) {
         match segment {
             MessageSegment::Text(t) => {
-                for line in t.lines() {
-                    let wrapped = textwrap::wrap(line, width - 3);
-                    lines.extend(wrapped.into_iter().map(|l| Line::from(l.to_string())));
-                }
+                lines.extend(render_markdown_lines(&t, width - 3));
             }
-            MessageSegment::Code { language, code, indent } => {
+            MessageSegment::Code {
+                language,
+                code,
+                indent,
+                depth: 0,
+                ..
+            } => {
                 if !code.is_empty() {
                     let highlighted = if !language.is_empty() {
                         create_highlighted_code(
@@ -83,6 +247,9 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                     );
                 }
             }
+            // Nested blocks (depth > 0) are already embedded verbatim in the
+            // outer block's syntax-highlighted content; skip them here.
+            MessageSegment::Code { .. } => {}
         }
     }
     lines

@@ -135,6 +135,8 @@ impl From<CodeSnippet> for SnippetItem {
 pub struct CodeSnippet {
     pub language: String,
     pub code: String,
+    /// Nesting depth: 0 = top-level block, 1 = inside another block, etc.
+    pub depth: usize,
 }
 
 /// A parsed segment of a message: either plain text or a fenced code block.
@@ -148,6 +150,8 @@ pub enum MessageSegment {
         language: String,
         code: String,
         indent: usize,
+        /// Nesting depth: 0 = top-level, 1 = inside another code block, etc.
+        depth: usize,
     },
 }
 
@@ -156,7 +160,7 @@ pub enum MessageSegment {
 ///
 /// When a fenced block is opened inside another fenced block the opening/closing
 /// fence lines are included verbatim in the outer block's content, and the inner
-/// block is also emitted as its own segment.
+/// block is also emitted as its own segment with a higher `depth`.
 pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
     let mut segments: Vec<MessageSegment> = Vec::new();
     // Stack entries: (raw_language, accumulated_code, indent, segments_index)
@@ -165,9 +169,7 @@ pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
 
     for line in text.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            let after_backticks = trimmed[3..].trim();
-
+        if let Some(after_backticks) = trimmed.strip_prefix("```") {
             if !stack.is_empty() && after_backticks.is_empty() {
                 // Closing fence: finalise the innermost block.
                 let (lang, code, indent, idx) = stack.pop().unwrap();
@@ -175,6 +177,7 @@ pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
                     language: lang,
                     code: code.trim_end_matches('\n').to_string(),
                     indent,
+                    depth: stack.len(), // depth at which this block was opened
                 };
                 // Append the closing fence line to the outer block (if any).
                 if let Some((_, outer_code, _, _)) = stack.last_mut() {
@@ -221,11 +224,17 @@ pub fn find_fenced_code_snippets(messages: Vec<String>) -> Vec<CodeSnippet> {
     parse_message_segments(&messages.join("\n"))
         .into_iter()
         .filter_map(|seg| match seg {
-            MessageSegment::Code { language, code, .. } => Some(CodeSnippet {
+            MessageSegment::Code {
+                language,
+                code,
+                depth,
+                ..
+            } => Some(CodeSnippet {
                 language: translate_language_name_to_syntect_name(Some(&language)),
                 code,
+                depth,
             }),
-            MessageSegment::Text(_) => None,
+            _ => None,
         })
         .collect()
 }
@@ -281,12 +290,14 @@ fn test_find_snippets1() {
     println!(\"Hello, world!\");
 }"
             .to_string(),
+            depth: 0,
         },
         CodeSnippet {
             language: "Python".to_string(),
             code: "def main():
     print(\"Hello, world!\")"
                 .to_string(),
+            depth: 0,
         },
     ];
     assert_eq!(
@@ -317,12 +328,14 @@ fn test_find_snippets2() {
         println!(\"Hello, world!\");
     }"
             .to_string(),
+            depth: 0,
         },
         CodeSnippet {
             language: "Python".to_string(),
             code: "    def main():
         print(\"Hello, world!\")"
                 .to_string(),
+            depth: 0,
         },
     ];
     assert_eq!(
@@ -363,6 +376,7 @@ def main():
     print(\"Hello, world!\")
 ```"
             .to_string(),
+            depth: 0,
         },
         CodeSnippet {
             language: "Rust".to_string(),
@@ -370,12 +384,14 @@ def main():
     println!(\"Hello, world!\");
 }"
             .to_string(),
+            depth: 1,
         },
         CodeSnippet {
             language: "Python".to_string(),
             code: "def main():
     print(\"Hello, world!\")"
                 .to_string(),
+            depth: 1,
         },
     ];
     assert_eq!(
