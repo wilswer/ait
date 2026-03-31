@@ -308,7 +308,7 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
         .end_symbol(Some("↓"));
-    let mut messages = if app.is_streaming {
+    let mut messages = if app.is_streaming || !app.do_highlight {
         messages_to_lines(&app.messages, messages_area.width as usize)
     } else {
         app.cached_lines.clone()
@@ -468,6 +468,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to browse previous conversations, ".into(),
                 "s".bold(),
                 " to browse code snippets, ".into(),
+                "t".bold(),
+                " to toggle syntax highlighting, ".into(),
                 "f".bold(),
                 " to explore files, ".into(),
                 "c".bold(),

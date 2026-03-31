@@ -242,6 +242,8 @@ pub struct App<'a> {
     pub current_context: Option<Vec<File>>,
     /// Search bar.
     pub search_bar: TextArea<'a>,
+    /// Toggle for syntax highlighting.
+    pub do_highlight: bool,
 }
 
 pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
@@ -288,6 +290,7 @@ impl Default for App<'_> {
                 .expect("Could not construct file explorer."),
             current_context: None,
             search_bar: styled_textarea("Search"),
+            do_highlight: true,
         }
     }
 }
@@ -330,6 +333,10 @@ impl<'a> App<'a> {
                 self.theme.clone(),
             ));
         }
+    }
+
+    pub fn toggle_highlighting(&mut self) {
+        self.do_highlight = !self.do_highlight;
     }
 
     pub fn recache_lines(&mut self, messages: Vec<Message>) {

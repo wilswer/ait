@@ -53,6 +53,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('c') => {
                 app.set_app_mode(AppMode::ShowContext);
             }
+            KeyCode::Char('t') => {
+                app.toggle_highlighting();
+            }
             _ => {}
         },
         AppMode::Editing => match code {
