@@ -13,7 +13,7 @@ use tui_big_text::{BigText, PixelSize};
 
 use crate::{
     app::{get_file_content, App, AppMode, Message, Notification},
-    snippets::{create_highlighted_code, translate_language_name_to_syntect_name},
+    snippets::{create_highlighted_code, parse_message_segments, translate_language_name_to_syntect_name, MessageSegment},
     storage::list_all_messages,
 };
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -50,55 +50,39 @@ fn left_aligned_rect(r: Rect, p: u16) -> Rect {
 
 fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
-    let mut in_code_block = false;
-    let mut code_buffer = String::new();
-    let mut language = String::new();
     let text = text.into();
-    let mut nspaces = 0;
 
-    for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            if in_code_block {
-                // End of code block
-                if !code_buffer.is_empty() {
+    for segment in parse_message_segments(&text) {
+        match segment {
+            MessageSegment::Text(t) => {
+                for line in t.lines() {
+                    let wrapped = textwrap::wrap(line, width - 3);
+                    lines.extend(wrapped.into_iter().map(|l| Line::from(l.to_string())));
+                }
+            }
+            MessageSegment::Code { language, code, indent } => {
+                if !code.is_empty() {
                     let highlighted = if !language.is_empty() {
                         create_highlighted_code(
-                            &code_buffer,
+                            &code,
                             translate_language_name_to_syntect_name(Some(&language)),
                             &theme,
                         )
                     } else {
-                        let wrapped = textwrap::wrap(&code_buffer, width - 3);
+                        let wrapped = textwrap::wrap(&code, width - 3);
                         Text::from(wrapped.join("\n"))
                     };
                     lines.push(
-                        Line::from(format!("{}```{}", " ".repeat(nspaces), &language))
+                        Line::from(format!("{}```{}", " ".repeat(indent), &language))
                             .style(Style::default().fg(Color::DarkGray)),
                     );
                     lines.extend(highlighted.lines);
                     lines.push(
-                        Line::from(format!("{}```", " ".repeat(nspaces)))
+                        Line::from(format!("{}```", " ".repeat(indent)))
                             .style(Style::default().fg(Color::DarkGray)),
                     );
                 }
-                code_buffer.clear();
-                language.clear();
-                in_code_block = false;
-                // Assume no indentation
-                nspaces = 0;
-            } else {
-                // Start of code block
-                nspaces = line.len() - line.trim_start_matches(' ').len();
-                language = line.trim_start().trim_start_matches('`').to_string();
-                in_code_block = true;
             }
-        } else if in_code_block {
-            code_buffer.push_str(line);
-            code_buffer.push('\n');
-        } else {
-            // Regular text - wrap it
-            let wrapped = textwrap::wrap(line, width - 3);
-            lines.extend(wrapped.into_iter().map(|l| Line::from(l.to_string())));
         }
     }
     lines

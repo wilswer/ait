@@ -386,21 +386,14 @@ impl<'a> App<'a> {
     }
 
     fn get_max_scroll(&self) -> AppResult<usize> {
-        let (width, _) =
-            crossterm::terminal::size().context("Could not get terminal size from crossterm")?;
-        let max_scroll = self
-            .messages
-            .iter()
-            .map(|m| textwrap::wrap(m.as_ref(), width as usize - 5).join("\n"))
-            .collect::<Vec<String>>()
-            .join("\n")
-            .split('\n')
-            .collect::<Vec<&str>>()
-            .len()
-            + 3 * (self.messages.len())
-            - 2;
-
-        Ok(max_scroll)
+        let total_lines = self.cached_lines.len();
+        // Subtract the messages viewport height: outer margin (top+bottom=2) +
+        // help row (1) + messages block border (top+bottom=2) = 5 rows overhead.
+        let viewport_height = self
+            .size
+            .map(|s| s.height.saturating_sub(5) as usize)
+            .unwrap_or(0);
+        Ok(total_lines.saturating_sub(viewport_height))
     }
 
     pub fn increment_vertical_scroll(&mut self) -> AppResult<()> {

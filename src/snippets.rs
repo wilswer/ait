@@ -137,38 +137,97 @@ pub struct CodeSnippet {
     pub code: String,
 }
 
-pub fn find_fenced_code_snippets(messages: Vec<String>) -> Vec<CodeSnippet> {
-    let mut snippets = Vec::new();
-    let mut in_code_block = false;
-    let mut current_snippet = String::new();
-    let mut current_language = String::new();
+/// A parsed segment of a message: either plain text or a fenced code block.
+///
+/// `language` holds the raw tag from the opening fence (e.g. `"rust"`), not the
+/// syntect-translated name.  `indent` is the number of leading spaces on the
+/// fence line, which callers may use for display.
+pub enum MessageSegment {
+    Text(String),
+    Code {
+        language: String,
+        code: String,
+        indent: usize,
+    },
+}
 
-    for line in messages {
-        if line.trim_start().starts_with("```") {
-            // Toggle the state of being inside a code block
-            if in_code_block {
-                // Code block ends, save the current snippet
-                snippets.push(CodeSnippet {
-                    language: current_language.clone(),
-                    code: current_snippet.trim_end_matches('\n').to_string(),
-                });
-                current_snippet.clear();
-                current_language.clear();
-            } else {
-                // Extract language name after ```
-                let trimmed = line.trim_start();
-                current_language =
-                    translate_language_name_to_syntect_name(Some(trimmed[3..].trim()));
+/// Parse `text` into an ordered sequence of [`MessageSegment`]s, handling
+/// arbitrarily nested fenced code blocks.
+///
+/// When a fenced block is opened inside another fenced block the opening/closing
+/// fence lines are included verbatim in the outer block's content, and the inner
+/// block is also emitted as its own segment.
+pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
+    let mut segments: Vec<MessageSegment> = Vec::new();
+    // Stack entries: (raw_language, accumulated_code, indent, segments_index)
+    let mut stack: Vec<(String, String, usize, usize)> = Vec::new();
+    let mut current_text = String::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            let after_backticks = trimmed[3..].trim();
+
+            if !stack.is_empty() && after_backticks.is_empty() {
+                // Closing fence: finalise the innermost block.
+                let (lang, code, indent, idx) = stack.pop().unwrap();
+                segments[idx] = MessageSegment::Code {
+                    language: lang,
+                    code: code.trim_end_matches('\n').to_string(),
+                    indent,
+                };
+                // Append the closing fence line to the outer block (if any).
+                if let Some((_, outer_code, _, _)) = stack.last_mut() {
+                    outer_code.push_str(line);
+                    outer_code.push('\n');
+                }
+            } else if !after_backticks.is_empty() {
+                // Opening fence: append this line to every already-open block.
+                for (_, code, _, _) in stack.iter_mut() {
+                    code.push_str(line);
+                    code.push('\n');
+                }
+                // Flush any accumulated plain text (only possible at depth 0).
+                if !current_text.is_empty() {
+                    segments.push(MessageSegment::Text(std::mem::take(&mut current_text)));
+                }
+                let indent = line.len() - trimmed.len();
+                let idx = segments.len();
+                // Reserve a slot; filled in when the block closes.
+                segments.push(MessageSegment::Text(String::new()));
+                stack.push((after_backticks.to_string(), String::new(), indent, idx));
             }
-            in_code_block = !in_code_block;
-        } else if in_code_block {
-            // Inside a code block, append the line to the current snippet
-            current_snippet.push_str(&line);
-            current_snippet.push('\n');
+            // A bare ``` at depth 0 is ignored.
+        } else if !stack.is_empty() {
+            // Content line: append to every open block (outer accumulates nested content).
+            for (_, code, _, _) in stack.iter_mut() {
+                code.push_str(line);
+                code.push('\n');
+            }
+        } else {
+            current_text.push_str(line);
+            current_text.push('\n');
         }
     }
 
-    snippets
+    if !current_text.is_empty() {
+        segments.push(MessageSegment::Text(current_text));
+    }
+
+    segments
+}
+
+pub fn find_fenced_code_snippets(messages: Vec<String>) -> Vec<CodeSnippet> {
+    parse_message_segments(&messages.join("\n"))
+        .into_iter()
+        .filter_map(|seg| match seg {
+            MessageSegment::Code { language, code, .. } => Some(CodeSnippet {
+                language: translate_language_name_to_syntect_name(Some(&language)),
+                code,
+            }),
+            MessageSegment::Text(_) => None,
+        })
+        .collect()
 }
 
 pub fn translate_language_name_to_syntect_name(s: Option<&str>) -> String {
@@ -271,62 +330,56 @@ fn test_find_snippets2() {
         expected
     );
 }
-// mod tests {
-//     #[test]
-//     fn test_find_snippets1() {
-//         let messages = vec![
-//             "Hello, world!".to_string(),
-//             "```rust".to_string(),
-//             "fn main() {".to_string(),
-//             "    println!(\"Hello, world!\");".to_string(),
-//             "}".to_string(),
-//             "```".to_string(),
-//             "This is a test.".to_string(),
-//             "```python".to_string(),
-//             "def main():".to_string(),
-//             "    print(\"Hello, world!\")".to_string(),
-//             "```".to_string(),
-//         ];
-//         let expected = vec![
-//             "fn main() {
-//     println!(\"Hello, world!\");
-// }"
-//             .to_string(),
-//             "def main():
-//     print(\"Hello, world!\")"
-//                 .to_string(),
-//         ];
-//         assert_eq!(
-//             crate::snippets::find_fenced_code_snippets(messages),
-//             expected
-//         );
-//     }
-//
-//     #[test]
-//     fn test_find_snippets2() {
-//         let messages = vec![
-//             "Hello, world!".to_string(),
-//             "    ```rust".to_string(),
-//             "    fn main() {".to_string(),
-//             "        println!(\"Hello, world!\");".to_string(),
-//             "    }".to_string(),
-//             "    ```".to_string(),
-//             "This is a test.".to_string(),
-//             "    ```python".to_string(),
-//             "    def main():".to_string(),
-//             "        print(\"Hello, world!\")".to_string(),
-//             "    ```".to_string(),
-//         ];
-//         let expected = vec![
-//             "    fn main() {
-//         println!(\"Hello, world!\");
-//     }",
-//             "    def main():
-//         print(\"Hello, world!\")",
-//         ];
-//         assert_eq!(
-//             crate::snippets::find_fenced_code_snippets(messages),
-//             expected
-//         );
-//     }
-// }
+
+#[test]
+fn test_nested_snippets() {
+    let messages = vec![
+        "```markdown".to_string(),
+        "# Hello, world!".to_string(),
+        "```rust".to_string(),
+        "fn main() {".to_string(),
+        "    println!(\"Hello, world!\");".to_string(),
+        "}".to_string(),
+        "```".to_string(),
+        "# This is a test.".to_string(),
+        "```python".to_string(),
+        "def main():".to_string(),
+        "    print(\"Hello, world!\")".to_string(),
+        "```".to_string(),
+        "```".to_string(),
+    ];
+    let expected = vec![
+        CodeSnippet {
+            language: "Markdown".to_string(),
+            code: "# Hello, world!
+```rust
+fn main() {
+    println!(\"Hello, world!\");
+}
+```
+# This is a test.
+```python
+def main():
+    print(\"Hello, world!\")
+```"
+            .to_string(),
+        },
+        CodeSnippet {
+            language: "Rust".to_string(),
+            code: "fn main() {
+    println!(\"Hello, world!\");
+}"
+            .to_string(),
+        },
+        CodeSnippet {
+            language: "Python".to_string(),
+            code: "def main():
+    print(\"Hello, world!\")"
+                .to_string(),
+        },
+    ];
+    assert_eq!(
+        crate::snippets::find_fenced_code_snippets(messages),
+        expected
+    );
+}
