@@ -223,7 +223,6 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                 code,
                 indent,
                 depth: 0,
-                ..
             } => {
                 if !code.is_empty() {
                     let highlighted = if !language.is_empty() {
