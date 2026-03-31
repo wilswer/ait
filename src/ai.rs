@@ -32,15 +32,12 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::BigModel => "BIGMODEL_API_KEY",
         AdapterKind::Mimo => "MIMO_API_KEY",
         AdapterKind::Aliyun => "ALIYUN_API_KEY",
+        AdapterKind::Vertex => "VERTEX_API_KEY",
     }
 }
 
 fn build_client(ollama_host: Option<&str>) -> Client {
-    let chat_opts = ChatOptions::default();
-    let client_config = ClientConfig::default().with_chat_options(chat_opts);
-    let builder = ClientBuilder::default().with_config(client_config);
-
-    if let Some(host) = ollama_host {
+    let client_config = if let Some(host) = ollama_host {
         let host = host.to_string();
         let resolver = ServiceTargetResolver::from_resolver_fn(
             move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
@@ -59,10 +56,13 @@ fn build_client(ollama_host: Option<&str>) -> Client {
                 }
             },
         );
-        builder.with_service_target_resolver(resolver).build()
+        ClientConfig::default()
+            .with_chat_options(ChatOptions::default())
+            .with_service_target_resolver(resolver)
     } else {
-        builder.build()
-    }
+        ClientConfig::default().with_chat_options(ChatOptions::default())
+    };
+    ClientBuilder::default().with_config(client_config).build()
 }
 
 pub async fn get_models(ollama_host: Option<&str>) -> AppResult<Vec<(String, String)>> {
