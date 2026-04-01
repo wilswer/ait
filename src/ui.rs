@@ -495,7 +495,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "CONTROL + s (C-s)".bold(),
                 " to submit the message. ".into(),
                 "Paste into the text area by pressing ".into(),
-                "Ctrl + V".bold(),
+                "CONTROL + v (C-v)".bold(),
             ];
             let model_keys = vec![
                 "Press ".into(),
