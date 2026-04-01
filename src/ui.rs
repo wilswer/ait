@@ -478,7 +478,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to start a new chat, ".into(),
                 "u".bold(),
                 " to interrupt the message currently being received, ".into(),
-                "r".bold(),
+                "CONTROL + r (C-r)".bold(),
                 " to redo last message. ".into(),
                 "Scroll with ".into(),
                 "j/k or Up/Down".bold(),
