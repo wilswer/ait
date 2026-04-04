@@ -1,11 +1,12 @@
+use std::fs;
+use std::time::{Duration, Instant};
+use std::{borrow::Cow, fs::read_to_string, io};
+
 use anyhow::{Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
-
-use std::fs;
-use std::{borrow::Cow, fs::read_to_string, io};
 
 use ratatui::{
     buffer::Buffer,
