@@ -19,7 +19,7 @@ use ratatui_textarea::TextArea;
 use crate::{
     ai::MODELS,
     chats::ChatList,
-    snippets::{find_fenced_code_snippets, load_theme, SnippetItem},
+    snippets::{find_fenced_code_snippets, load_theme, SnippetItem, EMBEDDED_THEME},
     storage::{
         create_db_conversation, delete_conversation, delete_message, get_cache_dir, insert_message,
         list_all_messages, list_conversations, touch_conversation,
@@ -224,6 +224,8 @@ pub struct App<'a> {
     pub chat_list: ChatList,
     /// Selected text
     pub selection: Selection,
+    /// Highlighting theme index
+    pub theme_index: usize,
     /// Highlighting theme
     pub theme: Theme,
     /// Terminal size
@@ -280,7 +282,8 @@ impl Default for App<'_> {
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
-            theme: load_theme(),
+            theme_index: 0,
+            theme: load_theme(0),
             size: None,
             cached_lines: Vec::new(),
             is_streaming: false,
@@ -333,6 +336,26 @@ impl<'a> App<'a> {
                 self.theme.clone(),
             ));
         }
+    }
+
+    pub fn next_theme(&mut self) {
+        if self.theme_index == EMBEDDED_THEME.len() - 1 {
+            self.theme_index = 0;
+        } else {
+            self.theme_index += 1;
+        }
+        self.theme = load_theme(self.theme_index);
+        self.recache_lines(self.messages.clone());
+    }
+
+    pub fn previous_theme(&mut self) {
+        if self.theme_index == 0 {
+            self.theme_index = EMBEDDED_THEME.len() - 1;
+        } else {
+            self.theme_index -= 1;
+        }
+        self.theme = load_theme(self.theme_index);
+        self.recache_lines(self.messages.clone());
     }
 
     pub fn toggle_highlighting(&mut self) {

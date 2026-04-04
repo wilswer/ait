@@ -47,6 +47,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 {
                     app.redo_last_message()?;
                     app.set_app_mode(AppMode::Editing);
+                } else {
+                    app.toggle_highlighting();
                 }
             }
             KeyCode::Char('n') => app.new_chat(),
@@ -57,7 +59,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.set_app_mode(AppMode::ShowContext);
             }
             KeyCode::Char('t') => {
-                app.toggle_highlighting();
+                app.next_theme();
+            }
+            KeyCode::Char('T') => {
+                app.previous_theme();
             }
             _ => {}
         },

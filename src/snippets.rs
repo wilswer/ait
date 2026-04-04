@@ -8,10 +8,13 @@ use ratatui::{
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::{easy::HighlightLines, parsing::SyntaxSet};
 
-const EMBEDDED_THEME: &[u8] = include_bytes!("../themes/thorn-dark-warm.tmTheme");
+pub const EMBEDDED_THEME: &[&[u8]; 2] = &[
+    include_bytes!("../themes/thorn-dark-warm.tmTheme"),
+    include_bytes!("../themes/catppuccin-mocha.tmTheme"),
+];
 
-pub fn load_theme() -> Theme {
-    let mut buff = std::io::Cursor::new(EMBEDDED_THEME);
+pub fn load_theme(theme_idx: usize) -> Theme {
+    let mut buff = std::io::Cursor::new(EMBEDDED_THEME[theme_idx]);
     ThemeSet::load_from_reader(&mut buff).unwrap_or_else(|_| {
         let ts = ThemeSet::load_defaults();
         ts.themes["base16-mocha.dark"].clone()
