@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::Parser;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use genai::chat::ChatStreamEvent;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -61,7 +61,7 @@ Context:
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend).context("Failed to create terminal")?;
     app.set_terminal_size(terminal.size()?.width, terminal.size()?.height);
-    let events = EventHandler::new(50);
+    let events = EventHandler::new(200);
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
 
@@ -71,36 +71,55 @@ Context:
 
     // Start the main loop.
     while app.running {
+        // 1. DRAW ONLY ONCE PER BATCH
         tui.draw(&mut app)
             .context("Failed to render user interface")?;
 
-        // Handle events.
-        match tui
-            .events
-            .next()
-            .await
-            .context("Unable to get next event")?
-        {
-            Event::Tick => app.tick(),
-            Event::Key(key_event) => {
-                if key_event.code == crossterm::event::KeyCode::Char('u')
-                    && app.app_mode == AppMode::Normal
-                {
-                    // If we have an active stream, send the cancel signal
-                    if let Some(tx) = current_cancel_tx.take() {
-                        let _ = tx.try_send(());
-                    }
-                }
+        // 2. BLOCK FOR THE FIRST EVENT (Wait for user to do something)
+        let mut maybe_event = Some(
+            tui.events
+                .next()
+                .await
+                .context("Unable to get next event")?,
+        );
 
-                handle_key_events(key_event, &mut app).context("Error handling key events")?;
+        // 3. DRAIN THE QUEUE: Process the blocking event, and any others that arrived immediately behind it
+        while let Some(event) = maybe_event {
+            match event {
+                Event::Tick => app.tick(),
+                Event::Key(key_event) => {
+                    if key_event.code == crossterm::event::KeyCode::Char('u')
+                        && app.app_mode == AppMode::Normal
+                    {
+                        // If we have an active stream, send the cancel signal
+                        if let Some(tx) = current_cancel_tx.take() {
+                            let _ = tx.try_send(());
+                        }
+                    }
+
+                    handle_key_events(key_event, &mut app).context("Error handling key events")?;
+                }
+                Event::Mouse(mouse_event) => {
+                    handle_mouse_events(mouse_event, &mut app)?;
+                }
+                Event::Resize(x, y) => {
+                    app.set_terminal_size(x, y);
+                    app.needs_recache = true;
+                }
             }
-            Event::Mouse(mouse_event) => {
-                handle_mouse_events(mouse_event, &mut app)?;
-            }
-            Event::Resize(x, y) => {
-                app.set_terminal_size(x, y);
-                app.recache_lines(app.messages.clone());
-            }
+
+            // 4. Check if there are more events instantly available.
+            // now_or_never() evaluates the async next() method instantly.
+            // If there's an event, it loops again. If the queue is empty, it breaks.
+            maybe_event = match tui.events.next().now_or_never() {
+                Some(Ok(next_event)) => Some(next_event),
+                _ => None, // Queue is empty, move on to drawing/AI
+            };
+        }
+
+        if app.needs_recache {
+            app.recache_lines(app.messages.clone());
+            app.needs_recache = false;
         }
 
         if app.has_unprocessed_messages {

@@ -8,9 +8,10 @@ use ratatui::{
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::{easy::HighlightLines, parsing::SyntaxSet};
 
-pub const EMBEDDED_THEME: &[&[u8]; 2] = &[
+pub const EMBEDDED_THEME: &[&[u8]; 3] = &[
     include_bytes!("../themes/thorn-dark-warm.tmTheme"),
     include_bytes!("../themes/catppuccin-mocha.tmTheme"),
+    include_bytes!("../themes/gruvbox-n.tmTheme"),
 ];
 
 pub fn load_theme(theme_idx: usize) -> Theme {

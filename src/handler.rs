@@ -1,9 +1,11 @@
-use crate::app::{App, AppMode, AppResult, Notification};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui_explorer::Input;
+
+use crate::app::{App, AppMode, AppResult, Notification, RECACHE_COOLDOWN};
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
@@ -47,8 +49,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 {
                     app.redo_last_message()?;
                     app.set_app_mode(AppMode::Editing);
-                } else {
+                } else if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) {
                     app.toggle_highlighting();
+                    app.last_recache = Instant::now();
                 }
             }
             KeyCode::Char('n') => app.new_chat(),
@@ -59,10 +62,18 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.set_app_mode(AppMode::ShowContext);
             }
             KeyCode::Char('t') => {
-                app.next_theme();
+                if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) {
+                    app.next_theme();
+                    app.needs_recache = true;
+                    app.last_recache = Instant::now();
+                }
             }
             KeyCode::Char('T') => {
-                app.previous_theme();
+                if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) {
+                    app.previous_theme();
+                    app.needs_recache = true;
+                    app.last_recache = Instant::now();
+                }
             }
             _ => {}
         },

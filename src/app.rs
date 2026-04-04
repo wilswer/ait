@@ -29,6 +29,8 @@ use crate::{
 };
 use crate::{models::ModelList, snippets::SnippetList};
 
+pub const RECACHE_COOLDOWN: u64 = 250;
+
 pub fn get_file_content(file: &File) -> io::Result<Cow<'_, str>> {
     // If the path is a file, read its content.
     if file.is_file() {
@@ -233,6 +235,10 @@ pub struct App<'a> {
     pub size: Option<TerminalSize>,
     /// Cached highlighted lines
     pub cached_lines: Vec<Line<'a>>,
+    /// Does the app need to recache the syntax highlighting?
+    pub needs_recache: bool,
+    /// Time of last recaching of syntax highlighting
+    pub last_recache: Instant,
     /// Is the app receiving streaming messages
     pub is_streaming: bool,
     /// Is the app waiting for a response
@@ -287,6 +293,8 @@ impl Default for App<'_> {
             theme: load_theme(0),
             size: None,
             cached_lines: Vec::new(),
+            needs_recache: false,
+            last_recache: Instant::now() - Duration::from_secs(1),
             is_streaming: false,
             is_waiting_for_response: false,
             spinner_frame: 0,
@@ -346,7 +354,6 @@ impl<'a> App<'a> {
             self.theme_index += 1;
         }
         self.theme = load_theme(self.theme_index);
-        self.recache_lines(self.messages.clone());
     }
 
     pub fn previous_theme(&mut self) {
@@ -356,7 +363,6 @@ impl<'a> App<'a> {
             self.theme_index -= 1;
         }
         self.theme = load_theme(self.theme_index);
-        self.recache_lines(self.messages.clone());
     }
 
     pub fn toggle_highlighting(&mut self) {
@@ -700,7 +706,7 @@ impl<'a> App<'a> {
             self.cached_lines.clear();
             self.messages = list_all_messages(chat_id)?;
             self.conversation_id = None;
-            self.recache_lines(self.messages.clone());
+            self.needs_recache = true;
         }
         Ok(())
     }
@@ -747,7 +753,7 @@ impl<'a> App<'a> {
                 }
             }
         }
-        self.recache_lines(self.messages.clone());
+        self.needs_recache = true;
 
         // Clear snippet list and find fenced code snippets
         self.snippet_list.clear();
@@ -797,7 +803,7 @@ impl<'a> App<'a> {
                     .collect();
                 self.snippet_list.items.extend(snippet_items);
             }
-            self.recache_lines(self.messages.clone());
+            self.needs_recache = true;
             self.vertical_scroll = 0;
         }
         Ok(())
