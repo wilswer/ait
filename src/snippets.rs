@@ -8,7 +8,7 @@ use ratatui::{
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::{easy::HighlightLines, parsing::SyntaxSet};
 
-const EMBEDDED_THEME: &[u8] = include_bytes!("../catppuccin-mocha.tmTheme");
+const EMBEDDED_THEME: &[u8] = include_bytes!("../themes/thorn-dark-warm.tmTheme");
 
 pub fn load_theme() -> Theme {
     let mut buff = std::io::Cursor::new(EMBEDDED_THEME);
