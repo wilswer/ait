@@ -61,7 +61,7 @@ Context:
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend).context("Failed to create terminal")?;
     app.set_terminal_size(terminal.size()?.width, terminal.size()?.height);
-    let events = EventHandler::new(200);
+    let events = EventHandler::new(100);
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
 
