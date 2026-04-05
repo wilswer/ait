@@ -317,11 +317,18 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
 
     if app.is_waiting_for_response {
         let frame = SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()];
+        let thinking_split_n = (app.spinner_frame / 2) % "Thinking...".len();
+        let (think1, think2) = "Thinking...".split_at(thinking_split_n);
+        let (think_span1, think_span2) = (Span::raw(think1).bold(), Span::raw(think2));
         messages.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
         messages.push(Line::from(Span::raw("---").bold().green()));
         messages.push(
-            Line::from(Span::raw(format!("{frame} Thinking...")))
-                .style(Style::default().fg(Color::DarkGray)),
+            Line::from(vec![
+                Span::raw(format!("{frame} ")),
+                think_span1,
+                think_span2,
+            ])
+            .style(Style::default().fg(Color::DarkGray)),
         );
         messages.push(Line::from(Span::raw("")));
     }
