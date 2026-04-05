@@ -257,10 +257,10 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
 pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Line<'a>> {
     let mut line_vec = Vec::new();
     match message {
-        Message::User(text) => {
+        Message::User(_) => {
             line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
             line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-            line_vec.extend(process_code_blocks(text, width, theme));
+            line_vec.extend(process_code_blocks(message.to_string(), width, theme));
             line_vec.push(Line::from(Span::raw("").bold().yellow()));
         }
         Message::Assistant(text) => {
@@ -276,15 +276,16 @@ pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Li
 fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
     let mut line_vec = Vec::new();
     for message in messages {
+        let text = message.to_string();
         match message {
-            Message::User(m) => {
-                let wrapped_message = textwrap::wrap(m, width - 3);
+            Message::User(_) => {
+                let wrapped_message = textwrap::wrap(&text, width - 3);
                 line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
                 line_vec.push(Line::from(Span::raw("---").bold().yellow()));
                 line_vec.extend(
                     wrapped_message
                         .into_iter()
-                        .map(|l| Line::from(Span::raw(l))),
+                        .map(|l| Line::from(Span::raw(l.into_owned()))),
                 );
                 line_vec.push(Line::from(Span::raw("")));
             }
@@ -798,7 +799,7 @@ fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) 
             .unwrap_or_default()
             .into_iter()
             .map(|m| match m {
-                Message::User(t) => format!("USER: {t}\n"),
+                Message::User(_) => format!("USER: {}\n", m),
                 Message::Assistant(t) => format!("ASSISTANT: {t}\n"),
             })
             .collect::<Vec<_>>()

@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui_explorer::Input;
 
-use crate::app::{App, AppMode, AppResult, Notification, RECACHE_COOLDOWN};
+use crate::app::{get_file_content, App, AppMode, AppResult, Notification, RECACHE_COOLDOWN};
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
@@ -165,14 +165,24 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('j') | KeyCode::Down => app.file_explorer.handle(Input::Down)?,
             KeyCode::Char('k') | KeyCode::Up => app.file_explorer.handle(Input::Up)?,
             KeyCode::Enter => {
-                if app.file_explorer.current().is_file() {
-                    app.add_to_context(app.file_explorer.current().clone());
-                    app.set_app_mode(AppMode::Notify {
-                        notification: Notification::Info(format!(
-                            "File {} added to context!",
-                            &app.file_explorer.current().name
-                        )),
-                    })
+                let current_file = app.file_explorer.current();
+                if current_file.is_file() {
+                    let current_name = current_file.name.to_string();
+                    let is_valid_file = get_file_content(current_file).is_ok()
+                        || [".png", ".jpg", ".pdf"]
+                            .iter()
+                            .any(|ext| current_name.ends_with(ext));
+
+                    let notification = if is_valid_file {
+                        app.add_to_context(current_file.clone());
+                        Notification::Info(format!("File {} added to context!", current_name))
+                    } else {
+                        Notification::Error(format!(
+                            "Could not add file {} to context.",
+                            current_name
+                        ))
+                    };
+                    app.set_app_mode(AppMode::Notify { notification });
                 }
             }
             KeyCode::Char('d') => {

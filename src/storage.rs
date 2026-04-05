@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use directories::ProjectDirs;
+use genai::chat::ContentPart;
 use rusqlite::{params, Connection};
 
 use crate::app::{AppResult, Message};
@@ -103,7 +104,7 @@ pub fn insert_message(conversation_id: i64, message: &Message) -> AppResult<()> 
     let conn = Connection::open(db_path)?;
     // Insert the message into the Messages table
     let (sender, message_text) = match message {
-        Message::User(text) => ("human", text),
+        Message::User(_) => ("human", &message.to_string()),
         Message::Assistant(text) => ("assistant", text),
     };
     conn.execute(
@@ -118,7 +119,7 @@ pub fn delete_message(conversation_id: i64, message: &Message) -> AppResult<()> 
     let conn = Connection::open(db_path).context("Could not connect to database")?;
 
     let (sender, message_text) = match message {
-        Message::User(text) => ("human", text),
+        Message::User(_) => ("human", &message.to_string()),
         Message::Assistant(text) => ("assistant", text),
     };
 
@@ -226,7 +227,7 @@ struct DBMessage {
 impl From<DBMessage> for Message {
     fn from(db_message: DBMessage) -> Self {
         let sender = match db_message.sender.as_str() {
-            "human" => Message::User(db_message.message_text),
+            "human" => Message::User(vec![ContentPart::from_text(db_message.message_text)]),
             "assistant" => Message::Assistant(db_message.message_text),
             _ => Message::Assistant("Error".to_string()),
         };

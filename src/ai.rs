@@ -79,7 +79,7 @@ pub async fn assistant_response(
     let chat_messages = messages
         .iter()
         .map(|m| match m {
-            Message::User(m) => ChatMessage::user(m),
+            Message::User(m) => ChatMessage::user(m.clone()),
             Message::Assistant(m) => ChatMessage::assistant(m),
         })
         .collect::<Vec<ChatMessage>>();
@@ -117,7 +117,7 @@ pub async fn assistant_response_streaming(
     let chat_messages = messages
         .iter()
         .map(|m| match m {
-            Message::User(m) => ChatMessage::user(m),
+            Message::User(m) => ChatMessage::user(m.clone()),
             Message::Assistant(m) => ChatMessage::assistant(m),
         })
         .collect::<Vec<ChatMessage>>();

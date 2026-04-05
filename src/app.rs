@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::fs;
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, fs::read_to_string, io};
@@ -5,6 +6,7 @@ use std::{borrow::Cow, fs::read_to_string, io};
 use anyhow::{Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
+use genai::chat::ContentPart;
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
 
@@ -117,8 +119,14 @@ impl Selection {
 }
 
 #[derive(Debug, Clone)]
+pub enum UserContent {
+    Input,
+    Context,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
-    User(String),
+    User(Vec<ContentPart>),
     Assistant(String),
 }
 
@@ -145,24 +153,32 @@ pub fn partial_messages_to_string(partial_messages: Vec<PartialMessage>) -> Stri
 
 impl From<String> for Message {
     fn from(message: String) -> Self {
-        Message::User(message)
+        Message::User(vec![ContentPart::from_text(message)])
     }
 }
 
 impl From<&str> for Message {
     fn from(message: &str) -> Self {
-        Message::User(message.to_string())
+        Message::User(vec![ContentPart::from_text(message)])
     }
 }
 
-impl AsRef<str> for Message {
-    fn as_ref(&self) -> &str {
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Message::User(message) => message.as_str(),
-            Message::Assistant(message) => message.as_str(),
+            Message::User(content) => {
+                for part in content {
+                    if let ContentPart::Text(text) = part {
+                        write!(f, "{}", text)?;
+                    }
+                }
+                Ok(())
+            }
+            Message::Assistant(text) => write!(f, "{}", text),
         }
     }
 }
+
 /// Application result type.
 pub type AppResult<T> = Result<T>;
 
@@ -386,8 +402,8 @@ impl<'a> App<'a> {
         let mut chat_log = String::new();
         for message in self.messages.iter() {
             match message {
-                Message::User(message) => {
-                    chat_log.push_str(&format!("User: {message}\n"));
+                Message::User(_) => {
+                    chat_log.push_str(&format!("User: {}\n", message));
                 }
                 Message::Assistant(message) => {
                     chat_log.push_str(&format!("Assistant: {message}\n"));
@@ -466,34 +482,48 @@ impl<'a> App<'a> {
     pub fn submit_message(&mut self) -> AppResult<()> {
         self.scroll_to_bottom()
             .context("Scrolling to bottom failed.")?;
-        let mut text = self.input_textarea.lines().join("\n");
+        let text = self.input_textarea.lines().join("\n");
+        if text.is_empty() {
+            return Ok(());
+        }
+        let mut content_parts = Vec::new();
+        content_parts.push(ContentPart::from_text(&text));
         if let Some(context) = &self.current_context {
             let ps = SyntaxSet::load_defaults_newlines();
-            let mut additional_context = "\n\nINFO FOR LLMs\nThe user also provided the following context, please use it (if relevant) when providing an answer:".to_string();
+            let additional_context = "\n\nINFO FOR LLMs\nThe user provided the following context, please use it (if relevant) when providing an answer:".to_string();
+            content_parts.push(ContentPart::from_text(additional_context));
             for file in context {
                 let extension = if let Some((_, extension)) = file.name.split_once(".") {
                     extension
                 } else {
                     ""
                 };
-                let syntax_name = if let Some(syntax) = ps.find_syntax_by_extension(extension) {
-                    syntax.name.to_string()
-                } else {
-                    "Plain Text".to_string()
-                };
-                let context_str = get_file_content(file)?;
-                additional_context.push_str(&format!(
-                    "\n---\nFile name: {}\nContent:\n```{}\n{}\n```",
-                    &file.name,
-                    syntax_name.to_lowercase(),
-                    context_str
-                ));
+                match extension {
+                    "pdf" | "jpg" | "png" => {
+                        content_parts.push(ContentPart::from_text(format!(
+                            "\n---\nFile name: {}\nContent:\n<binary file>",
+                            &file.name
+                        )));
+                        content_parts.push(ContentPart::from_binary_file(file.path.clone())?);
+                    }
+                    _ => {
+                        let syntax_name =
+                            if let Some(syntax) = ps.find_syntax_by_extension(extension) {
+                                syntax.name.to_string()
+                            } else {
+                                "Plain Text".to_string()
+                            };
+                        let context_str = get_file_content(file)?;
+                        content_parts.push(ContentPart::from_text(format!(
+                            "\n---\nFile name: {}\nContent:\n```{}\n{}\n```",
+                            &file.name,
+                            syntax_name.to_lowercase(),
+                            context_str
+                        )));
+                    }
+                }
             }
-            text.push_str(&additional_context);
             self.current_context = None;
-        }
-        if text.is_empty() {
-            return Ok(());
         }
         let n_user_messages = self
             .messages
@@ -514,7 +544,7 @@ impl<'a> App<'a> {
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()
             .context("Unable to write submitted message to chat log")?;
-        let message = Message::User(text);
+        let message = Message::User(content_parts);
         if let Some(id) = self.conversation_id {
             insert_message(id, &message)?;
         } else {
@@ -541,7 +571,7 @@ impl<'a> App<'a> {
         if let Some(Message::Assistant(_)) = self.messages.last() {
             self.messages.pop();
         }
-        let message_content = message.as_ref();
+        let message_content = message.to_string();
         let discovered_snippets =
             find_fenced_code_snippets(message_content.split('\n').map(|s| s.to_string()).collect());
         let snippet_items: Vec<SnippetItem> = discovered_snippets
@@ -743,9 +773,15 @@ impl<'a> App<'a> {
                 delete_message(chat_id, &m)?;
             }
             match m {
-                Message::User(s) => {
+                Message::User(_) => {
                     self.reset_input_textarea();
-                    self.input_textarea.insert_str(s);
+                    let message_text = m.to_string();
+                    // TODO: A bit fugly, should be a better way to do this.
+                    if let Some((user_input, _)) = message_text.split_once("\n\nINFO FOR LLMs") {
+                        self.input_textarea.insert_str(user_input);
+                    } else {
+                        self.input_textarea.insert_str(m.to_string());
+                    }
                     break;
                 }
                 _ => {
@@ -758,7 +794,7 @@ impl<'a> App<'a> {
         // Clear snippet list and find fenced code snippets
         self.snippet_list.clear();
         for message in self.messages.iter() {
-            let message_content = message.as_ref();
+            let message_content = message.to_string();
             let discovered_snippets = find_fenced_code_snippets(
                 message_content.split('\n').map(|s| s.to_string()).collect(),
             );
@@ -793,7 +829,7 @@ impl<'a> App<'a> {
             self.messages = list_all_messages(self.chat_list.items[i].chat_id)?;
             self.snippet_list.clear();
             for message in self.messages.iter_mut() {
-                let message_content = message.as_ref();
+                let message_content = message.to_string();
                 let discovered_snippets = find_fenced_code_snippets(
                     message_content.split('\n').map(|s| s.to_string()).collect(),
                 );
