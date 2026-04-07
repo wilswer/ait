@@ -113,6 +113,13 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
     spans
 }
 
+fn is_separator(s: &str) -> bool {
+    s.len() >= 3
+        && (s.chars().all(|c| c == '-')
+            || s.chars().all(|c| c == '=')
+            || s.chars().all(|c| c == '*'))
+}
+
 /// Render a markdown text segment into styled [`Line`]s, with word-wrapping.
 fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -127,7 +134,7 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
         }
 
         // Horizontal rule
-        if trimmed == "---" || trimmed == "===" || trimmed == "***" {
+        if is_separator(trimmed) {
             lines.push(Line::from("─".repeat(width)).style(Style::default().fg(Color::DarkGray)));
             continue;
         }
@@ -138,9 +145,11 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
             let heading_text = trimmed[level..].trim();
             let style = match level {
                 1 => Style::default().bold().fg(Color::Blue),
-                2 => Style::default().bold().fg(Color::LightBlue),
+                2 => Style::default().bold().fg(Color::Magenta),
                 3 => Style::default().bold().fg(Color::Cyan),
-                4 => Style::default().bold().fg(Color::LightCyan),
+                4 => Style::default().bold().fg(Color::LightBlue),
+                5 => Style::default().bold().fg(Color::LightMagenta),
+                6 => Style::default().bold().fg(Color::LightCyan),
                 _ => Style::default().bold(),
             };
             let prefix = format!("{} ", "#".repeat(level));
