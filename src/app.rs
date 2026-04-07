@@ -3,7 +3,7 @@ use std::fs;
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, fs::read_to_string, io};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 use genai::chat::ContentPart;
@@ -14,7 +14,7 @@ use ratatui::{
     buffer::Buffer,
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{Block, Borders},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
@@ -439,8 +439,14 @@ impl<'a> App<'a> {
     }
 
     fn get_max_scroll(&self) -> AppResult<usize> {
-        let total_lines = self.cached_lines.len();
-        Ok(total_lines.saturating_sub(2)) // Make last line visible
+        let width = self
+            .size
+            .ok_or(anyhow!("Could not get terminal size"))?
+            .width;
+        let total_lines = Paragraph::new(self.cached_lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(width);
+        Ok(total_lines.saturating_sub(1))
     }
 
     pub fn increment_vertical_scroll(&mut self) -> AppResult<()> {

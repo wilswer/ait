@@ -137,24 +137,18 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
             let level = trimmed.chars().take_while(|&c| c == '#').count().min(6);
             let heading_text = trimmed[level..].trim();
             let style = match level {
-                1 => Style::default().bold().fg(Color::LightBlue),
-                2 => Style::default().bold().fg(Color::Cyan),
+                1 => Style::default().bold().fg(Color::Blue),
+                2 => Style::default().bold().fg(Color::LightBlue),
+                3 => Style::default().bold().fg(Color::Cyan),
+                4 => Style::default().bold().fg(Color::LightCyan),
                 _ => Style::default().bold(),
             };
             let prefix = format!("{} ", "#".repeat(level));
-            let wrap_width = width.saturating_sub(prefix.len());
-            for (i, chunk) in textwrap::wrap(heading_text, wrap_width).iter().enumerate() {
-                let pfx = if i == 0 {
-                    prefix.clone()
-                } else {
-                    " ".repeat(prefix.len())
-                };
-                let mut spans = vec![Span::styled(pfx, style)];
-                for s in parse_inline_markdown(chunk.as_ref()) {
-                    spans.push(Span::styled(s.content.into_owned(), style.patch(s.style)));
-                }
-                lines.push(Line::from(spans));
+            let mut spans = vec![Span::styled(prefix, style)];
+            for s in parse_inline_markdown(heading_text) {
+                spans.push(Span::styled(s.content.into_owned(), style.patch(s.style)));
             }
+            lines.push(Line::from(spans));
             continue;
         }
 
@@ -164,18 +158,12 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
         if is_unordered {
             let item_text = &trimmed[2..];
             let bullet_prefix = format!("{}• ", " ".repeat(indent));
-            let cont_prefix = format!("{}  ", " ".repeat(indent));
-            let wrap_width = width.saturating_sub(bullet_prefix.len());
-            for (i, chunk) in textwrap::wrap(item_text, wrap_width).iter().enumerate() {
-                let pfx = if i == 0 {
-                    bullet_prefix.clone()
-                } else {
-                    cont_prefix.clone()
-                };
-                let mut spans = vec![Span::styled(pfx, Style::default().fg(Color::DarkGray))];
-                spans.extend(parse_inline_markdown(chunk.as_ref()));
-                lines.push(Line::from(spans));
-            }
+            let mut spans = vec![Span::styled(
+                bullet_prefix,
+                Style::default().fg(Color::DarkGray),
+            )];
+            spans.extend(parse_inline_markdown(item_text));
+            lines.push(Line::from(spans));
             continue;
         }
 
@@ -184,26 +172,18 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
         let is_ordered = num_end > 0 && trimmed[..num_end].chars().all(|c| c.is_ascii_digit());
         if is_ordered {
             let num_prefix = format!("{}{}. ", " ".repeat(indent), &trimmed[..num_end]);
-            let cont_prefix = " ".repeat(indent + num_end + 2).to_string();
             let item_text = &trimmed[num_end + 2..];
-            let wrap_width = width.saturating_sub(num_prefix.len());
-            for (i, chunk) in textwrap::wrap(item_text, wrap_width).iter().enumerate() {
-                let pfx = if i == 0 {
-                    num_prefix.clone()
-                } else {
-                    cont_prefix.clone()
-                };
-                let mut spans = vec![Span::styled(pfx, Style::default().fg(Color::DarkGray))];
-                spans.extend(parse_inline_markdown(chunk.as_ref()));
-                lines.push(Line::from(spans));
-            }
+            let mut spans = vec![Span::styled(
+                num_prefix,
+                Style::default().fg(Color::DarkGray),
+            )];
+            spans.extend(parse_inline_markdown(item_text));
+            lines.push(Line::from(spans));
             continue;
         }
 
         // Regular paragraph text
-        for chunk in textwrap::wrap(line, width) {
-            lines.push(Line::from(parse_inline_markdown(chunk.as_ref())));
-        }
+        lines.push(Line::from(parse_inline_markdown(line)));
     }
 
     lines
@@ -337,6 +317,7 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
 
     let messages_text = Text::from(messages);
     let messages = Paragraph::new(messages_text)
+        .wrap(Wrap { trim: false })
         .scroll((app.vertical_scroll as u16, 0))
         .block(Block::bordered().title(format!("Chat - {}", app.selected_model_name)));
 
