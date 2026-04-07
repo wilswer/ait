@@ -12,7 +12,7 @@ use syntect::highlighting::Theme;
 use tui_big_text::{BigText, PixelSize};
 
 use crate::{
-    app::{get_file_content, App, AppMode, Message, Notification},
+    app::{get_file_content, total_ui_lines, App, AppMode, Message, Notification, UIText},
     snippets::{
         create_highlighted_code, parse_message_segments, translate_language_name_to_syntect_name,
         MessageSegment,
@@ -268,12 +268,13 @@ pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Li
     line_vec
 }
 
-fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
-    let mut line_vec = Vec::new();
+fn messages_to_lines(messages: &[Message], width: usize) -> Vec<UIText<'_>> {
+    let mut text_vec = Vec::new();
     for message in messages {
         let text = message.to_string();
         match message {
             Message::User(_) => {
+                let mut line_vec = Vec::new();
                 let wrapped_message = textwrap::wrap(&text, width - 3);
                 line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
                 line_vec.push(Line::from(Span::raw("---").bold().yellow()));
@@ -283,8 +284,12 @@ fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
                         .map(|l| Line::from(Span::raw(l.into_owned()))),
                 );
                 line_vec.push(Line::from(Span::raw("")));
+                text_vec.push(UIText::User(
+                    Paragraph::new(line_vec).wrap(Wrap { trim: false }),
+                ));
             }
             Message::Assistant(m) => {
+                let mut line_vec = Vec::new();
                 let wrapped_message = textwrap::wrap(m, width - 3);
                 line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
                 line_vec.push(Line::from(Span::raw("---").bold().green()));
@@ -294,10 +299,13 @@ fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
                         .map(|l| Line::from(Span::raw(l))),
                 );
                 line_vec.push(Line::from(Span::raw("")));
+                text_vec.push(UIText::Assistant(
+                    Paragraph::new(line_vec).wrap(Wrap { trim: false }),
+                ));
             }
         }
     }
-    line_vec
+    text_vec
 }
 
 fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
@@ -324,9 +332,10 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
             app.spinner_frame = 0;
         }
         let (think_span1, think_span2) = (Span::raw(think1).bold(), Span::raw(think2));
-        messages.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-        messages.push(Line::from(Span::raw("---").bold().green()));
-        messages.push(
+        let mut thinking_message = Vec::new();
+        thinking_message.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+        thinking_message.push(Line::from(Span::raw("---").bold().green()));
+        thinking_message.push(
             Line::from(vec![
                 Span::raw(format!("{frame} ")),
                 think_span1,
@@ -334,18 +343,26 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
             ])
             .style(Style::default().fg(Color::DarkGray)),
         );
-        messages.push(Line::from(Span::raw("")));
+        thinking_message.push(Line::from(Span::raw("")));
+        messages.push(UIText::Assistant(Paragraph::new(thinking_message)));
     }
 
-    let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
+    let mut scrollbar_state = ScrollbarState::new(total_ui_lines(&messages, messages_area.width))
+        .position(app.vertical_scroll);
+    let global_block = Block::bordered().title(format!("Chat - {}", app.selected_model_name));
+    let inner_area = global_block.inner(messages_area);
+    for message in messages {
+        match message {
+            UIText::User(p) => {
+                f.render_widget(p.block(Block::bordered().title("User")), inner_area);
+            }
+            UIText::Assistant(p) => {
+                f.render_widget(p.block(Block::bordered().title("Assistant")), inner_area);
+            }
+        }
+    }
 
-    let messages_text = Text::from(messages);
-    let messages = Paragraph::new(messages_text)
-        .wrap(Wrap { trim: false })
-        .scroll((app.vertical_scroll as u16, 0))
-        .block(Block::bordered().title(format!("Chat - {}", app.selected_model_name)));
-
-    f.render_widget(messages, messages_area);
+    f.render_widget(global_block, messages_area);
 
     f.render_stateful_widget(
         scrollbar,

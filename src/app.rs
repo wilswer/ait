@@ -13,7 +13,6 @@ use syntect::parsing::SyntaxSet;
 use ratatui::{
     buffer::Buffer,
     style::{Color, Modifier, Style},
-    text::Line,
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
@@ -128,6 +127,25 @@ pub enum UserContent {
 pub enum Message {
     User(Vec<ContentPart>),
     Assistant(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum UIText<'a> {
+    User(Paragraph<'a>),
+    Assistant(Paragraph<'a>),
+}
+
+impl UIText<'_> {
+    pub fn line_count(&self, width: u16) -> usize {
+        match &self {
+            UIText::User(p) => p.line_count(width),
+            UIText::Assistant(p) => p.line_count(width),
+        }
+    }
+}
+
+pub fn total_ui_lines(messages: &[UIText<'_>], width: u16) -> usize {
+    messages.iter().map(|p| p.line_count(width)).sum()
 }
 
 #[derive(Debug, Clone)]
@@ -250,7 +268,7 @@ pub struct App<'a> {
     /// Terminal size
     pub size: Option<TerminalSize>,
     /// Cached highlighted lines
-    pub cached_lines: Vec<Line<'a>>,
+    pub cached_lines: Vec<UIText<'a>>,
     /// Does the app need to recache the syntax highlighting?
     pub needs_recache: bool,
     /// Time of last recaching of syntax highlighting
@@ -358,11 +376,20 @@ impl<'a> App<'a> {
 
     pub fn add_cached_lines(&mut self, message: Message) {
         if let Some(TerminalSize { width, height: _ }) = self.size {
-            self.cached_lines.extend(style_message(
-                message,
-                (width - 3) as usize,
-                self.theme.clone(),
-            ));
+            match &message {
+                Message::User(_) => {
+                    let styled_message =
+                        style_message(message, (width - 3) as usize, self.theme.clone());
+                    let p = Paragraph::new(styled_message).wrap(Wrap { trim: false });
+                    self.cached_lines.push(UIText::User(p));
+                }
+                Message::Assistant(_) => {
+                    let styled_message =
+                        style_message(message, (width - 3) as usize, self.theme.clone());
+                    let p = Paragraph::new(styled_message).wrap(Wrap { trim: false });
+                    self.cached_lines.push(UIText::Assistant(p));
+                }
+            }
         }
     }
 
@@ -392,11 +419,20 @@ impl<'a> App<'a> {
         self.cached_lines.clear();
         if let Some(TerminalSize { width, height: _ }) = self.size {
             for message in messages {
-                self.cached_lines.extend(style_message(
-                    message,
-                    (width - 3) as usize,
-                    self.theme.clone(),
-                ));
+                match &message {
+                    Message::User(_) => {
+                        let styled_message =
+                            style_message(message, (width - 3) as usize, self.theme.clone());
+                        let p = Paragraph::new(styled_message).wrap(Wrap { trim: false });
+                        self.cached_lines.push(UIText::User(p));
+                    }
+                    Message::Assistant(_) => {
+                        let styled_message =
+                            style_message(message, (width - 3) as usize, self.theme.clone());
+                        let p = Paragraph::new(styled_message).wrap(Wrap { trim: false });
+                        self.cached_lines.push(UIText::Assistant(p));
+                    }
+                }
             }
         }
     }
@@ -446,9 +482,7 @@ impl<'a> App<'a> {
             .size
             .ok_or(anyhow!("Could not get terminal size"))?
             .width;
-        let total_lines = Paragraph::new(self.cached_lines.clone())
-            .wrap(Wrap { trim: false })
-            .line_count(width);
+        let total_lines: usize = self.cached_lines.iter().map(|p| p.line_count(width)).sum();
         Ok(total_lines.saturating_sub(1))
     }
 
