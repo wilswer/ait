@@ -261,8 +261,6 @@ pub struct App<'a> {
     pub is_waiting_for_response: bool,
     /// Spinner animation frame counter
     pub spinner_frame: usize,
-    /// Current thinking verb
-    pub thinking_verb_idx: usize,
     /// File explorer
     pub file_explorer: FileExplorer,
     /// Current context
@@ -316,7 +314,6 @@ impl Default for App<'_> {
             is_streaming: false,
             is_waiting_for_response: false,
             spinner_frame: 0,
-            thinking_verb_idx: 0,
             file_explorer: FileExplorerBuilder::build_with_theme(get_theme())
                 .expect("Could not construct file explorer."),
             current_context: None,

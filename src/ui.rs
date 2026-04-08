@@ -20,12 +20,7 @@ use crate::{
     storage::list_all_messages,
 };
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const THINKING_VERBS: &[&str] = &[
-    "Thinking... ",
-    "Processing... ",
-    "Computing... ",
-    "Contemplating... ",
-];
+const THINKING_VERB: &str = "Working... ";
 
 pub const SELECTED_STYLE: Style = Style::new()
     .add_modifier(Modifier::BOLD)
@@ -312,17 +307,8 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
 
     if app.is_waiting_for_response {
         let frame = SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()];
-        let thinking_split_n =
-            (app.spinner_frame / 2) % THINKING_VERBS[app.thinking_verb_idx].len();
-        let (think1, think2) = THINKING_VERBS[app.thinking_verb_idx].split_at(thinking_split_n);
-        if thinking_split_n == THINKING_VERBS[app.thinking_verb_idx].len() - 1 {
-            if app.thinking_verb_idx == THINKING_VERBS.len() - 1 {
-                app.thinking_verb_idx = 0;
-            } else {
-                app.thinking_verb_idx += 1;
-            }
-            app.spinner_frame = 0;
-        }
+        let thinking_split_n = (app.spinner_frame / 2) % THINKING_VERB.len();
+        let (think1, think2) = THINKING_VERB.split_at(thinking_split_n);
         let (think_span1, think_span2) = (Span::raw(think1).bold(), Span::raw(think2));
         messages.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
         messages.push(Line::from(Span::raw("---").bold().green()));
