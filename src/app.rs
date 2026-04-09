@@ -14,7 +14,7 @@ use ratatui::{
     buffer::Buffer,
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, ListState, Paragraph, Wrap},
 };
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
@@ -182,11 +182,52 @@ impl Display for Message {
 /// Application result type.
 pub type AppResult<T> = Result<T>;
 
+pub const THINKING_EFFORTS: [&str; 4] = ["None", "Low", "Medium", "High"];
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ThinkingEffort {
+    #[default]
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+impl ThinkingEffort {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ThinkingEffort::None => "None",
+            ThinkingEffort::Low => "Low",
+            ThinkingEffort::Medium => "Medium",
+            ThinkingEffort::High => "High",
+        }
+    }
+
+    pub fn from_index(i: usize) -> Self {
+        match i {
+            1 => ThinkingEffort::Low,
+            2 => ThinkingEffort::Medium,
+            3 => ThinkingEffort::High,
+            _ => ThinkingEffort::None,
+        }
+    }
+
+    pub fn to_index(&self) -> usize {
+        match self {
+            ThinkingEffort::None => 0,
+            ThinkingEffort::Low => 1,
+            ThinkingEffort::Medium => 2,
+            ThinkingEffort::High => 3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
     Normal,
     Editing,
     ModelSelection,
+    ThinkingEffortSelection,
     SnippetSelection,
     ShowHistory,
     FilterHistory,
@@ -269,6 +310,10 @@ pub struct App<'a> {
     pub search_bar: TextArea<'a>,
     /// Toggle for syntax highlighting.
     pub do_highlight: bool,
+    /// Selected thinking effort
+    pub thinking_effort: ThinkingEffort,
+    /// List state for thinking effort selection
+    pub thinking_effort_state: ListState,
 }
 
 pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
@@ -319,6 +364,12 @@ impl Default for App<'_> {
             current_context: None,
             search_bar: styled_textarea("Search"),
             do_highlight: true,
+            thinking_effort: ThinkingEffort::None,
+            thinking_effort_state: {
+                let mut s = ListState::default();
+                s.select_first();
+                s
+            },
         }
     }
 }
@@ -650,6 +701,29 @@ impl<'a> App<'a> {
 
     pub fn select_last_model(&mut self) {
         self.model_list.state.select_last();
+    }
+
+    pub fn select_next_thinking_effort(&mut self) {
+        self.thinking_effort_state.select_next();
+    }
+
+    pub fn select_previous_thinking_effort(&mut self) {
+        self.thinking_effort_state.select_previous();
+    }
+
+    pub fn select_first_thinking_effort(&mut self) {
+        self.thinking_effort_state.select_first();
+    }
+
+    pub fn select_last_thinking_effort(&mut self) {
+        self.thinking_effort_state
+            .select(Some(THINKING_EFFORTS.len() - 1));
+    }
+
+    pub fn set_thinking_effort(&mut self) {
+        if let Some(i) = self.thinking_effort_state.selected() {
+            self.thinking_effort = ThinkingEffort::from_index(i);
+        }
     }
 
     /// Changes the status of the selected list item

@@ -1,8 +1,8 @@
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStream};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStream, ReasoningEffort};
 use genai::{Client, ClientBuilder, ClientConfig};
 
-use crate::app::{AppResult, Message};
+use crate::app::{AppResult, Message, ThinkingEffort};
 
 pub const MODELS: [(&str, &str); 7] = [
     ("OpenAI", "gpt-5-mini"),
@@ -113,6 +113,7 @@ pub async fn assistant_response_streaming(
     messages: &[Message],
     model: &str,
     system_prompt: Option<String>,
+    thinking_effort: ThinkingEffort,
 ) -> AppResult<ChatStream> {
     let chat_messages = messages
         .iter()
@@ -130,7 +131,14 @@ pub async fn assistant_response_streaming(
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
-    let chat_opts = ChatOptions::default();
+    let chat_opts = match thinking_effort {
+        ThinkingEffort::None => ChatOptions::default(),
+        ThinkingEffort::Low => ChatOptions::default().with_reasoning_effort(ReasoningEffort::Low),
+        ThinkingEffort::Medium => {
+            ChatOptions::default().with_reasoning_effort(ReasoningEffort::Medium)
+        }
+        ThinkingEffort::High => ChatOptions::default().with_reasoning_effort(ReasoningEffort::High),
+    };
     let client_config = ClientConfig::default().with_chat_options(chat_opts);
 
     let client = ClientBuilder::default().with_config(client_config).build();

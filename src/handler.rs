@@ -61,6 +61,11 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('c') => {
                 app.set_app_mode(AppMode::ShowContext);
             }
+            KeyCode::Char('e') => {
+                app.thinking_effort_state
+                    .select(Some(app.thinking_effort.to_index()));
+                app.set_app_mode(AppMode::ThinkingEffortSelection);
+            }
             KeyCode::Char('t') => {
                 if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) {
                     app.next_theme();
@@ -138,6 +143,20 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Enter => {
                 app.set_model();
                 app.set_app_mode(AppMode::Editing);
+            }
+            _ => {}
+        },
+        AppMode::ThinkingEffortSelection => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('e') => {
+                app.set_app_mode(AppMode::Normal)
+            }
+            KeyCode::Char('j') | KeyCode::Down => app.select_next_thinking_effort(),
+            KeyCode::Char('k') | KeyCode::Up => app.select_previous_thinking_effort(),
+            KeyCode::Char('g') | KeyCode::Home => app.select_first_thinking_effort(),
+            KeyCode::Char('G') | KeyCode::End => app.select_last_thinking_effort(),
+            KeyCode::Enter => {
+                app.set_thinking_effort();
+                app.set_app_mode(AppMode::Normal);
             }
             _ => {}
         },

@@ -12,10 +12,10 @@ use syntect::highlighting::Theme;
 use tui_big_text::{BigText, PixelSize};
 
 use crate::{
-    app::{get_file_content, App, AppMode, Message, Notification},
+    app::{get_file_content, App, AppMode, Message, Notification, THINKING_EFFORTS},
     snippets::{
         create_highlighted_code, parse_message_segments, translate_language_name_to_syntect_name,
-        MessageSegment,
+        MessageSegment, MessageText,
     },
     storage::list_all_messages,
 };
@@ -54,7 +54,7 @@ fn left_aligned_rect(r: Rect, p: u16) -> Rect {
 
 /// Parse a single line for inline markdown markers (`**bold**`, `*italic*`, `` `code` ``).
 /// Returns a vec of styled [`Span`]s.
-fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
+fn parse_inline_markdown(text: &str, style: Style) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut current = String::new();
     let mut rest = text;
@@ -63,11 +63,11 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
         if rest.starts_with("**") {
             if let Some(end) = rest[2..].find("**") {
                 if !current.is_empty() {
-                    spans.push(Span::raw(std::mem::take(&mut current)));
+                    spans.push(Span::styled(std::mem::take(&mut current), style));
                 }
                 spans.push(Span::styled(
                     rest[2..2 + end].to_string(),
-                    Style::default().bold(),
+                    style.patch(Style::default().bold()),
                 ));
                 rest = &rest[2 + end + 2..];
                 continue;
@@ -79,9 +79,12 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
                 let inner = &rest[1..1 + end];
                 if !inner.is_empty() && !inner.contains('\n') {
                     if !current.is_empty() {
-                        spans.push(Span::raw(std::mem::take(&mut current)));
+                        spans.push(Span::styled(std::mem::take(&mut current), style));
                     }
-                    spans.push(Span::styled(inner.to_string(), Style::default().italic()));
+                    spans.push(Span::styled(
+                        inner.to_string(),
+                        style.patch(Style::default().italic()),
+                    ));
                     rest = &rest[1 + end + 1..];
                     continue;
                 }
@@ -92,11 +95,11 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
                 let inner = &rest[1..1 + end];
                 if !inner.is_empty() {
                     if !current.is_empty() {
-                        spans.push(Span::raw(std::mem::take(&mut current)));
+                        spans.push(Span::styled(std::mem::take(&mut current), style));
                     }
                     spans.push(Span::styled(
                         inner.to_string(),
-                        Style::default().fg(Color::Yellow),
+                        style.patch(Style::default().fg(Color::Yellow)),
                     ));
                     rest = &rest[1 + end + 1..];
                     continue;
@@ -109,7 +112,7 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
     }
 
     if !current.is_empty() {
-        spans.push(Span::raw(current));
+        spans.push(Span::styled(current, style));
     }
     spans
 }
@@ -122,7 +125,7 @@ fn is_separator(s: &str) -> bool {
 }
 
 /// Render a markdown text segment into styled [`Line`]s, with word-wrapping.
-fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     for line in text.lines() {
@@ -136,7 +139,10 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
 
         // Horizontal rule
         if is_separator(trimmed) {
-            lines.push(Line::from("─".repeat(width)).style(Style::default().fg(Color::DarkGray)));
+            lines.push(
+                Line::from("─".repeat(width))
+                    .style(style.patch(Style::default().fg(Color::DarkGray))),
+            );
             continue;
         }
 
@@ -144,19 +150,22 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
         if trimmed.starts_with('#') {
             let level = trimmed.chars().take_while(|&c| c == '#').count().min(6);
             let heading_text = trimmed[level..].trim();
-            let style = match level {
-                1 => Style::default().bold().fg(Color::Blue),
-                2 => Style::default().bold().fg(Color::Magenta),
-                3 => Style::default().bold().fg(Color::Cyan),
-                4 => Style::default().bold().fg(Color::LightBlue),
-                5 => Style::default().bold().fg(Color::LightMagenta),
-                6 => Style::default().bold().fg(Color::LightCyan),
-                _ => Style::default().bold(),
+            let heading_style = match level {
+                1 => style.patch(Style::default().bold().fg(Color::Blue)),
+                2 => style.patch(Style::default().bold().fg(Color::Magenta)),
+                3 => style.patch(Style::default().bold().fg(Color::Cyan)),
+                4 => style.patch(Style::default().bold().fg(Color::LightBlue)),
+                5 => style.patch(Style::default().bold().fg(Color::LightMagenta)),
+                6 => style.patch(Style::default().bold().fg(Color::LightCyan)),
+                _ => style.patch(Style::default().bold()),
             };
             let prefix = format!("{} ", "#".repeat(level));
-            let mut spans = vec![Span::styled(prefix, style)];
-            for s in parse_inline_markdown(heading_text) {
-                spans.push(Span::styled(s.content.into_owned(), style.patch(s.style)));
+            let mut spans = vec![Span::styled(prefix, heading_style)];
+            for s in parse_inline_markdown(heading_text, heading_style) {
+                spans.push(Span::styled(
+                    s.content.into_owned(),
+                    heading_style.patch(s.style),
+                ));
             }
             lines.push(Line::from(spans));
             continue;
@@ -170,9 +179,9 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
             let bullet_prefix = format!("{}• ", " ".repeat(indent));
             let mut spans = vec![Span::styled(
                 bullet_prefix,
-                Style::default().fg(Color::DarkGray),
+                style.patch(Style::default().fg(Color::DarkGray)),
             )];
-            spans.extend(parse_inline_markdown(item_text));
+            spans.extend(parse_inline_markdown(item_text, style));
             lines.push(Line::from(spans));
             continue;
         }
@@ -185,15 +194,15 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
             let item_text = &trimmed[num_end + 2..];
             let mut spans = vec![Span::styled(
                 num_prefix,
-                Style::default().fg(Color::DarkGray),
+                style.patch(Style::default().fg(Color::DarkGray)),
             )];
-            spans.extend(parse_inline_markdown(item_text));
+            spans.extend(parse_inline_markdown(item_text, style));
             lines.push(Line::from(spans));
             continue;
         }
 
         // Regular paragraph text
-        lines.push(Line::from(parse_inline_markdown(line)));
+        lines.push(Line::from(parse_inline_markdown(line, style)));
     }
 
     lines
@@ -202,38 +211,58 @@ fn render_markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
 fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
     let text = text.into();
-
+    let style = Style::default();
     for segment in parse_message_segments(&text) {
         match segment {
-            MessageSegment::Text(t) => {
-                lines.extend(render_markdown_lines(&t, width - 3));
+            MessageSegment::Text(MessageText {
+                text: mtext,
+                is_thought,
+            }) => {
+                let style = if is_thought {
+                    style.patch(Style::default().dim().italic())
+                } else {
+                    style
+                };
+                lines.extend(render_markdown_lines(&mtext, width - 3, style));
             }
             MessageSegment::Code {
                 language,
                 code,
                 indent,
                 depth: 0,
+                is_thought,
             } => {
+                let style = if is_thought {
+                    style.patch(Style::default().dim().italic())
+                } else {
+                    style
+                };
                 if !code.is_empty() {
-                    let highlighted = if !language.is_empty() {
+                    let mut code_lines = Vec::new();
+                    code_lines.push(
+                        Line::from(format!("{}```{}", " ".repeat(indent), &language))
+                            .style(style.patch(Style::default().fg(Color::DarkGray))),
+                    );
+                    let clines = if !language.is_empty() {
                         create_highlighted_code(
                             &code,
                             translate_language_name_to_syntect_name(Some(&language)),
                             &theme,
+                            style,
                         )
                     } else {
                         let wrapped = textwrap::wrap(&code, width - 3);
-                        Text::from(wrapped.join("\n"))
+                        wrapped
+                            .into_iter()
+                            .map(|l| Line::from(Span::raw(l.into_owned())))
+                            .collect()
                     };
-                    lines.push(
-                        Line::from(format!("{}```{}", " ".repeat(indent), &language))
-                            .style(Style::default().fg(Color::DarkGray)),
-                    );
-                    lines.extend(highlighted.lines);
-                    lines.push(
+                    code_lines.extend(clines);
+                    code_lines.push(
                         Line::from(format!("{}```", " ".repeat(indent)))
-                            .style(Style::default().fg(Color::DarkGray)),
+                            .style(style.patch(Style::default().fg(Color::DarkGray))),
                     );
+                    lines.extend(code_lines);
                 }
             }
             // Nested blocks (depth > 0) are already embedded verbatim in the
@@ -329,7 +358,11 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let messages = Paragraph::new(messages_text)
         .wrap(Wrap { trim: false })
         .scroll((app.vertical_scroll as u16, 0))
-        .block(Block::bordered().title(format!("Chat - {}", app.selected_model_name)));
+        .block(Block::bordered().title(format!(
+            "Chat - {} [effort: {}]",
+            app.selected_model_name,
+            app.thinking_effort.as_str()
+        )));
 
     f.render_widget(messages, messages_area);
 
@@ -419,6 +452,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_popup(f, Block::bordered().title("Select Model"), area);
             render_model_list(f, area, app);
         }
+        AppMode::ThinkingEffortSelection => {
+            let area = centered_rect(30, 30, messages_area);
+            render_popup(f, Block::bordered().title("Select Thinking Effort"), area);
+            render_thinking_effort_list(f, area, app);
+        }
         AppMode::SnippetSelection => {
             let area = left_aligned_rect(messages_area, 25);
             render_popup(f, Block::bordered().title("Select Snippet"), area);
@@ -428,7 +466,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_popup(f, Block::bordered().title("Snippet Preview"), preview_area);
             if let Some(snippet) = app.get_snippet() {
                 let snippet_text = if let Some(lang) = &snippet.language {
-                    create_highlighted_code(&snippet.text, lang, &app.theme)
+                    Text::from(create_highlighted_code(
+                        &snippet.text,
+                        lang,
+                        &app.theme,
+                        Style::default(),
+                    ))
                 } else {
                     Text::from(snippet.text.as_str()).magenta()
                 };
@@ -747,6 +790,19 @@ fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
     }
     let items: Vec<ListItem> = app.model_list.items.iter().map(ListItem::from).collect();
     f.render_stateful_widget(styled_list(items, block), area, &mut app.model_list.state);
+}
+
+fn render_thinking_effort_list(f: &mut Frame, area: Rect, app: &mut App) {
+    let block = Block::new().padding(Padding::uniform(1));
+    let items: Vec<ListItem> = THINKING_EFFORTS
+        .iter()
+        .map(|&name| ListItem::from(name))
+        .collect();
+    f.render_stateful_widget(
+        styled_list(items, block),
+        area,
+        &mut app.thinking_effort_state,
+    );
 }
 
 fn render_snippet_list(f: &mut Frame, area: Rect, app: &mut App) {

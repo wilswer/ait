@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use ratatui::{
     style::{Color, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::ListState,
 };
 use syntect::highlighting::{Theme, ThemeSet};
@@ -26,7 +26,8 @@ pub fn create_highlighted_code<'a>(
     code: impl Into<String>,
     language: impl Into<String>,
     theme: &Theme,
-) -> Text<'a> {
+    style: Style,
+) -> Vec<Line<'a>> {
     // Load syntax set and theme
     let code = code.into();
     let language = language.into();
@@ -50,17 +51,17 @@ pub fn create_highlighted_code<'a>(
 
             let spans: Vec<Span> = highlights
                 .into_iter()
-                .map(|(style, content)| {
+                .map(|(s, content)| {
                     Span::styled(
                         content.to_string(),
-                        Style::default().fg(convert_syntect_color(style.foreground)),
+                        style.patch(Style::default().fg(convert_syntect_color(s.foreground))),
                     )
                 })
                 .collect();
             Line::from(spans)
         })
         .collect();
-    Text::from(code_lines)
+    code_lines
 }
 
 fn convert_syntect_color(color: syntect::highlighting::Color) -> Color {
@@ -135,12 +136,19 @@ impl From<CodeSnippet> for SnippetItem {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct CodeSnippet {
     pub language: String,
     pub code: String,
     /// Nesting depth: 0 = top-level block, 1 = inside another block, etc.
     pub depth: usize,
+    pub is_thought: bool,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MessageText {
+    pub text: String,
+    pub is_thought: bool,
 }
 
 /// A parsed segment of a message: either plain text or a fenced code block.
@@ -148,14 +156,16 @@ pub struct CodeSnippet {
 /// `language` holds the raw tag from the opening fence (e.g. `"rust"`), not the
 /// syntect-translated name.  `indent` is the number of leading spaces on the
 /// fence line, which callers may use for display.
+#[derive(Debug, Clone, PartialEq)]
 pub enum MessageSegment {
-    Text(String),
+    Text(MessageText),
     Code {
         language: String,
         code: String,
         indent: usize,
         /// Nesting depth: 0 = top-level, 1 = inside another code block, etc.
         depth: usize,
+        is_thought: bool,
     },
 }
 
@@ -170,9 +180,30 @@ pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
     // Stack entries: (raw_language, accumulated_code, indent, segments_index)
     let mut stack: Vec<(String, String, usize, usize)> = Vec::new();
     let mut current_text = String::new();
+    let mut in_thoughts = false;
 
     for line in text.lines() {
         let trimmed = line.trim_start();
+        if trimmed.starts_with("<think>") {
+            if !current_text.is_empty() {
+                segments.push(MessageSegment::Text(MessageText {
+                    text: std::mem::take(&mut current_text),
+                    is_thought: false,
+                }));
+            }
+            in_thoughts = true;
+            continue;
+        }
+        if trimmed.starts_with("</think>") {
+            if !current_text.is_empty() {
+                segments.push(MessageSegment::Text(MessageText {
+                    text: std::mem::take(&mut current_text),
+                    is_thought: true,
+                }));
+            }
+            in_thoughts = false;
+            continue;
+        }
         if let Some(after_backticks) = trimmed.strip_prefix("```") {
             if !stack.is_empty() && after_backticks.is_empty() {
                 // Closing fence: finalise the innermost block.
@@ -182,6 +213,7 @@ pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
                     code: code.trim_end_matches('\n').to_string(),
                     indent,
                     depth: stack.len(), // depth at which this block was opened
+                    is_thought: in_thoughts,
                 };
                 // Append the closing fence line to the outer block (if any).
                 if let Some((_, outer_code, _, _)) = stack.last_mut() {
@@ -196,12 +228,18 @@ pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
                 }
                 // Flush any accumulated plain text (only possible at depth 0).
                 if !current_text.is_empty() {
-                    segments.push(MessageSegment::Text(std::mem::take(&mut current_text)));
+                    segments.push(MessageSegment::Text(MessageText {
+                        text: std::mem::take(&mut current_text),
+                        is_thought: in_thoughts,
+                    }));
                 }
                 let indent = line.len() - trimmed.len();
                 let idx = segments.len();
                 // Reserve a slot; filled in when the block closes.
-                segments.push(MessageSegment::Text(String::new()));
+                segments.push(MessageSegment::Text(MessageText {
+                    text: String::new(),
+                    is_thought: in_thoughts,
+                }));
                 stack.push((after_backticks.to_string(), String::new(), indent, idx));
             }
             // A bare ``` at depth 0 is ignored.
@@ -218,7 +256,10 @@ pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
     }
 
     if !current_text.is_empty() {
-        segments.push(MessageSegment::Text(current_text));
+        segments.push(MessageSegment::Text(MessageText {
+            text: current_text,
+            is_thought: in_thoughts,
+        }));
     }
 
     segments
@@ -232,11 +273,13 @@ pub fn find_fenced_code_snippets(messages: Vec<String>) -> Vec<CodeSnippet> {
                 language,
                 code,
                 depth,
-                ..
+                indent: _,
+                is_thought,
             } => Some(CodeSnippet {
                 language: translate_language_name_to_syntect_name(Some(&language)),
                 code,
                 depth,
+                is_thought,
             }),
             _ => None,
         })
@@ -295,6 +338,7 @@ fn test_find_snippets1() {
 }"
             .to_string(),
             depth: 0,
+            is_thought: false,
         },
         CodeSnippet {
             language: "Python".to_string(),
@@ -302,6 +346,91 @@ fn test_find_snippets1() {
     print(\"Hello, world!\")"
                 .to_string(),
             depth: 0,
+            is_thought: false,
+        },
+    ];
+    assert_eq!(
+        crate::snippets::find_fenced_code_snippets(messages),
+        expected
+    );
+}
+
+#[test]
+fn test_find_snippets_in_thought1() {
+    let messages = vec![
+        "<think>".to_string(),
+        "Hello, world!".to_string(),
+        "```rust".to_string(),
+        "fn main() {".to_string(),
+        "    println!(\"Hello, world!\");".to_string(),
+        "}".to_string(),
+        "```".to_string(),
+        "</think>".to_string(),
+        "This is a test.".to_string(),
+        "```python".to_string(),
+        "def main():".to_string(),
+        "    print(\"Hello, world!\")".to_string(),
+        "```".to_string(),
+    ];
+    let expected = vec![
+        CodeSnippet {
+            language: "Rust".to_string(),
+            code: "fn main() {
+    println!(\"Hello, world!\");
+}"
+            .to_string(),
+            depth: 0,
+            is_thought: true,
+        },
+        CodeSnippet {
+            language: "Python".to_string(),
+            code: "def main():
+    print(\"Hello, world!\")"
+                .to_string(),
+            depth: 0,
+            is_thought: false,
+        },
+    ];
+    assert_eq!(
+        crate::snippets::find_fenced_code_snippets(messages),
+        expected
+    );
+}
+
+#[test]
+fn test_find_snippets_in_thought2() {
+    let messages = vec![
+        "<think>".to_string(),
+        "Hello, world!".to_string(),
+        "```rust".to_string(),
+        "fn main() {".to_string(),
+        "    println!(\"Hello, world!\");".to_string(),
+        "}".to_string(),
+        "```".to_string(),
+        "This is a test.".to_string(),
+        "```python".to_string(),
+        "def main():".to_string(),
+        "    print(\"Hello, world!\")".to_string(),
+        "```".to_string(),
+        "</think>".to_string(),
+    ];
+    let expected = vec![
+        CodeSnippet {
+            language: "Rust".to_string(),
+            code: "fn main() {
+    println!(\"Hello, world!\");
+}"
+            .to_string(),
+            depth: 0,
+            is_thought: true,
+        },
+        CodeSnippet {
+            language: "Python".to_string(),
+            code: "def main():
+    print(\"Hello, world!\")"
+                .to_string(),
+            depth: 0,
+            is_thought: true,
         },
     ];
     assert_eq!(
@@ -333,6 +462,7 @@ fn test_find_snippets2() {
     }"
             .to_string(),
             depth: 0,
+            is_thought: false,
         },
         CodeSnippet {
             language: "Python".to_string(),
@@ -340,6 +470,7 @@ fn test_find_snippets2() {
         print(\"Hello, world!\")"
                 .to_string(),
             depth: 0,
+            is_thought: false,
         },
     ];
     assert_eq!(
@@ -381,6 +512,7 @@ def main():
 ```"
             .to_string(),
             depth: 0,
+            is_thought: false,
         },
         CodeSnippet {
             language: "Rust".to_string(),
@@ -389,6 +521,7 @@ def main():
 }"
             .to_string(),
             depth: 1,
+            is_thought: false,
         },
         CodeSnippet {
             language: "Python".to_string(),
@@ -396,6 +529,7 @@ def main():
     print(\"Hello, world!\")"
                 .to_string(),
             depth: 1,
+            is_thought: false,
         },
     ];
     assert_eq!(

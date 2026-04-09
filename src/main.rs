@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
-use genai::chat::ChatStreamEvent;
+use genai::chat::{ChatStreamEvent, StreamEnd};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::mpsc;
@@ -129,6 +129,7 @@ Context:
             // Clone data needed for the task
             let messages = app.messages.clone();
             let selected_model = app.selected_model_name.clone();
+            let thinking_effort = app.thinking_effort.clone();
             let sys_prompt = if selected_model.starts_with("gpt") {
                 None
             } else {
@@ -142,12 +143,18 @@ Context:
 
             // Spawn ONE task that does everything
             task::spawn(async move {
-                let response =
-                    assistant_response_streaming(&messages, &selected_model, sys_prompt).await;
+                let response = assistant_response_streaming(
+                    &messages,
+                    &selected_model,
+                    sys_prompt,
+                    thinking_effort,
+                )
+                .await;
 
                 match response {
                     Ok(mut stream) => {
                         let mut full_content = String::new();
+                        let mut full_thinking_content = String::new();
                         let _ = tx.send(Action::StreamStart).await;
 
                         // Use tokio::select! to listen for chunks OR a cancellation signal
@@ -163,13 +170,30 @@ Context:
                                     match result_opt {
                                         Some(Ok(event)) => match event {
                                             ChatStreamEvent::Start => {}
-                                            ChatStreamEvent::Chunk(chunk) | ChatStreamEvent::ReasoningChunk(chunk) => {
+                                            ChatStreamEvent::ReasoningChunk(chunk) => {
+                                                if !chunk.content.is_empty() {
+                                                    full_thinking_content.push_str(&chunk.content);
+                                                    let all_content = format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content);
+                                                    let _ = tx.send(Action::StreamPartial(all_content)).await;
+                                                }
+                                            },
+                                            ChatStreamEvent::Chunk(chunk) => {
                                                 if !chunk.content.is_empty() {
                                                     full_content.push_str(&chunk.content);
-                                                    let _ = tx.send(Action::StreamPartial(full_content.clone())).await;
+                                                    let all_content = format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content);
+                                                    let _ = tx.send(Action::StreamPartial(all_content)).await;
                                                 }
                                             }
-                                            ChatStreamEvent::End(_) => {}
+                                            ChatStreamEvent::End(StreamEnd {captured_usage: _, captured_content: Some(content), captured_reasoning_content: reasoning_content}) => {
+                                                if let Some(texts) = content.into_joined_texts() {
+                                                    let full_content = if let Some(reasoning) = reasoning_content {
+                                                        format!("<think>\n{}\n</think>\n{}", reasoning, texts)
+                                                    } else {
+                                                        texts
+                                                    };
+                                                    let _ = tx.send(Action::StreamComplete(full_content)).await;
+                                                }
+                                            }
                                             _ => {}
                                         },
                                         Some(Err(e)) => {
@@ -178,7 +202,12 @@ Context:
                                         }
                                         None => {
                                             // Stream is finished naturally
-                                            let _ = tx.send(Action::StreamComplete(full_content)).await;
+                                            let all_content = if !full_thinking_content.is_empty() {
+                                                format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
+                                            } else {
+                                                full_content
+                                            };
+                                            let _ = tx.send(Action::StreamComplete(all_content)).await;
                                             break;
                                         }
                                     }
