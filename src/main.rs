@@ -162,7 +162,12 @@ Context:
                             tokio::select! {
                                 // Listens for our cancel signal
                                 _ = cancel_rx.recv() => {
-                                    let _ = tx.send(Action::StreamCancelled(full_content)).await;
+                                    let all_content = if !full_thinking_content.is_empty() {
+                                        format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
+                                    } else {
+                                        full_content
+                                    };
+                                    let _ = tx.send(Action::StreamCancelled(all_content)).await;
                                     break;
                                 }
                                 // Listens for the next chunk from the AI
@@ -180,7 +185,11 @@ Context:
                                             ChatStreamEvent::Chunk(chunk) => {
                                                 if !chunk.content.is_empty() {
                                                     full_content.push_str(&chunk.content);
-                                                    let all_content = format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content);
+                                                    let all_content = if !full_thinking_content.is_empty() {
+                                                        format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
+                                                    } else {
+                                                        full_content.clone()
+                                                    };
                                                     let _ = tx.send(Action::StreamPartial(all_content)).await;
                                                 }
                                             }
