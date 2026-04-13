@@ -544,10 +544,9 @@ impl<'a> App<'a> {
             return Ok(());
         }
         let mut content_parts = Vec::new();
-        content_parts.push(ContentPart::from_text(&text));
         if let Some(context) = &self.current_context {
             let ps = SyntaxSet::load_defaults_newlines();
-            let additional_context = "\n\nINFO FOR LLMs\nThe user provided the following context, please use it (if relevant) when providing an answer:".to_string();
+            let additional_context = "<context>\nINFO FOR LLMs\nThe user provided the following context, please use it (if relevant) when providing an answer:".to_string();
             content_parts.push(ContentPart::from_text(additional_context));
             for file in context {
                 let extension = if let Some((_, extension)) = file.name.split_once(".") {
@@ -581,7 +580,9 @@ impl<'a> App<'a> {
                 }
             }
             self.current_context = None;
+            content_parts.push(ContentPart::from_text("\n</context>\n"));
         }
+        content_parts.push(ContentPart::from_text(&text));
         let n_user_messages = self
             .messages
             .iter()
@@ -857,7 +858,7 @@ impl<'a> App<'a> {
                     self.reset_input_textarea();
                     let message_text = m.to_string();
                     // TODO: A bit fugly, should be a better way to do this.
-                    if let Some((user_input, _)) = message_text.split_once("\n\nINFO FOR LLMs") {
+                    if let Some((_, user_input)) = message_text.split_once("\n</context>\n") {
                         self.input_textarea.insert_str(user_input);
                     } else {
                         self.input_textarea.insert_str(m.to_string());
