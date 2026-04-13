@@ -343,7 +343,7 @@ pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Li
     line_vec
 }
 
-fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
+pub fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
     let mut line_vec = Vec::new();
     for message in messages {
         let text = message.to_string();
@@ -379,10 +379,10 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
         .end_symbol(Some("↓"));
-    let mut messages = if app.is_streaming || !app.do_highlight {
-        messages_to_lines(&app.messages, messages_area.width as usize)
-    } else {
+    let mut messages = if !app.is_streaming && app.do_highlight {
         app.cached_lines.clone()
+    } else {
+        messages_to_lines(&app.messages, messages_area.width as usize)
     };
 
     if app.is_waiting_for_response {

@@ -19,6 +19,7 @@ use ratatui::{
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
 
+use crate::ui::messages_to_lines;
 use crate::{
     ai::MODELS,
     chats::ChatList,
@@ -494,9 +495,13 @@ impl<'a> App<'a> {
             .size
             .ok_or(anyhow!("Could not get terminal size"))?
             .width;
-        let total_lines = Paragraph::new(self.cached_lines.clone())
-            .wrap(Wrap { trim: false })
-            .line_count(width);
+        let total_lines = if !self.is_streaming && self.do_highlight {
+            Paragraph::new(self.cached_lines.clone())
+                .wrap(Wrap { trim: false })
+                .line_count(width)
+        } else {
+            messages_to_lines(&self.messages, width as usize).len()
+        };
         Ok(total_lines.saturating_sub(1))
     }
 

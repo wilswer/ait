@@ -49,7 +49,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 {
                     app.redo_last_message()?;
                     app.set_app_mode(AppMode::Editing);
-                } else if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) {
+                } else if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN)
+                    && !app.is_streaming
+                {
                     app.toggle_highlighting();
                     app.last_recache = Instant::now();
                 }
