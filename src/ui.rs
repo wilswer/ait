@@ -44,8 +44,58 @@ const SPINNER_FRAMES: &[&str] = &[
     "⣿⣿⣇",
     "⣿⣿⣧",
     "⣿⣿⣷",
-    "⣿⣿⣿",
-    "⣿⣿⣿",
+    "⣿⣿⣿", // Midway
+    "⣿⣿⣿", // Midway
+    "⣾⣿⣿",
+    "⣼⣿⣿",
+    "⣸⣿⣿",
+    "⢸⣿⣿",
+    "⢰⣿⣿",
+    "⢠⣿⣿",
+    "⢀⣿⣿",
+    "⠀⣿⣿",
+    "⠀⣾⣿",
+    "⠀⣼⣿",
+    "⠀⣸⣿",
+    "⠀⢸⣿",
+    "⠀⢰⣿",
+    "⠀⢠⣿",
+    "⠀⢀⣿",
+    "⠀⠀⣿",
+    "⠀⠀⣾",
+    "⠀⠀⣼",
+    "⠀⠀⣸",
+    "⠀⠀⢸",
+    "⠀⠀⢰",
+    "⠀⠀⢠",
+    "⠀⠀⢀",
+    "⠀⠀ ",
+    "⠀⠀ ",
+    "⠀⠀⢀",
+    "⠀⠀⢠",
+    "⠀⠀⢰",
+    "⠀⠀⢸",
+    "⠀⠀⣸",
+    "⠀⠀⣼",
+    "⠀⠀⣾",
+    "⠀⠀⣿",
+    "⠀⢀⣿",
+    "⠀⢠⣿",
+    "⠀⢰⣿",
+    "⠀⢸⣿",
+    "⠀⣸⣿",
+    "⠀⣼⣿",
+    "⠀⣾⣿",
+    "⠀⣿⣿",
+    "⢀⣿⣿",
+    "⢠⣿⣿",
+    "⢰⣿⣿",
+    "⢸⣿⣿",
+    "⣸⣿⣿",
+    "⣼⣿⣿",
+    "⣾⣿⣿",
+    "⣿⣿⣿", // Midway
+    "⣿⣿⣿", // Midway
     "⣿⣿⣷",
     "⣿⣿⣧",
     "⣿⣿⣇",
@@ -387,7 +437,7 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
 
     if app.is_waiting_for_response {
         let frame = SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()];
-        let thinking_split_n = (app.spinner_frame / 2) % THINKING_VERB.len();
+        let thinking_split_n = (app.spinner_frame / 4) % THINKING_VERB.len();
         let (think1, think2) = THINKING_VERB.split_at(thinking_split_n);
         let (think_span1, think_span2) = (Span::raw(think1).bold(), Span::raw(think2).dim());
         messages.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
