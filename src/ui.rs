@@ -410,15 +410,17 @@ pub fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
                 line_vec.push(Line::from(Span::raw("")));
             }
             Message::Assistant(m) => {
-                let wrapped_message = textwrap::wrap(m, width - 3);
-                line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-                line_vec.push(Line::from(Span::raw("---").bold().green()));
-                line_vec.extend(
-                    wrapped_message
-                        .into_iter()
-                        .map(|l| Line::from(Span::raw(l))),
-                );
-                line_vec.push(Line::from(Span::raw("")));
+                if !m.is_empty() {
+                    let wrapped_message = textwrap::wrap(m, width - 3);
+                    line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
+                    line_vec.push(Line::from(Span::raw("---").bold().green()));
+                    line_vec.extend(
+                        wrapped_message
+                            .into_iter()
+                            .map(|l| Line::from(Span::raw(l))),
+                    );
+                    line_vec.push(Line::from(Span::raw("")));
+                }
             }
         }
     }
