@@ -68,40 +68,36 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                     .select(Some(app.thinking_effort.to_index()));
                 app.set_app_mode(AppMode::ThinkingEffortSelection);
             }
-            KeyCode::Char('t') => {
-                if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) {
-                    app.next_theme();
-                    app.needs_recache = true;
-                    app.last_recache = Instant::now();
-                }
+            KeyCode::Char('t')
+                if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) =>
+            {
+                app.next_theme();
+                app.needs_recache = true;
+                app.last_recache = Instant::now();
             }
-            KeyCode::Char('T') => {
-                if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) {
-                    app.previous_theme();
-                    app.needs_recache = true;
-                    app.last_recache = Instant::now();
-                }
+            KeyCode::Char('T')
+                if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN) =>
+            {
+                app.previous_theme();
+                app.needs_recache = true;
+                app.last_recache = Instant::now();
             }
             _ => {}
         },
         AppMode::Editing => match code {
             // Exit editing mode on `ESC`
             KeyCode::Esc => app.set_app_mode(AppMode::Normal),
-            KeyCode::Char('V') | KeyCode::Char('v') => {
-                if modifiers.contains(KeyModifiers::CONTROL) {
-                    #[cfg(not(target_os = "linux"))]
-                    app.paste_to_input_textarea();
-                } else {
-                    app.input_textarea.input(key_event);
-                }
+            KeyCode::Char('V') | KeyCode::Char('v')
+                if modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                #[cfg(not(target_os = "linux"))]
+                app.paste_to_input_textarea();
             }
-            KeyCode::Char('s') | KeyCode::Char('S') => {
-                if modifiers.contains(KeyModifiers::CONTROL) {
-                    app.submit_message()
-                        .context("Handler failed to submit message")?;
-                } else {
-                    app.input_textarea.input(key_event);
-                }
+            KeyCode::Char('s') | KeyCode::Char('S')
+                if modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                app.submit_message()
+                    .context("Handler failed to submit message")?;
             }
             _ => {
                 app.input_textarea.input(key_event);
@@ -121,12 +117,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.set_chat()?;
                 app.set_app_mode(AppMode::Normal);
             }
-            KeyCode::Char('r') => {
-                if modifiers.contains(KeyModifiers::CONTROL) {
-                    app.delete_selected_chat()?;
-                    let query_filter = app.search_bar.lines().first();
-                    app.set_chat_list(query_filter.map(|x| x.to_string()))?;
-                }
+            KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
+                app.delete_selected_chat()?;
+                let query_filter = app.search_bar.lines().first();
+                app.set_chat_list(query_filter.map(|x| x.to_string()))?;
             }
             KeyCode::Char('/') => {
                 app.set_app_mode(AppMode::FilterHistory);
@@ -206,16 +200,14 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                     app.set_app_mode(AppMode::Notify { notification });
                 }
             }
-            KeyCode::Char('d') => {
-                if app.file_explorer.current().is_file() {
-                    app.remove_from_context(&app.file_explorer.current().clone());
-                    app.set_app_mode(AppMode::Notify {
-                        notification: Notification::Info(format!(
-                            "File {} removed from context!",
-                            &app.file_explorer.current().name
-                        )),
-                    })
-                }
+            KeyCode::Char('d') if app.file_explorer.current().is_file() => {
+                app.remove_from_context(&app.file_explorer.current().clone());
+                app.set_app_mode(AppMode::Notify {
+                    notification: Notification::Info(format!(
+                        "File {} removed from context!",
+                        &app.file_explorer.current().name
+                    )),
+                })
             }
             _ => {}
         },
@@ -281,11 +273,9 @@ pub fn handle_mouse_events(event: MouseEvent, app: &mut App) -> AppResult<()> {
             app.selection.start = Some((event.column, event.row));
             app.selection.end = Some((event.column, event.row));
         }
-        MouseEventKind::Drag(_) => {
+        MouseEventKind::Drag(_) if app.selection.start.is_some() => {
             // Update selection end point while dragging
-            if app.selection.start.is_some() {
-                app.selection.end = Some((event.column, event.row));
-            }
+            app.selection.end = Some((event.column, event.row));
         }
         MouseEventKind::Up(_) => {
             app.selection.start = None;

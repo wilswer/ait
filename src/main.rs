@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
-use genai::chat::{ChatStreamEvent, StreamEnd};
+use genai::chat::{ChatStreamEvent, StreamChunk, StreamEnd};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::mpsc;
@@ -170,41 +170,43 @@ Context:
                                     let _ = tx.send(Action::StreamCancelled(all_content)).await;
                                     break;
                                 }
-                                // Listens for the next chunk from the AI
                                 result_opt = stream.next() => {
                                     match result_opt {
-                                        Some(Ok(event)) => match event {
-                                            ChatStreamEvent::Start => {}
-                                            ChatStreamEvent::ReasoningChunk(chunk) => {
-                                                if !chunk.content.is_empty() {
-                                                    full_thinking_content.push_str(&chunk.content);
-                                                    let all_content = format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content);
-                                                    let _ = tx.send(Action::StreamPartial(all_content)).await;
+                                        Some(Ok(event)) => {
+                                            let mut partial_updated = false;
+
+                                            match event {
+                                                ChatStreamEvent::ReasoningChunk(StreamChunk { content }) if !content.is_empty() => {
+                                                    full_thinking_content.push_str(&content);
+                                                    partial_updated = true;
                                                 }
-                                            },
-                                            ChatStreamEvent::Chunk(chunk) => {
-                                                if !chunk.content.is_empty() {
-                                                    full_content.push_str(&chunk.content);
-                                                    let all_content = if !full_thinking_content.is_empty() {
-                                                        format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
-                                                    } else {
-                                                        full_content.clone()
-                                                    };
-                                                    let _ = tx.send(Action::StreamPartial(all_content)).await;
+                                                ChatStreamEvent::Chunk(StreamChunk { content }) if !content.is_empty() => {
+                                                    full_content.push_str(&content);
+                                                    partial_updated = true;
                                                 }
+                                                ChatStreamEvent::End(StreamEnd { captured_usage: _, captured_content: Some(content), captured_reasoning_content: reasoning_content }) => {
+                                                    if let Some(texts) = content.into_joined_texts() {
+                                                        let full = if let Some(reasoning) = reasoning_content {
+                                                            format!("<think>\n{}\n</think>\n{}", reasoning, texts)
+                                                        } else {
+                                                            texts
+                                                        };
+                                                        let _ = tx.send(Action::StreamComplete(full)).await;
+                                                    }
+                                                }
+                                                // Start, empty chunks, and unhandled End events will all cleanly fall through here
+                                                _ => {}
                                             }
-                                            ChatStreamEvent::End(StreamEnd {captured_usage: _, captured_content: Some(content), captured_reasoning_content: reasoning_content}) => {
-                                                if let Some(texts) = content.into_joined_texts() {
-                                                    let full_content = if let Some(reasoning) = reasoning_content {
-                                                        format!("<think>\n{}\n</think>\n{}", reasoning, texts)
-                                                    } else {
-                                                        texts
-                                                    };
-                                                    let _ = tx.send(Action::StreamComplete(full_content)).await;
-                                                }
+
+                                            if partial_updated {
+                                                let all_content = if !full_thinking_content.is_empty() {
+                                                    format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
+                                                } else {
+                                                    full_content.clone()
+                                                };
+                                                let _ = tx.send(Action::StreamPartial(all_content)).await;
                                             }
-                                            _ => {}
-                                        },
+                                        }
                                         Some(Err(e)) => {
                                             let _ = tx.send(Action::Error(format!("Stream error: {}", e))).await;
                                             break;
