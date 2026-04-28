@@ -16,7 +16,7 @@ use ait::storage::{create_db, migrate_db};
 use ait::tui::Tui;
 
 #[derive(Debug, Clone)]
-pub enum Action {
+enum Action {
     StreamStart,
     StreamPartial(String),
     StreamComplete(String),
