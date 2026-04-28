@@ -204,7 +204,9 @@ pub fn parse_message_segments(text: &str) -> Vec<MessageSegment> {
             in_thoughts = false;
             continue;
         }
-        if let Some(after_backticks) = trimmed.strip_prefix("```") {
+        if trimmed.starts_with("```") {
+            // not a perfect solution but it'll do for now
+            let after_backticks = trimmed.trim_start_matches('`');
             if !stack.is_empty() && after_backticks.is_empty() {
                 // Closing fence: finalise the innermost block.
                 let (lang, code, indent, idx) = stack.pop().unwrap();
@@ -329,6 +331,46 @@ fn test_find_snippets1() {
         "def main():".to_string(),
         "    print(\"Hello, world!\")".to_string(),
         "```".to_string(),
+    ];
+    let expected = vec![
+        CodeSnippet {
+            language: "Rust".to_string(),
+            code: "fn main() {
+    println!(\"Hello, world!\");
+}"
+            .to_string(),
+            depth: 0,
+            is_thought: false,
+        },
+        CodeSnippet {
+            language: "Python".to_string(),
+            code: "def main():
+    print(\"Hello, world!\")"
+                .to_string(),
+            depth: 0,
+            is_thought: false,
+        },
+    ];
+    assert_eq!(
+        crate::snippets::find_fenced_code_snippets(messages),
+        expected
+    );
+}
+
+#[test]
+fn test_find_snippets_four_backticks() {
+    let messages = vec![
+        "Hello, world!".to_string(),
+        "````rust".to_string(),
+        "fn main() {".to_string(),
+        "    println!(\"Hello, world!\");".to_string(),
+        "}".to_string(),
+        "````".to_string(),
+        "This is a test.".to_string(),
+        "````python".to_string(),
+        "def main():".to_string(),
+        "    print(\"Hello, world!\")".to_string(),
+        "````".to_string(),
     ];
     let expected = vec![
         CodeSnippet {
@@ -495,6 +537,65 @@ fn test_nested_snippets() {
         "    print(\"Hello, world!\")".to_string(),
         "```".to_string(),
         "```".to_string(),
+    ];
+    let expected = vec![
+        CodeSnippet {
+            language: "Markdown".to_string(),
+            code: "# Hello, world!
+```rust
+fn main() {
+    println!(\"Hello, world!\");
+}
+```
+# This is a test.
+```python
+def main():
+    print(\"Hello, world!\")
+```"
+            .to_string(),
+            depth: 0,
+            is_thought: false,
+        },
+        CodeSnippet {
+            language: "Rust".to_string(),
+            code: "fn main() {
+    println!(\"Hello, world!\");
+}"
+            .to_string(),
+            depth: 1,
+            is_thought: false,
+        },
+        CodeSnippet {
+            language: "Python".to_string(),
+            code: "def main():
+    print(\"Hello, world!\")"
+                .to_string(),
+            depth: 1,
+            is_thought: false,
+        },
+    ];
+    assert_eq!(
+        crate::snippets::find_fenced_code_snippets(messages),
+        expected
+    );
+}
+
+#[test]
+fn test_nested_snippets2() {
+    let messages = vec![
+        "````markdown".to_string(),
+        "# Hello, world!".to_string(),
+        "```rust".to_string(),
+        "fn main() {".to_string(),
+        "    println!(\"Hello, world!\");".to_string(),
+        "}".to_string(),
+        "```".to_string(),
+        "# This is a test.".to_string(),
+        "```python".to_string(),
+        "def main():".to_string(),
+        "    print(\"Hello, world!\")".to_string(),
+        "```".to_string(),
+        "````".to_string(),
     ];
     let expected = vec![
         CodeSnippet {
