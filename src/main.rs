@@ -2,8 +2,8 @@ use anyhow::Context;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
 use genai::chat::{ChatStreamEvent, StreamChunk, StreamEnd};
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio::task;
 
@@ -50,8 +50,9 @@ Context:
     } else {
         cli.system_prompt.clone()
     };
+    let ollama_host_url = cli.ollama_host.as_deref();
     let mut app = App::new(&system_prompt);
-    let models = get_models()
+    let models = get_models(ollama_host_url)
         .await
         .context("Failed to find models from providers")?;
     app.set_models(models);
@@ -130,6 +131,7 @@ Context:
             let messages = app.messages.clone();
             let selected_model = app.selected_model_name.clone();
             let thinking_effort = app.thinking_effort.clone();
+            let ollama_host_url = cli.ollama_host.clone();
             let sys_prompt = if selected_model.starts_with("gpt") {
                 None
             } else {
@@ -148,6 +150,7 @@ Context:
                     &selected_model,
                     sys_prompt,
                     thinking_effort,
+                    ollama_host_url,
                 )
                 .await;
 
@@ -184,7 +187,7 @@ Context:
                                                     full_content.push_str(&content);
                                                     partial_updated = true;
                                                 }
-                                                ChatStreamEvent::End(StreamEnd { captured_usage: _, captured_content: Some(content), captured_reasoning_content: reasoning_content }) => {
+                                                ChatStreamEvent::End(StreamEnd {captured_content: Some(content), captured_reasoning_content: reasoning_content, ..}) => {
                                                     if let Some(texts) = content.into_joined_texts() {
                                                         let full = if let Some(reasoning) = reasoning_content {
                                                             format!("<think>\n{}\n</think>\n{}", reasoning, texts)

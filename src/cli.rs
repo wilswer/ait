@@ -8,12 +8,15 @@ use crossterm::tty::IsTty;
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// System prompt
+    /// System prompt.
     #[arg(short, long, default_value = "You are a helpful, friendly assistant.")]
     pub system_prompt: String,
-    /// Context input file path. If not provided, reads from stdin
+    /// Context input file path. If not provided, reads from stdin.
     #[arg(short, long)]
     context: Option<PathBuf>,
+    /// Ollama host URL.
+    #[arg(short, long)]
+    pub ollama_host: Option<String>,
 }
 
 impl Cli {
