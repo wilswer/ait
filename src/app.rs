@@ -3,7 +3,7 @@ use std::fs;
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, fs::read_to_string, io};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 use genai::chat::ContentPart;
@@ -23,7 +23,7 @@ use crate::ui::messages_to_lines;
 use crate::{
     ai::MODELS,
     chats::ChatList,
-    snippets::{find_fenced_code_snippets, load_theme, SnippetItem, EMBEDDED_THEME},
+    snippets::{EMBEDDED_THEME, SnippetItem, find_fenced_code_snippets, load_theme},
     storage::{
         create_db_conversation, delete_conversation, delete_message, get_cache_dir, insert_message,
         list_all_messages, list_conversations, touch_conversation,
@@ -482,11 +482,11 @@ impl<'a> App<'a> {
     }
 
     pub fn remove_from_context(&mut self, context: &File) {
-        if let Some(mut current_context) = self.current_context.clone() {
-            if let Some(idx) = current_context.iter().position(|f| f == context) {
-                current_context.remove(idx);
-                self.current_context = Some(current_context)
-            }
+        if let Some(mut current_context) = self.current_context.clone()
+            && let Some(idx) = current_context.iter().position(|f| f == context)
+        {
+            current_context.remove(idx);
+            self.current_context = Some(current_context)
         };
     }
 

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use directories::ProjectDirs;
 use genai::chat::ContentPart;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use crate::app::{AppResult, Message};
 
@@ -159,20 +159,16 @@ pub fn list_conversations(query_filter: Option<String>) -> AppResult<Vec<(i64, S
              WHERE m.message_text LIKE ?1
              ORDER BY COALESCE(c.updated_at, c.started_at) DESC",
         )?;
-        let res = stmt
-            .query_map(params![filter_param], |row| Ok((row.get(0)?, row.get(1)?)))
+        stmt.query_map(params![filter_param], |row| Ok((row.get(0)?, row.get(1)?)))
             .context("Failed to query conversations table with filter")?
-            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
-        res
+            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?
     } else {
         let mut stmt = conn.prepare(
             "SELECT conversation_id, COALESCE(updated_at, started_at) FROM Conversations ORDER BY COALESCE(updated_at, started_at) DESC",
         )?;
-        let res = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .context("Failed to query conversations table")?
-            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
-        res
+            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?
     };
 
     Ok(conversation_ids)
@@ -226,11 +222,10 @@ struct DBMessage {
 
 impl From<DBMessage> for Message {
     fn from(db_message: DBMessage) -> Self {
-        let sender = match db_message.sender.as_str() {
+        match db_message.sender.as_str() {
             "human" => Message::User(vec![ContentPart::from_text(db_message.message_text)]),
             "assistant" => Message::Assistant(db_message.message_text),
             _ => Message::Assistant("Error".to_string()),
-        };
-        sender
+        }
     }
 }

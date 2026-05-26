@@ -1,4 +1,5 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Flex, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
@@ -6,16 +7,15 @@ use ratatui::{
         Block, BorderType, Borders, Clear, FrameExt, HighlightSpacing, List, ListItem, Padding,
         Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
-    Frame,
 };
 use syntect::highlighting::Theme;
 use tui_big_text::{BigText, PixelSize};
 
 use crate::{
-    app::{get_file_content, App, AppMode, Message, Notification, THINKING_EFFORTS},
+    app::{App, AppMode, Message, Notification, THINKING_EFFORTS, get_file_content},
     snippets::{
-        create_highlighted_code, parse_message_segments, translate_language_name_to_syntect_name,
-        MessageSegment, MessageText,
+        MessageSegment, MessageText, create_highlighted_code, parse_message_segments,
+        translate_language_name_to_syntect_name,
     },
     storage::list_all_messages,
 };
@@ -161,18 +161,18 @@ fn parse_inline_markdown(text: &str, style: Style) -> Vec<Span<'static>> {
     let mut rest = text;
 
     while !rest.is_empty() {
-        if rest.starts_with("**") {
-            if let Some(end) = rest[2..].find("**") {
-                if !current.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut current), style));
-                }
-                spans.push(Span::styled(
-                    rest[2..2 + end].to_string(),
-                    style.patch(Style::default().bold()),
-                ));
-                rest = &rest[2 + end + 2..];
-                continue;
+        if rest.starts_with("**")
+            && let Some(end) = rest[2..].find("**")
+        {
+            if !current.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut current), style));
             }
+            spans.push(Span::styled(
+                rest[2..2 + end].to_string(),
+                style.patch(Style::default().bold()),
+            ));
+            rest = &rest[2 + end + 2..];
+            continue;
         }
         if rest.starts_with('*') {
             // single star italic — only if there is a closing *
@@ -191,20 +191,20 @@ fn parse_inline_markdown(text: &str, style: Style) -> Vec<Span<'static>> {
                 }
             }
         }
-        if rest.starts_with('`') {
-            if let Some(end) = rest[1..].find('`') {
-                let inner = &rest[1..1 + end];
-                if !inner.is_empty() {
-                    if !current.is_empty() {
-                        spans.push(Span::styled(std::mem::take(&mut current), style));
-                    }
-                    spans.push(Span::styled(
-                        inner.to_string(),
-                        style.patch(Style::default().fg(Color::Yellow)),
-                    ));
-                    rest = &rest[1 + end + 1..];
-                    continue;
+        if rest.starts_with('`')
+            && let Some(end) = rest[1..].find('`')
+        {
+            let inner = &rest[1..1 + end];
+            if !inner.is_empty() {
+                if !current.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut current), style));
                 }
+                spans.push(Span::styled(
+                    inner.to_string(),
+                    style.patch(Style::default().fg(Color::Yellow)),
+                ));
+                rest = &rest[1 + end + 1..];
+                continue;
             }
         }
         let c = rest.chars().next().unwrap();
@@ -496,7 +496,7 @@ fn render_init_screen(f: &mut Frame, area: Rect) {
         .lines(vec!["AIT".into()])
         .build();
     let centered_area = center_rect(area, Constraint::Length(26), Constraint::Length(8)); // 3 8x8
-                                                                                          // characters
+    // characters
     f.render_widget(big_text, centered_area);
 }
 pub fn render(f: &mut Frame, app: &mut App) {
