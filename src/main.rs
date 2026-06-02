@@ -52,11 +52,6 @@ Context:
     };
     let ollama_host_url = cli.ollama_host.as_deref();
     let mut app = App::new(&system_prompt);
-    let models = get_models(ollama_host_url)
-        .await
-        .context("Failed to find models from providers")?;
-    app.set_models(models);
-    app.set_chat_list(None)?;
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
@@ -69,12 +64,22 @@ Context:
     let (action_tx, mut action_rx) = mpsc::channel(32);
 
     let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
+    let mut first_frame = true;
 
     // Start the main loop.
     while app.running {
         // 1. DRAW ONLY ONCE PER BATCH
         tui.draw(&mut app)
             .context("Failed to render user interface")?;
+
+        if first_frame {
+            let models = get_models(ollama_host_url)
+                .await
+                .context("Failed to find models from providers")?;
+            app.set_models(models);
+            app.set_chat_list(None)?;
+            first_frame = false;
+        }
 
         // 2. BLOCK FOR THE FIRST EVENT (Wait for user to do something)
         let mut maybe_event = Some(
