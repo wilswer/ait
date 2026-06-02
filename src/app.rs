@@ -192,6 +192,8 @@ pub enum ThinkingEffort {
     Low,
     Medium,
     High,
+    XHigh,
+    Max,
 }
 
 impl ThinkingEffort {
@@ -201,6 +203,8 @@ impl ThinkingEffort {
             ThinkingEffort::Low => "Low",
             ThinkingEffort::Medium => "Medium",
             ThinkingEffort::High => "High",
+            ThinkingEffort::XHigh => "XHigh",
+            ThinkingEffort::Max => "Max",
         }
     }
 
@@ -209,6 +213,8 @@ impl ThinkingEffort {
             1 => ThinkingEffort::Low,
             2 => ThinkingEffort::Medium,
             3 => ThinkingEffort::High,
+            4 => ThinkingEffort::XHigh,
+            5 => ThinkingEffort::Max,
             _ => ThinkingEffort::None,
         }
     }
@@ -219,6 +225,8 @@ impl ThinkingEffort {
             ThinkingEffort::Low => 1,
             ThinkingEffort::Medium => 2,
             ThinkingEffort::High => 3,
+            ThinkingEffort::XHigh => 4,
+            ThinkingEffort::Max => 5,
         }
     }
 }

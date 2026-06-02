@@ -169,6 +169,7 @@ pub async fn assistant_response_streaming(
     for chat_message in chat_messages {
         chat_req = chat_req.append_message(chat_message);
     }
+
     let chat_opts = match thinking_effort {
         ThinkingEffort::None => ChatOptions::default(),
         ThinkingEffort::Low => ChatOptions::default().with_reasoning_effort(ReasoningEffort::Low),
@@ -176,9 +177,13 @@ pub async fn assistant_response_streaming(
             ChatOptions::default().with_reasoning_effort(ReasoningEffort::Medium)
         }
         ThinkingEffort::High => ChatOptions::default().with_reasoning_effort(ReasoningEffort::High),
+        ThinkingEffort::XHigh => {
+            ChatOptions::default().with_reasoning_effort(ReasoningEffort::XHigh)
+        }
+        ThinkingEffort::Max => ChatOptions::default().with_reasoning_effort(ReasoningEffort::Max),
     };
-    let clientbuilder = init_clientbuilder(ollama_host_url.as_deref(), chat_opts);
 
+    let clientbuilder = init_clientbuilder(ollama_host_url.as_deref(), chat_opts);
     let client = clientbuilder.build();
     let chat_res = client.exec_chat_stream(model, chat_req, None).await?;
     Ok(chat_res.stream)
