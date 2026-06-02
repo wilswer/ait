@@ -489,13 +489,21 @@ fn center_rect(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect
     area
 }
 
-fn render_init_screen(f: &mut Frame, area: Rect) {
-    let big_text = BigText::builder()
-        .alignment(Alignment::Center)
-        .pixel_size(PixelSize::Full)
-        .lines(vec!["AIT".into()])
-        .build();
-    let centered_area = center_rect(area, Constraint::Length(26), Constraint::Length(8)); // 3 8x8
+fn render_init_screen(f: &mut Frame, area: Rect, is_loading_models: bool) {
+    let big_text = if is_loading_models {
+        BigText::builder()
+            .alignment(Alignment::Center)
+            .pixel_size(PixelSize::Quadrant)
+            .lines(vec!["Loading models...".into()])
+            .build()
+    } else {
+        BigText::builder()
+            .alignment(Alignment::Center)
+            .pixel_size(PixelSize::Full)
+            .lines(vec!["AIT".into()])
+            .build()
+    };
+    let centered_area = center_rect(area, Constraint::Length(120), Constraint::Length(8)); // 3 8x8
     // characters
     f.render_widget(big_text, centered_area);
 }
@@ -543,7 +551,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             if !app.messages.is_empty() {
                 render_messages(f, app, messages_area);
             } else {
-                render_init_screen(f, messages_area);
+                render_init_screen(f, messages_area, app.is_loading_models);
             }
         }
         AppMode::Editing => {

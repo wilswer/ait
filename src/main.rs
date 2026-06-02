@@ -64,7 +64,6 @@ Context:
     let (action_tx, mut action_rx) = mpsc::channel(32);
 
     let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
-    let mut first_frame = true;
 
     // Start the main loop.
     while app.running {
@@ -72,13 +71,13 @@ Context:
         tui.draw(&mut app)
             .context("Failed to render user interface")?;
 
-        if first_frame {
+        if app.is_loading_models {
             let models = get_models(ollama_host_url)
                 .await
                 .context("Failed to find models from providers")?;
             app.set_models(models);
             app.set_chat_list(None)?;
-            first_frame = false;
+            app.is_loading_models = false;
         }
 
         // 2. BLOCK FOR THE FIRST EVENT (Wait for user to do something)
