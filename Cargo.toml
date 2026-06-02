@@ -29,6 +29,5 @@ ratatui-textarea = "0.9"
 
 [profile.release]
 strip = true
-opt-level = "z"
 lto = true
 codegen-units = 1
