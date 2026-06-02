@@ -31,16 +31,7 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::Zai => "ZAI_API_KEY",
         AdapterKind::BigModel => "BIGMODEL_API_KEY",
         AdapterKind::Mimo => "MIMO_API_KEY",
-        AdapterKind::Aihubmix => todo!(),
-        AdapterKind::Moonshot => todo!(),
-        AdapterKind::Aliyun => todo!(),
-        AdapterKind::Baidu => todo!(),
-        AdapterKind::OllamaCloud => todo!(),
-        AdapterKind::Vertex => todo!(),
-        AdapterKind::GithubCopilot => todo!(),
-        AdapterKind::OpenCodeGo => todo!(),
-        AdapterKind::BedrockApi => todo!(),
-        AdapterKind::OpenRouter => todo!(),
+        _ => todo!(),
     }
 }
 
