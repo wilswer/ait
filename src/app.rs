@@ -183,7 +183,7 @@ impl Display for Message {
 /// Application result type.
 pub type AppResult<T> = Result<T>;
 
-pub const THINKING_EFFORTS: [&str; 4] = ["None", "Low", "Medium", "High"];
+pub const THINKING_EFFORTS: [&str; 6] = ["None", "Low", "Medium", "High", "XHigh", "Max"];
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ThinkingEffort {
