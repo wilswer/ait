@@ -129,6 +129,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
         },
         AppMode::ModelSelection => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('m') => {
+                app.reset_searchbar();
+                app.select_first_model();
                 app.set_app_mode(AppMode::Normal)
             }
             KeyCode::Char('h') | KeyCode::Left => app.select_no_model(),
@@ -136,11 +138,41 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('k') | KeyCode::Up => app.select_previous_model(),
             KeyCode::Char('g') | KeyCode::Home => app.select_first_model(),
             KeyCode::Char('G') | KeyCode::End => app.select_last_model(),
+            KeyCode::Char('/') => {
+                app.set_app_mode(AppMode::FilterModels);
+            }
             KeyCode::Enter => {
                 app.set_model();
+                app.reset_searchbar();
+                app.select_first_model();
                 app.set_app_mode(AppMode::Normal);
             }
             _ => {}
+        },
+        AppMode::FilterModels => match code {
+            KeyCode::Enter => {
+                app.set_model();
+                app.reset_searchbar();
+                app.select_first_model();
+                app.set_app_mode(AppMode::Normal);
+            }
+            KeyCode::Up => {
+                app.set_app_mode(AppMode::ModelSelection);
+                app.select_previous_model();
+            }
+            KeyCode::Down => {
+                app.set_app_mode(AppMode::ModelSelection);
+                app.select_next_model();
+            }
+            KeyCode::Esc => {
+                app.reset_searchbar();
+                app.select_first_model();
+                app.set_app_mode(AppMode::ModelSelection);
+            }
+            _ => {
+                app.search_bar.input(key_event);
+                app.select_first_model();
+            }
         },
         AppMode::ThinkingEffortSelection => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('e') => {

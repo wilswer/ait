@@ -145,6 +145,30 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     .split(popup_layout[1])[1]
 }
 
+fn centered_rects_with_search(percent_x: u16, percent_y: u16, r: Rect) -> (Rect, Rect) {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Length(3),
+        Constraint::Fill(1),
+    ])
+    .split(r);
+
+    let main_rect = Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1])[1];
+    let search_rect = Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[2])[1];
+    (main_rect, search_rect)
+}
+
 fn right_aligned_rect(r: Rect, p: u16) -> Rect {
     Layout::horizontal([Constraint::Percentage(100 - p), Constraint::Fill(1)]).split(r)[1]
 }
@@ -523,7 +547,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     };
 
     let searchbar_constraint = match app.app_mode {
-        AppMode::FilterHistory => Constraint::Max(3),
+        AppMode::FilterHistory => Constraint::Length(3),
         _ => Constraint::Length(0),
     };
 
@@ -551,9 +575,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
             f.render_widget(&app.input_textarea, input_area);
         }
         AppMode::ModelSelection => {
-            let area = centered_rect(40, 50, messages_area);
+            let (area, _) = centered_rects_with_search(40, 50, messages_area);
             render_popup(f, Block::bordered().title("Select Model"), area);
             render_model_list(f, area, app);
+        }
+        AppMode::FilterModels => {
+            let (area, search_area) = centered_rects_with_search(40, 50, messages_area);
+            render_popup(f, Block::bordered().title("Select Model"), area);
+            render_model_list(f, area, app);
+            f.render_widget(&app.search_bar, search_area);
         }
         AppMode::ThinkingEffortSelection => {
             let area = centered_rect(30, 30, messages_area);
@@ -650,6 +680,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Press ".into(),
                 "Up/Down".bold(),
                 " to select model, or press ".into(),
+                "/".bold(),
+                " to search models by name, or press ".into(),
                 "Enter".bold(),
                 " to select model, which immediately enters 'editing' mode.".into(),
             ];
@@ -793,11 +825,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
             vec![
                 "Navigate: ".into(),
                 "j/k or Up/Down".bold(),
-                ". Press ".into(),
+                ". ".into(),
                 "Enter".bold(),
                 " to select model. ".into(),
+                "/".bold(),
+                " to search. ".into(),
                 "Esc/q".bold(),
                 " to cancel.".into(),
+            ]
+        }
+        AppMode::FilterModels => {
+            vec![
+                "Type to filter. ".into(),
+                "Up/Down".bold(),
+                " to navigate. ".into(),
+                "Enter".bold(),
+                " to select model. ".into(),
+                "Esc".bold(),
+                " to clear filter.".into(),
             ]
         }
         AppMode::ShowHistory => {
@@ -891,7 +936,11 @@ fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
         f.render_widget(p, area);
         return;
     }
-    let items: Vec<ListItem> = app.model_list.items.iter().map(ListItem::from).collect();
+    let indices = app.filtered_model_indices();
+    let items: Vec<ListItem> = indices
+        .iter()
+        .map(|&i| ListItem::from(&app.model_list.items[i]))
+        .collect();
     f.render_stateful_widget(styled_list(items, block), area, &mut app.model_list.state);
 }
 

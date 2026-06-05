@@ -236,6 +236,7 @@ pub enum AppMode {
     Normal,
     Editing,
     ModelSelection,
+    FilterModels,
     ThinkingEffortSelection,
     SnippetSelection,
     ShowHistory,
@@ -743,14 +744,43 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Returns indices into `model_list.items` that match the current search bar
+    /// query. When the query is empty, returns all indices.
+    pub fn filtered_model_indices(&self) -> Vec<usize> {
+        let query = self
+            .search_bar
+            .lines()
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let query_lower = query.to_lowercase();
+        if query_lower.is_empty() {
+            return (0..self.model_list.items.len()).collect();
+        }
+        self.model_list
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                format!("{}: {}", item.provider, item.name)
+                    .to_lowercase()
+                    .contains(&query_lower)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// Changes the status of the selected list item
     pub fn set_model(&mut self) {
-        if let Some(i) = self.model_list.state.selected() {
+        let indices = self.filtered_model_indices();
+        if let Some(sel) = self.model_list.state.selected()
+            && let Some(&actual_idx) = indices.get(sel)
+        {
             for item in self.model_list.items.iter_mut() {
                 item.selected = false;
             }
-            self.model_list.items[i].selected = true;
-            self.selected_model_name = self.model_list.items[i].name.to_string();
+            self.model_list.items[actual_idx].selected = true;
+            self.selected_model_name = self.model_list.items[actual_idx].name.to_string();
         }
     }
 
