@@ -22,6 +22,7 @@ enum Action {
     StreamComplete(String),
     StreamCancelled(String),
     Error(String),
+    ModelsLoaded(Vec<(String, String)>),
 }
 
 #[tokio::main]
@@ -50,7 +51,6 @@ Context:
     } else {
         cli.system_prompt.clone()
     };
-    let ollama_host_url = cli.ollama_host.as_deref();
     let mut app = App::new(&system_prompt);
 
     // Initialize the terminal user interface.
@@ -72,12 +72,23 @@ Context:
             .context("Failed to render user interface")?;
 
         if app.is_loading_models {
-            let models = get_models(ollama_host_url)
-                .await
-                .context("Failed to find models from providers")?;
-            app.set_models(models);
-            app.set_chat_list(None)?;
             app.is_loading_models = false;
+
+            let tx = action_tx.clone();
+            let ollama_host_url = cli.ollama_host.clone();
+
+            task::spawn(async move {
+                match get_models(ollama_host_url.as_deref()).await {
+                    Ok(models) => {
+                        let _ = tx.send(Action::ModelsLoaded(models)).await;
+                    }
+                    Err(e) => {
+                        let _ = tx
+                            .send(Action::Error(format!("Failed to find models: {}", e)))
+                            .await;
+                    }
+                }
+            });
         }
 
         // 2. BLOCK FOR THE FIRST EVENT (Wait for user to do something)
@@ -270,6 +281,10 @@ Context:
                     app.set_app_mode(AppMode::Notify {
                         notification: Notification::Error(err_msg),
                     });
+                }
+                Action::ModelsLoaded(models) => {
+                    app.set_models(models);
+                    app.set_chat_list(None)?;
                 }
             }
         }
