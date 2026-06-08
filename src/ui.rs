@@ -576,27 +576,27 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
         AppMode::ModelSelection => {
             let (area, _) = centered_rects_with_search(40, 50, messages_area);
-            render_popup(f, Block::bordered().title("Select Model"), area);
+            render_popup(f, "Select Model", area);
             render_model_list(f, area, app);
         }
         AppMode::FilterModels => {
             let (area, search_area) = centered_rects_with_search(40, 50, messages_area);
-            render_popup(f, Block::bordered().title("Select Model"), area);
+            render_popup(f, "Select Model", area);
             render_model_list(f, area, app);
             f.render_widget(&app.search_bar, search_area);
         }
         AppMode::ThinkingEffortSelection => {
             let area = centered_rect(30, 30, messages_area);
-            render_popup(f, Block::bordered().title("Select Thinking Effort"), area);
+            render_popup(f, "Select Thinking Effort", area);
             render_thinking_effort_list(f, area, app);
         }
         AppMode::SnippetSelection => {
             let area = left_aligned_rect(messages_area, 25);
-            render_popup(f, Block::bordered().title("Select Snippet"), area);
+            render_popup(f, "Select Snippet", area);
             render_snippet_list(f, area, app);
 
             let preview_area = right_aligned_rect(messages_area, 75);
-            render_popup(f, Block::bordered().title("Snippet Preview"), preview_area);
+            render_popup(f, "Snippet Preview", preview_area);
             if let Some(snippet) = app.get_snippet() {
                 let snippet_text = if let Some(lang) = &snippet.language {
                     Text::from(create_highlighted_code(
@@ -623,11 +623,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
         AppMode::Help => {
             let area = centered_rect(50, 60, messages_area);
-            render_popup(
-                f,
-                Block::bordered().title("Help - Use j/k or Up/Down to scroll"),
-                area,
-            );
+            render_popup(f, "Help - Use j/k or Up/Down to scroll", area);
 
             let normal_keys = vec![
                 "Press ".into(),
@@ -776,17 +772,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
         AppMode::ExploreFiles => {
             let area = centered_rect(80, 60, messages_area);
-            render_popup(f, Block::bordered().title("Select File"), area);
+            render_popup(f, "Select File", area);
             render_file_explorer(f, area, app);
         }
         AppMode::ShowContext => {
             let area = centered_rect(80, 60, messages_area);
-            render_popup(f, Block::bordered().title("Files Added to Context"), area);
+            render_popup(f, "Files Added to Context", area);
             render_context_list(f, area, app);
         }
         AppMode::Notify { notification } => {
             let area = centered_rect(40, 40, messages_area);
-            render_popup(f, Block::bordered().title("Notification"), area);
+            render_popup(f, "Notification", area);
             render_notification(f, area, notification);
         }
     }
@@ -919,7 +915,8 @@ fn styled_list<'a>(items: Vec<ListItem<'a>>, block: Block<'a>) -> List<'a> {
         .highlight_spacing(HighlightSpacing::Always)
 }
 
-fn render_popup(f: &mut Frame, block: Block, area: Rect) {
+fn render_popup(f: &mut Frame, title: &str, area: Rect) {
+    let block = Block::bordered().title(title);
     f.render_widget(Clear, area);
     f.render_widget(block, area);
 }
@@ -994,11 +991,11 @@ fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
 
 fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) {
     let area = left_aligned_rect(messages_area, 25);
-    render_popup(f, Block::bordered().title("Select Chat"), area);
+    render_popup(f, "Select Chat", area);
     render_chat_history_list(f, area, app);
 
     let preview_area = right_aligned_rect(messages_area, 75);
-    render_popup(f, Block::bordered().title("Chat Preview"), preview_area);
+    render_popup(f, "Chat Preview", preview_area);
 
     let preview_text = app.get_selected_chat_id().map(|id| {
         list_all_messages(*id)
