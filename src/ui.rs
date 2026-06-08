@@ -830,7 +830,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to cancel.".into(),
             ]
         }
-        AppMode::FilterModels => {
+        AppMode::FilterModels | AppMode::FilterHistory => {
             vec![
                 "Type to filter. ".into(),
                 "Up/Down".bold(),
