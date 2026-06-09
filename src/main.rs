@@ -71,26 +71,6 @@ Context:
         tui.draw(&mut app)
             .context("Failed to render user interface")?;
 
-        if app.is_loading_models {
-            app.is_loading_models = false;
-
-            let tx = action_tx.clone();
-            let ollama_host_url = cli.ollama_host.clone();
-
-            task::spawn(async move {
-                match get_models(ollama_host_url.as_deref()).await {
-                    Ok(models) => {
-                        let _ = tx.send(Action::ModelsLoaded(models)).await;
-                    }
-                    Err(e) => {
-                        let _ = tx
-                            .send(Action::Error(format!("Failed to find models: {}", e)))
-                            .await;
-                    }
-                }
-            });
-        }
-
         // 2. BLOCK FOR THE FIRST EVENT (Wait for user to do something)
         let mut maybe_event = Some(
             tui.events
@@ -131,6 +111,26 @@ Context:
                 Some(Ok(next_event)) => Some(next_event),
                 _ => None, // Queue is empty, move on to drawing/AI
             };
+        }
+
+        if app.is_loading_models {
+            app.is_loading_models = false;
+
+            let tx = action_tx.clone();
+            let ollama_host_url = cli.ollama_host.clone();
+
+            task::spawn(async move {
+                match get_models(ollama_host_url.as_deref()).await {
+                    Ok(models) => {
+                        let _ = tx.send(Action::ModelsLoaded(models)).await;
+                    }
+                    Err(e) => {
+                        let _ = tx
+                            .send(Action::Error(format!("Failed to find models: {}", e)))
+                            .await;
+                    }
+                }
+            });
         }
 
         if app.needs_recache {
