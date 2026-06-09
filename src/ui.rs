@@ -519,8 +519,7 @@ fn render_init_screen(f: &mut Frame, area: Rect) {
         .pixel_size(PixelSize::Full)
         .lines(vec!["AIT".into()])
         .build();
-    let centered_area = center_rect(area, Constraint::Length(120), Constraint::Length(8)); // 3 8x8
-    // characters
+    let centered_area = center_rect(area, Constraint::Length(24), Constraint::Length(8)); // 3 8x8 characters
     f.render_widget(big_text, centered_area);
 }
 pub fn render(f: &mut Frame, app: &mut App) {
