@@ -25,6 +25,73 @@ enum Action {
     ModelsLoaded(Vec<(String, String)>),
 }
 
+/// Handle a single terminal event (key/mouse/tick/resize).
+fn handle_event(
+    event: Event,
+    app: &mut App,
+    current_cancel_tx: &mut Option<mpsc::Sender<()>>,
+) -> AppResult<()> {
+    match event {
+        Event::Tick => app.tick(),
+        Event::Key(key_event) => {
+            if key_event.code == crossterm::event::KeyCode::Char('u')
+                && app.app_mode == AppMode::Normal
+            {
+                // If we have an active stream, send the cancel signal
+                if let Some(tx) = current_cancel_tx.take() {
+                    let _ = tx.try_send(());
+                }
+            }
+            handle_key_events(key_event, app).context("Error handling key events")?;
+        }
+        Event::Mouse(mouse_event) => {
+            handle_mouse_events(mouse_event, app)?;
+        }
+        Event::Resize(x, y) => {
+            app.set_terminal_size(x, y);
+            app.needs_recache = true;
+        }
+    }
+    Ok(())
+}
+
+/// Handle a single async action coming back from a spawned task.
+async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
+    match action {
+        Action::StreamStart => {
+            app.receive_incomplete_message("").await?;
+        }
+        Action::StreamPartial(content) => {
+            app.is_streaming = true;
+            app.is_waiting_for_response = false;
+            app.receive_incomplete_message(&content).await?;
+        }
+        Action::StreamComplete(content) => {
+            app.is_streaming = false;
+            app.receive_message(Message::Assistant(content)).await?;
+        }
+        Action::StreamCancelled(content) => {
+            app.is_streaming = false;
+            app.is_waiting_for_response = false;
+            // Persist whatever portion of the message was generated before stopping
+            app.receive_message(Message::Assistant(content)).await?;
+        }
+        Action::Error(err_msg) => {
+            app.is_waiting_for_response = false;
+            app.has_unprocessed_messages = false;
+            app.is_streaming = false;
+            app.set_app_mode(AppMode::Notify {
+                notification: Notification::Error(err_msg),
+            });
+        }
+        Action::ModelsLoaded(models) => {
+            app.set_models(models);
+            app.set_chat_list(None)?;
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> AppResult<()> {
     let cli = Cli::parse();
@@ -67,51 +134,35 @@ Context:
 
     // Start the main loop.
     while app.running {
-        // 1. DRAW ONLY ONCE PER BATCH
+        // 1. DRAW ONCE PER ITERATION
         tui.draw(&mut app)
             .context("Failed to render user interface")?;
 
-        // 2. BLOCK FOR THE FIRST EVENT (Wait for user to do something)
-        let mut maybe_event = Some(
-            tui.events
-                .next()
-                .await
-                .context("Unable to get next event")?,
-        );
+        // 2. WAIT for EITHER a terminal event OR an async action.
+        tokio::select! {
+            // --- Terminal events ---
+            maybe_event = tui.events.next() => {
+                let event = maybe_event.context("Unable to get next event")?;
+                handle_event(event, &mut app, &mut current_cancel_tx)?;
 
-        // 3. DRAIN THE QUEUE: Process the blocking event, and any others that arrived immediately behind it
-        while let Some(event) = maybe_event {
-            match event {
-                Event::Tick => app.tick(),
-                Event::Key(key_event) => {
-                    if key_event.code == crossterm::event::KeyCode::Char('u')
-                        && app.app_mode == AppMode::Normal
-                    {
-                        // If we have an active stream, send the cancel signal
-                        if let Some(tx) = current_cancel_tx.take() {
-                            let _ = tx.try_send(());
-                        }
-                    }
-
-                    handle_key_events(key_event, &mut app).context("Error handling key events")?;
-                }
-                Event::Mouse(mouse_event) => {
-                    handle_mouse_events(mouse_event, &mut app)?;
-                }
-                Event::Resize(x, y) => {
-                    app.set_terminal_size(x, y);
-                    app.needs_recache = true;
+                // Drain any terminal events that arrived immediately behind it.
+                while let Some(Ok(next_event)) = tui.events.next().now_or_never() {
+                    handle_event(next_event, &mut app, &mut current_cancel_tx)?;
                 }
             }
 
-            // 4. Check if there are more events instantly available.
-            // now_or_never() evaluates the async next() method instantly.
-            // If there's an event, it loops again. If the queue is empty, it breaks.
-            maybe_event = match tui.events.next().now_or_never() {
-                Some(Ok(next_event)) => Some(next_event),
-                _ => None, // Queue is empty, move on to drawing/AI
-            };
+            // --- Async actions from spawned tasks ---
+            Some(action) = action_rx.recv() => {
+                handle_action(action, &mut app).await?;
+
+                // Drain any other actions already queued up.
+                while let Ok(action) = action_rx.try_recv() {
+                    handle_action(action, &mut app).await?;
+                }
+            }
         }
+
+        // 3. POST-EVENT WORK (runs after either branch wakes us up)
 
         if app.is_loading_models {
             app.is_loading_models = false;
@@ -175,10 +226,8 @@ Context:
                         let mut full_thinking_content = String::new();
                         let _ = tx.send(Action::StreamStart).await;
 
-                        // Use tokio::select! to listen for chunks OR a cancellation signal
                         loop {
                             tokio::select! {
-                                // Listens for our cancel signal
                                 _ = cancel_rx.recv() => {
                                     let all_content = if !full_thinking_content.is_empty() {
                                         format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
@@ -212,7 +261,6 @@ Context:
                                                         let _ = tx.send(Action::StreamComplete(full)).await;
                                                     }
                                                 }
-                                                // Start, empty chunks, and unhandled End events will all cleanly fall through here
                                                 _ => {}
                                             }
 
@@ -230,7 +278,6 @@ Context:
                                             break;
                                         }
                                         None => {
-                                            // Stream is finished naturally
                                             let all_content = if !full_thinking_content.is_empty() {
                                                 format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
                                             } else {
@@ -245,50 +292,13 @@ Context:
                         }
                     }
                     Err(e) => {
-                        // API Connection failed
                         let _ = tx.send(Action::Error(format!("API Error: {}", e))).await;
                     }
                 }
             });
         }
-
-        // --- 2. HANDLING THE RESULTS ---
-        while let Ok(action) = action_rx.try_recv() {
-            match action {
-                Action::StreamStart => {
-                    app.receive_incomplete_message("").await?;
-                }
-                Action::StreamPartial(content) => {
-                    app.is_streaming = true;
-                    app.is_waiting_for_response = false;
-                    app.receive_incomplete_message(&content).await?;
-                }
-                Action::StreamComplete(content) => {
-                    app.is_streaming = false;
-                    app.receive_message(Message::Assistant(content)).await?;
-                }
-                // 6. Handle the StreamCancelled action
-                Action::StreamCancelled(content) => {
-                    app.is_streaming = false;
-                    app.is_waiting_for_response = false;
-                    // Persist whatever portion of the message was generated before stopping
-                    app.receive_message(Message::Assistant(content)).await?;
-                }
-                Action::Error(err_msg) => {
-                    app.is_waiting_for_response = false;
-                    app.has_unprocessed_messages = false;
-                    app.is_streaming = false;
-                    app.set_app_mode(AppMode::Notify {
-                        notification: Notification::Error(err_msg),
-                    });
-                }
-                Action::ModelsLoaded(models) => {
-                    app.set_models(models);
-                    app.set_chat_list(None)?;
-                }
-            }
-        }
     }
+
     // Exit the user interface.
     tui.exit().context("Failed during application shutdown")?;
     Ok(())
