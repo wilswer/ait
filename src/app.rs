@@ -747,12 +747,7 @@ impl<'a> App<'a> {
     /// Returns indices into `model_list.items` that match the current search bar
     /// query. When the query is empty, returns all indices.
     pub fn filtered_model_indices(&self) -> Vec<usize> {
-        let query = self
-            .search_bar
-            .lines()
-            .first()
-            .cloned()
-            .unwrap_or_default();
+        let query = self.search_bar.lines().first().cloned().unwrap_or_default();
         let query_lower = query.to_lowercase();
         if query_lower.is_empty() {
             return (0..self.model_list.items.len()).collect();

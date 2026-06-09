@@ -522,6 +522,7 @@ fn render_init_screen(f: &mut Frame, area: Rect) {
     let centered_area = center_rect(area, Constraint::Length(24), Constraint::Length(8)); // 3 8x8 characters
     f.render_widget(big_text, centered_area);
 }
+
 pub fn render(f: &mut Frame, app: &mut App) {
     let title = format!("AI in the Terminal (AIT v{})", env!("CARGO_PKG_VERSION"));
     let main_block = Block::bordered()

@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui_explorer::Input;
 
-use crate::app::{get_file_content, App, AppMode, AppResult, Notification, RECACHE_COOLDOWN};
+use crate::app::{App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, get_file_content};
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {

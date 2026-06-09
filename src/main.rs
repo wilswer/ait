@@ -1,5 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
+use crossterm::event::EnableMouseCapture;
+use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use futures::{FutureExt, StreamExt};
 use genai::chat::{ChatStreamEvent, StreamChunk, StreamEnd};
 use ratatui::Terminal;
@@ -122,15 +124,23 @@ Context:
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
-    let terminal = Terminal::new(backend).context("Failed to create terminal")?;
+    let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
+
+    // Extra initialization.
+    enable_raw_mode()?;
+    crossterm::execute!(std::io::stderr(), EnterAlternateScreen, EnableMouseCapture)?;
+    terminal.hide_cursor()?;
+    terminal.clear()?;
+
+    // Find the terminal size.
     app.set_terminal_size(terminal.size()?.width, terminal.size()?.height);
+
     let events = EventHandler::new(100);
+    let (action_tx, mut action_rx) = mpsc::channel(32);
+    let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
+
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
-
-    let (action_tx, mut action_rx) = mpsc::channel(32);
-
-    let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
 
     // Start the main loop.
     while app.running {
