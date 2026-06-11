@@ -26,6 +26,8 @@ textwrap = "0.16"
 tokio = { version = "1", features = ["full"] }
 tui-big-text = "0.8"
 ratatui-textarea = "0.9"
+tiktoken-rs = "0.12"
+pathdiff = "0.2.3"
 
 [profile.release]
 strip = true

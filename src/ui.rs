@@ -1,7 +1,13 @@
+use std::env;
+
+use pathdiff::diff_paths;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Flex, Layout, Margin, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{
+        Color::{self, DarkGray},
+        Modifier, Style, Stylize,
+    },
     text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Borders, Clear, FrameExt, HighlightSpacing, List, ListItem, Padding,
@@ -776,7 +782,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_file_explorer(f, area, app);
         }
         AppMode::ShowContext => {
-            let area = centered_rect(80, 60, messages_area);
+            let area = centered_rect(40, 40, messages_area);
             render_popup(f, "Files Added to Context", area);
             render_context_list(f, area, app);
         }
@@ -1041,18 +1047,65 @@ fn render_file_explorer(f: &mut Frame, area: Rect, app: &mut App) {
     );
 }
 
+fn get_color(count: usize) -> Color {
+    if count < 10000 {
+        Color::Green
+    } else if count < 50000 {
+        Color::Yellow
+    } else {
+        Color::Red
+    }
+}
+
 fn render_context_list(f: &mut Frame, area: Rect, app: &mut App) {
     if let Some(context) = &app.current_context {
         let text_block = Block::new().padding(Padding::uniform(1));
 
-        let msg: Vec<Line<'_>> = context
+        let current_dir = env::current_dir().ok();
+
+        let mut msg: Vec<Line<'_>> = context
             .iter()
-            .map(|f| Line::from(f.path.to_string_lossy()))
+            .map(|item| {
+                let path = current_dir
+                    .as_ref()
+                    .and_then(|base| diff_paths(&item.file.path, base))
+                    .unwrap_or_else(|| item.file.path.clone());
+
+                let (tok_str, tok_color) = if let Some(count) = item.est_tokens {
+                    (format!("{count}"), get_color(count))
+                } else {
+                    ("N/A".to_string(), Color::DarkGray)
+                };
+
+                Line::from(vec![
+                    Span::raw(format!("File: {}, Est. tokens: ", path.to_string_lossy())),
+                    Span::styled(tok_str, Style::default().fg(tok_color)),
+                ])
+            })
             .collect();
+
+        let total_tokens: usize = context.iter().filter_map(|item| item.est_tokens).sum();
+
+        msg.push(Line::raw("")); // Blank line for visual spacing
+
+        msg.push(Line::from(vec![
+            Span::styled(
+                "Total Est. tokens: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{total_tokens}"),
+                Style::default()
+                    .fg(get_color(total_tokens))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
         let text = Text::from(msg).patch_style(Style::default());
         let context_text = Paragraph::new(text)
             .block(text_block)
             .wrap(Wrap { trim: true });
+
         f.render_widget(context_text, area);
     };
 }
@@ -1064,6 +1117,25 @@ fn render_notification(f: &mut Frame, area: Rect, notification: &Notification) {
         Notification::Error(message) => {
             Text::from(message.clone()).patch_style(Style::default().fg(Color::Red))
         }
+        Notification::TokenEstimate(info) => match info {
+            (Some(count), info_text) => {
+                let (tok_str, tok_color) = (format!("{count}"), get_color(*count));
+                Text::from(vec![
+                    Line::raw(info_text),
+                    Line::from(vec![
+                        Span::raw("Est. token usage: "),
+                        Span::styled(tok_str, Style::default().fg(tok_color)),
+                    ]),
+                ])
+            }
+            (None, info_text) => Text::from(vec![
+                Line::raw(info_text),
+                Line::styled(
+                    "Could not estimate token usage.",
+                    Style::default().fg(DarkGray),
+                ),
+            ]),
+        },
     };
     let context_text = Paragraph::new(text)
         .block(text_block)

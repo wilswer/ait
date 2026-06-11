@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -62,6 +63,15 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             }
             KeyCode::Char('c') => {
                 app.set_app_mode(AppMode::ShowContext);
+            }
+            KeyCode::Char('p') => {
+                let token_count = app.estimate_messages_tokens();
+                app.set_app_mode(AppMode::Notify {
+                    notification: Notification::TokenEstimate((
+                        Some(token_count),
+                        "Conversation token est.".to_string(),
+                    )),
+                });
             }
             KeyCode::Char('e') => {
                 app.thinking_effort_state
@@ -215,14 +225,23 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 let current_file = app.file_explorer.current();
                 if current_file.is_file() {
                     let current_name = current_file.name.to_string();
-                    let is_valid_file = get_file_content(current_file).is_ok()
+                    let file_result = get_file_content(current_file);
+                    let is_valid_file = file_result.is_ok()
                         || [".png", ".jpg", ".pdf"]
                             .iter()
                             .any(|ext| current_name.ends_with(ext));
 
                     let notification = if is_valid_file {
+                        let token_count = if let Ok(file_content) = file_result {
+                            Some(app.estimate_tokens(file_content.deref()))
+                        } else {
+                            None
+                        };
                         app.add_to_context(current_file.clone());
-                        Notification::Info(format!("File {} added to context!", current_name))
+                        Notification::TokenEstimate((
+                            token_count,
+                            format!("File {} added to context!", current_name),
+                        ))
                     } else {
                         Notification::Error(format!(
                             "Could not add file {} to context.",
@@ -241,14 +260,6 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                     )),
                 })
             }
-            _ => {}
-        },
-        AppMode::ShowContext => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.set_app_mode(AppMode::Normal),
-            _ => {}
-        },
-        AppMode::Notify { notification: _ } => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.set_app_mode(AppMode::Normal),
             _ => {}
         },
         AppMode::Help => match key_event.code {
@@ -293,6 +304,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 let query_filter = app.search_bar.lines().first().cloned();
                 app.set_chat_list(query_filter)?;
             }
+        },
+        AppMode::Notify { notification: _ } | AppMode::ShowContext => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.set_app_mode(AppMode::Normal),
+            _ => {}
         },
     }
     Ok(())

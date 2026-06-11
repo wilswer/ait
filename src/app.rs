@@ -18,6 +18,7 @@ use ratatui::{
 };
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
+use tiktoken_rs::cl100k_base;
 
 use crate::ui::messages_to_lines;
 use crate::{
@@ -33,6 +34,12 @@ use crate::{
 use crate::{models::ModelList, snippets::SnippetList};
 
 pub const RECACHE_COOLDOWN: u64 = 250;
+
+fn estimate_tokens(text: &str) -> AppResult<usize> {
+    let bpe = cl100k_base()?;
+    let base_count = bpe.encode_ordinary(text).len();
+    Ok(base_count)
+}
 
 pub fn get_file_content(file: &File) -> io::Result<Cow<'_, str>> {
     // If the path is a file, read its content.
@@ -249,6 +256,7 @@ pub enum AppMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Notification {
+    TokenEstimate((Option<usize>, String)),
     Info(String),
     Error(String),
 }
@@ -257,6 +265,12 @@ pub enum Notification {
 pub struct TerminalSize {
     pub width: u16,
     pub height: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextContent {
+    pub file: File,
+    pub est_tokens: Option<usize>,
 }
 
 /// App holds the state of the application
@@ -315,7 +329,7 @@ pub struct App<'a> {
     /// File explorer
     pub file_explorer: FileExplorer,
     /// Current context
-    pub current_context: Option<Vec<File>>,
+    pub current_context: Option<Vec<ContextContent>>,
     /// Search bar.
     pub search_bar: TextArea<'a>,
     /// Toggle for syntax highlighting.
@@ -371,7 +385,10 @@ impl Default for App<'_> {
             is_streaming: false,
             is_waiting_for_response: false,
             spinner_frame: 0,
-            file_explorer: FileExplorerBuilder::build_with_theme(get_theme())
+            file_explorer: FileExplorerBuilder::default()
+                .show_hidden(true)
+                .theme(get_theme())
+                .build()
                 .expect("Could not construct file explorer."),
             current_context: None,
             search_bar: styled_textarea("Search"),
@@ -425,6 +442,21 @@ impl<'a> App<'a> {
                 self.theme.clone(),
             ));
         }
+    }
+
+    /// Returns an estimate for token usage of all messages sent and receved from the LLM.
+    pub fn estimate_messages_tokens(&self) -> usize {
+        let count: usize = self
+            .messages
+            .iter()
+            .map(|m| estimate_tokens(&m.to_string()).unwrap_or(0))
+            .sum();
+        count
+    }
+
+    /// Estimate the tokens for the provided text.
+    pub fn estimate_tokens(&self, text: &str) -> usize {
+        estimate_tokens(text).unwrap_or(0)
     }
 
     pub fn next_theme(&mut self) {
@@ -483,19 +515,35 @@ impl<'a> App<'a> {
     }
 
     pub fn add_to_context(&mut self, new_context: File) {
+        let token_count = if let Ok(c) = get_file_content(&new_context) {
+            Some(estimate_tokens(c.as_ref()).unwrap_or(0))
+        } else {
+            None
+        };
         if let Some(mut current_context) = self.current_context.clone() {
-            if !current_context.contains(&new_context) {
-                current_context.push(new_context);
+            if !current_context
+                .iter()
+                .map(|c| c.file.to_owned())
+                .collect::<Vec<File>>()
+                .contains(&new_context)
+            {
+                current_context.push(ContextContent {
+                    file: new_context,
+                    est_tokens: token_count,
+                });
                 self.current_context = Some(current_context)
             }
         } else {
-            self.current_context = Some(vec![new_context]);
+            self.current_context = Some(vec![ContextContent {
+                file: new_context,
+                est_tokens: token_count,
+            }]);
         }
     }
 
     pub fn remove_from_context(&mut self, context: &File) {
         if let Some(mut current_context) = self.current_context.clone()
-            && let Some(idx) = current_context.iter().position(|f| f == context)
+            && let Some(idx) = current_context.iter().position(|f| &f.file == context)
         {
             current_context.remove(idx);
             self.current_context = Some(current_context)
@@ -565,8 +613,8 @@ impl<'a> App<'a> {
             let ps = SyntaxSet::load_defaults_newlines();
             let additional_context = "<context>\nINFO FOR LLMs\nThe user provided the following context, please use it (if relevant) when providing an answer:".to_string();
             content_parts.push(ContentPart::from_text(additional_context));
-            for file in context {
-                let extension = if let Some((_, extension)) = file.name.split_once(".") {
+            for c in context {
+                let extension = if let Some((_, extension)) = c.file.name.split_once(".") {
                     extension
                 } else {
                     ""
@@ -575,9 +623,9 @@ impl<'a> App<'a> {
                     "pdf" | "jpg" | "png" => {
                         content_parts.push(ContentPart::from_text(format!(
                             "\n---\nFile name: {}\nContent:\n<binary file>",
-                            &file.name
+                            &c.file.name
                         )));
-                        content_parts.push(ContentPart::from_binary_file(file.path.clone())?);
+                        content_parts.push(ContentPart::from_binary_file(c.file.path.clone())?);
                     }
                     _ => {
                         let syntax_name =
@@ -586,10 +634,10 @@ impl<'a> App<'a> {
                             } else {
                                 "Plain Text".to_string()
                             };
-                        let context_str = get_file_content(file)?;
+                        let context_str = get_file_content(&c.file)?;
                         content_parts.push(ContentPart::from_text(format!(
                             "\n---\nFile name: {}\nContent:\n```{}\n{}\n```",
-                            &file.name,
+                            &c.file.name,
                             syntax_name.to_lowercase(),
                             context_str
                         )));
