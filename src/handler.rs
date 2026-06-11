@@ -69,7 +69,7 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.set_app_mode(AppMode::Notify {
                     notification: Notification::TokenEstimate((
                         Some(token_count),
-                        "Conversation token est.".to_string(),
+                        "Estimated token usage for conversation.".to_string(),
                     )),
                 });
             }
