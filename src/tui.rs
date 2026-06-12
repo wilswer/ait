@@ -63,7 +63,14 @@ where
         self.terminal
             .hide_cursor()
             .context("Error when hiding terminal cursor")?;
-        self.terminal.clear().context("Could not clear terminal")?;
+        // Clear via a raw escape code instead of `Terminal::clear()`: the
+        // latter queries the cursor position (`ESC[6n`) and blocks on the
+        // reply, which deadlocks against the EventStream task that may
+        // already hold crossterm's internal event reader lock. The reply
+        // only arrives once the user generates an input event, so the UI
+        // would stay blank until the first key press.
+        crossterm::execute!(io::stderr(), terminal::Clear(terminal::ClearType::All))
+            .context("Could not clear terminal")?;
         Ok(())
     }
 
