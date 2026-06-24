@@ -5,15 +5,7 @@ use genai::{ClientBuilder, ClientConfig, ModelIden, ServiceTarget};
 
 use crate::app::{AppResult, Message, ThinkingEffort};
 
-pub const MODELS: [(&str, &str); 7] = [
-    ("OpenAI", "gpt-5-mini"),
-    ("OpenAI", "gpt-5-nano"),
-    ("Anthropic", "claude-haiku-4-5"),
-    ("Anthropic", "claude-sonnet-4-6"),
-    ("Anthropic", "claude-opus-4-6"),
-    ("Gemini", "gemini-3-pro-preview"),
-    ("Gemini", "gemini-3.1-pro-preview"),
-];
+pub const MODELS: [(&str, &str); 1] = [("Gemini", "gemini-3.1-pro-preview")];
 
 fn get_api_key_name(kind: &AdapterKind) -> &'static str {
     match kind {
