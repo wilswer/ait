@@ -405,9 +405,18 @@ impl Default for App<'_> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(system_prompt: &'a str) -> Self {
+    pub fn new(system_prompt: &'a str, default_model: String) -> Self {
+        let model_list = ModelList::from_iter(MODELS.map(|(provider, model)| {
+            if model == default_model {
+                (provider, model, true)
+            } else {
+                (provider, model, false)
+            }
+        }));
         Self {
             system_prompt,
+            selected_model_name: default_model,
+            model_list,
             ..Default::default()
         }
     }

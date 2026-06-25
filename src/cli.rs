@@ -9,8 +9,8 @@ use crossterm::tty::IsTty;
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// System prompt.
-    #[arg(short, long, default_value = "You are a helpful, friendly assistant.")]
-    pub system_prompt: String,
+    #[arg(short, long)]
+    pub system_prompt: Option<String>,
     /// Context input file path. If not provided, reads from stdin.
     #[arg(short, long)]
     context: Option<PathBuf>,

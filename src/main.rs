@@ -10,6 +10,7 @@ use tokio::task;
 use ait::ai::{assistant_response_streaming, get_models};
 use ait::app::{App, AppMode, AppResult, Message, Notification};
 use ait::cli::Cli;
+use ait::config::Config;
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
 use ait::storage::{create_db, migrate_db};
@@ -95,12 +96,14 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
 #[tokio::main]
 async fn main() -> AppResult<()> {
     let cli = Cli::parse();
-    create_db().context("Failed to create database")?;
-    migrate_db().context("Failed to migrate database")?;
 
-    // Create an application.
+    // Load configuration (falls back to defaults if not found)
+    let config = Config::load().unwrap_or_default();
+
+    // Read context (file or stdin)
     let maybe_context = cli.read().context("Could not read from file or stdin.")?;
 
+    // Resolve system prompt: CLI > Config > Default
     let system_prompt = if let Some(context) = maybe_context {
         if !context.is_empty() {
             format!(
@@ -113,12 +116,31 @@ Context:
     "#
             )
         } else {
-            cli.system_prompt.clone()
+            cli.system_prompt
+                .or(config.system_prompt)
+                .unwrap_or_else(|| "You are a helpful, friendly assistant.".to_string())
         }
     } else {
-        cli.system_prompt.clone()
+        cli.system_prompt
+            .or(config.system_prompt)
+            .unwrap_or_else(|| "You are a helpful, friendly assistant.".to_string())
     };
-    let mut app = App::new(&system_prompt);
+
+    // Resolve default model: Config > Default
+    let default_model = config
+        .default_model
+        .unwrap_or_else(|| "gemini-3.1-pro-preview".to_string());
+
+    // Resolve Ollama host: CLI > Config > Default
+    let resolved_ollama_host = cli
+        .ollama_host
+        .or(config.ollama_host)
+        .or_else(|| Some("http://localhost:11434/".to_string()));
+
+    create_db().context("Failed to create database")?;
+    migrate_db().context("Failed to migrate database")?;
+
+    let mut app = App::new(&system_prompt, default_model);
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
@@ -170,7 +192,7 @@ Context:
             app.is_loading_models = false;
 
             let tx = action_tx.clone();
-            let ollama_host_url = cli.ollama_host.clone();
+            let ollama_host_url = resolved_ollama_host.clone();
 
             task::spawn(async move {
                 match get_models(ollama_host_url.as_deref()).await {
@@ -199,7 +221,7 @@ Context:
             let messages = app.messages.clone();
             let selected_model = app.selected_model_name.clone();
             let thinking_effort = app.thinking_effort.clone();
-            let ollama_host_url = cli.ollama_host.clone();
+            let ollama_host_url = resolved_ollama_host.clone();
             let sys_prompt = if selected_model.starts_with("gpt") {
                 None
             } else {

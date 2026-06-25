@@ -1,10 +1,10 @@
 # AI in the Terminal
 
-`ait` is a terminal user interface for interacting with several
-generative large language models from multiple providers.
-It uses the [`genai`](https://github.com/jeremychone/rust-genai) crate to
-communicate with the model providers.
-The TUI is built using the [`ratatui`](https://ratatui.rs) crate.
+`ait` is a terminal user interface for interacting with several generative large
+language models from multiple providers. It uses the
+[`genai`](https://github.com/jeremychone/rust-genai) crate to communicate with
+the model providers. The TUI is built using the [`ratatui`](https://ratatui.rs)
+crate.
 
 ## Installation
 
@@ -16,7 +16,8 @@ cargo install ait
 
 ### Manual installation
 
-Clone this repository and `cd` to the `ait` directory and run the application using:
+Clone this repository and `cd` to the `ait` directory and run the application
+using:
 
 ```bash
 cargo run
@@ -30,16 +31,16 @@ cargo install --force --path .
 
 The binary name is `ait`.
 
-Binaries are also available for download under [Releases](https://github.com/wilswer/ait/releases).
+Binaries are also available for download under
+[Releases](https://github.com/wilswer/ait/releases).
 
 ## Usage
 
-The chat interface is modal and starts in the 'normal' mode.
-By pressing the `i` key text can be input into the text area.
-More information can be found by pressing the `?` key.
-To submit queries to the model providers, you either need to obtain an API key and
-set the appropriate environment variable OR you need a running
-[Ollama](https://ollama.com/) instance on `http://localhost:11434`.
+The chat interface is modal and starts in the 'normal' mode. By pressing the `i`
+key text can be input into the text area. More information can be found by
+pressing the `?` key. To submit queries to the model providers, you either need
+to obtain an API key and set the appropriate environment variable OR you need a
+running [Ollama](https://ollama.com/) instance on `http://localhost:11434`.
 
 To start the TUI simply run
 
@@ -81,22 +82,38 @@ yek my_dir | ait
 ## Chat history
 
 Chat history is stored as a `sqlite` database (facilitated by the
-[`rusqlite`](https://github.com/rusqlite/rusqlite) crate)
-in the platform's standard data directory:
+[`rusqlite`](https://github.com/rusqlite/rusqlite) crate) in the platform's
+standard data directory:
 
 - macOS: `~/Library/Application Support/ait/chats.db`
 - Linux: `~/.local/share/ait/chats.db`
 - Windows: `%APPDATA%\ait\chats.db`
 
-In addition, `ait` will store a log of the latest chat in the platform's cache directory:
+In addition, `ait` will store a log of the latest chat in the platform's cache
+directory:
 
 - macOS: `~/Library/Caches/ait/latest-chat.log`
 - Linux: `~/.cache/ait/latest-chat.log`
 - Windows: `%LOCALAPPDATA%\ait\latest-chat.log`
 
-I'm probably the only one using this tool but for users of `ait` version 0.5.1 and
-earlier, to keep your old database, simply copy it from the previous location:
+I'm probably the only one using this tool but for users of `ait` version 0.5.1
+and earlier, to keep your old database, simply copy it from the previous
+location:
 
 ```bash
 cp ~/.cache/ait/chats.db <new platform specific location according to list above>
 ```
+
+## Configuration
+
+AIT can be configured via a `config.toml` file. Please refer to this file for a
+[minimal example](./config.toml.example).
+
+This file should be stored in the platform specific location:
+
+- Linux: `$XDG_CONFIG_HOME` or `$HOME`/.config/ait/config.toml, e.g.,
+  /home/alice/.config/ait/config.toml
+- macOS: `$HOME`/Library/Application Support/ait, e.g.,
+  /Users/Alice/Library/Application Support/ait/config.toml
+- Windows: `{FOLDERID_RoamingAppData}\ait\config.toml`, e.g.,
+  C:\Users\Alice\AppData\Roaming\ait\config.toml
