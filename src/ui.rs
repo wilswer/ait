@@ -442,7 +442,7 @@ struct BubbleSkin {
 
 fn user_skin() -> BubbleSkin {
     BubbleSkin {
-        title: "You",
+        title: "User",
         align: BubbleAlign::Right,
         border: Style::default()
             .fg(Color::Yellow)
