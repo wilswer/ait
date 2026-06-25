@@ -562,10 +562,8 @@ impl<'a> App<'a> {
     }
 
     fn get_max_scroll(&self) -> AppResult<usize> {
-        let width = self
-            .size
-            .ok_or(anyhow!("Could not get terminal size"))?
-            .width;
+        let TerminalSize { width, height } =
+            self.size.ok_or(anyhow!("Could not get terminal size"))?;
         // Bubble lines are pre-wrapped to fit the chat block, and the chat
         // paragraph is rendered without wrapping, so the line count is simply
         // the number of generated lines.
@@ -574,7 +572,14 @@ impl<'a> App<'a> {
         } else {
             messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
         };
-        Ok(total_lines.saturating_sub(1))
+        let sub = if self.is_streaming {
+            (height - 4) as usize
+        } else if self.has_unprocessed_messages {
+            (height - 8) as usize
+        } else {
+            2
+        };
+        Ok(total_lines.saturating_sub(sub))
     }
 
     pub fn increment_vertical_scroll(&mut self) -> AppResult<()> {
@@ -614,8 +619,6 @@ impl<'a> App<'a> {
     }
 
     pub fn submit_message(&mut self) -> AppResult<()> {
-        self.scroll_to_bottom()
-            .context("Scrolling to bottom failed.")?;
         let text = self.input_textarea.lines().join("\n");
         if text.is_empty() {
             return Ok(());
@@ -688,6 +691,10 @@ impl<'a> App<'a> {
         }
         self.add_cached_lines(message.clone());
         self.messages.push(message);
+
+        self.scroll_to_bottom()
+            .context("Scrolling to bottom failed.")?;
+
         Ok(())
     }
 
@@ -731,11 +738,18 @@ impl<'a> App<'a> {
     }
 
     pub async fn receive_incomplete_message(&mut self, captured_content: &str) -> AppResult<()> {
+        // If we are already scrolled to the bottom, continue scrolling.
+        let do_scroll =
+            self.vertical_scroll == self.get_max_scroll().context("Could not get max scroll.")?;
         if captured_content.is_empty() {
             self.messages.push(Message::Assistant("".to_string()));
         }
         if let Some(Message::Assistant(last)) = self.messages.last_mut() {
             *last = captured_content.to_string();
+        }
+        if do_scroll {
+            self.scroll_to_bottom()
+                .context("Could not set max scroll in incomplete message.")?;
         }
         Ok(())
     }

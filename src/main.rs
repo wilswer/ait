@@ -63,8 +63,11 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
             app.receive_incomplete_message("").await?;
         }
         Action::StreamPartial(content) => {
-            app.is_streaming = true;
-            app.is_waiting_for_response = false;
+            if !app.is_streaming {
+                app.is_streaming = true;
+                app.scroll_to_bottom()?;
+                app.is_waiting_for_response = false;
+            }
             app.receive_incomplete_message(&content).await?;
         }
         Action::StreamComplete(content) => {
