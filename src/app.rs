@@ -14,7 +14,7 @@ use ratatui::{
     buffer::Buffer,
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, ListState},
 };
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
@@ -445,9 +445,11 @@ impl<'a> App<'a> {
 
     pub fn add_cached_lines(&mut self, message: Message) {
         if let Some(TerminalSize { width, height: _ }) = self.size {
+            // line width inside the chat block: terminal width minus the outer
+            // layout margins (2) and the chat block borders (2).
             self.cached_lines.extend(style_message(
                 message,
-                (width - 3) as usize,
+                width.saturating_sub(4) as usize,
                 self.theme.clone(),
             ));
         }
@@ -496,7 +498,7 @@ impl<'a> App<'a> {
             for message in messages {
                 self.cached_lines.extend(style_message(
                     message,
-                    (width - 3) as usize,
+                    width.saturating_sub(4) as usize,
                     self.theme.clone(),
                 ));
             }
@@ -564,12 +566,13 @@ impl<'a> App<'a> {
             .size
             .ok_or(anyhow!("Could not get terminal size"))?
             .width;
+        // Bubble lines are pre-wrapped to fit the chat block, and the chat
+        // paragraph is rendered without wrapping, so the line count is simply
+        // the number of generated lines.
         let total_lines = if !self.is_streaming && self.do_highlight {
-            Paragraph::new(self.cached_lines.clone())
-                .wrap(Wrap { trim: false })
-                .line_count(width)
+            self.cached_lines.len()
         } else {
-            messages_to_lines(&self.messages, width as usize).len()
+            messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
         };
         Ok(total_lines.saturating_sub(1))
     }
