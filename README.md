@@ -115,9 +115,5 @@ This file should be stored in the platform specific location:
   /home/alice/.config/ait/config.toml
 - macOS: `$HOME`/Library/Application Support/ait, e.g.,
   /Users/Alice/Library/Application Support/ait/config.toml
-<<<<<<< HEAD
-- Windows: `{FOLDERID_RoamingAppData}\ait\config.toml`, e.g.,
-=======
 - Windows: `{FOLDERID_RoamingAppData}`\ait\config.toml, e.g.,
->>>>>>> cf9d73e (feat(config): Configure app using `config.toml`)
   C:\Users\Alice\AppData\Roaming\ait\config.toml
