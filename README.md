@@ -1,12 +1,12 @@
 # AI in the Terminal
 
-<video src="./ait.mov" width="320" height="240" controls></video>
-
 `ait` is a terminal user interface for interacting with several generative large
 language models from multiple providers. It uses the
 [`genai`](https://github.com/jeremychone/rust-genai) crate to communicate with
 the model providers. The TUI is built using the [`ratatui`](https://ratatui.rs)
 crate.
+
+https://github.com/user-attachments/assets/4c60be00-7e1f-474b-ba97-ef513950d391
 
 ## Installation
 
