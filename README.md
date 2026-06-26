@@ -1,6 +1,6 @@
 # AI in the Terminal
 
-[AIT in action](./ait.mov)
+<video src="./ait.mov" width="320" height="240" controls></video>
 
 `ait` is a terminal user interface for interacting with several generative large
 language models from multiple providers. It uses the
