@@ -272,8 +272,7 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
         // Horizontal rule
         if is_separator(trimmed) {
             lines.push(
-                Line::from("─".repeat(width))
-                    .style(style.patch(Style::default().fg(Color::DarkGray))),
+                Line::from("─".repeat(3)).style(style.patch(Style::default().fg(Color::DarkGray))),
             );
             continue;
         }
