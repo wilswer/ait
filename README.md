@@ -6,6 +6,8 @@ language models from multiple providers. It uses the
 the model providers. The TUI is built using the [`ratatui`](https://ratatui.rs)
 crate.
 
+https://github.com/user-attachments/assets/4c60be00-7e1f-474b-ba97-ef513950d391
+
 ## Installation
 
 Installation requires `cargo` to be installed.

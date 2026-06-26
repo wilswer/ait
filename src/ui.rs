@@ -16,6 +16,7 @@ use ratatui::{
 };
 use syntect::highlighting::Theme;
 use tui_big_text::{BigText, PixelSize};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     app::{App, AppMode, Message, Notification, THINKING_EFFORTS, get_file_content},
@@ -308,12 +309,20 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
         if is_unordered {
             let item_text = &trimmed[2..];
             let bullet_prefix = format!("{}• ", " ".repeat(indent));
-            let mut spans = vec![Span::styled(
-                bullet_prefix,
-                style.patch(Style::default().fg(Color::DarkGray)),
-            )];
-            spans.extend(parse_inline_markdown(item_text, style));
-            lines.push(Line::from(spans));
+            let prefix_w = bullet_prefix.chars().count();
+            let avail = width.saturating_sub(prefix_w).max(1);
+            for (i, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+                let mut spans = if i == 0 {
+                    vec![Span::styled(
+                        bullet_prefix.clone(),
+                        style.patch(Style::default().fg(Color::DarkGray)),
+                    )]
+                } else {
+                    vec![Span::styled(" ".repeat(prefix_w), style)]
+                };
+                spans.extend(parse_inline_markdown(piece, style));
+                lines.push(Line::from(spans));
+            }
             continue;
         }
 
@@ -322,18 +331,28 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
         let is_ordered = num_end > 0 && trimmed[..num_end].chars().all(|c| c.is_ascii_digit());
         if is_ordered {
             let num_prefix = format!("{}{}. ", " ".repeat(indent), &trimmed[..num_end]);
+            let prefix_w = num_prefix.chars().count();
             let item_text = &trimmed[num_end + 2..];
-            let mut spans = vec![Span::styled(
-                num_prefix,
-                style.patch(Style::default().fg(Color::DarkGray)),
-            )];
-            spans.extend(parse_inline_markdown(item_text, style));
-            lines.push(Line::from(spans));
+            let avail = width.saturating_sub(prefix_w).max(1);
+            for (i, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+                let mut spans = if i == 0 {
+                    vec![Span::styled(
+                        num_prefix.clone(),
+                        style.patch(Style::default().fg(Color::DarkGray)),
+                    )]
+                } else {
+                    vec![Span::styled(" ".repeat(prefix_w), style)]
+                };
+                spans.extend(parse_inline_markdown(piece, style));
+                lines.push(Line::from(spans));
+            }
             continue;
         }
 
-        // Regular paragraph text
-        lines.push(Line::from(parse_inline_markdown(line, style)));
+        // Regular paragraph text (word-wrapped to the available width)
+        for piece in textwrap::wrap(line, width.max(1)) {
+            lines.push(Line::from(parse_inline_markdown(&piece, style)));
+        }
     }
 
     lines
@@ -354,7 +373,7 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                 } else {
                     style
                 };
-                lines.extend(render_markdown_lines(&mtext, width - 3, style));
+                lines.extend(render_markdown_lines(&mtext, width, style));
             }
             MessageSegment::Code {
                 language,
@@ -382,7 +401,7 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                             style,
                         )
                     } else {
-                        let wrapped = textwrap::wrap(&code, width - 3);
+                        let wrapped = textwrap::wrap(&code, width);
                         wrapped
                             .into_iter()
                             .map(|l| Line::from(Span::raw(l.into_owned())))
@@ -404,55 +423,205 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
     lines
 }
 
-pub fn style_message<'a>(message: Message, width: usize, theme: Theme) -> Vec<Line<'a>> {
-    let mut line_vec = Vec::new();
-    match message {
-        Message::User(_) => {
-            line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
-            line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-            line_vec.extend(process_code_blocks(message.to_string(), width, theme));
-            line_vec.push(Line::from(Span::raw("").bold().yellow()));
-        }
-        Message::Assistant(text) => {
-            line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-            line_vec.push(Line::from(Span::raw("---").bold().green()));
-            line_vec.extend(process_code_blocks(text, width, theme));
-            line_vec.push(Line::from(Span::raw("").bold().green()));
-        }
-    }
-    line_vec
+/// Percentage of the available line width a bubble may occupy at most.
+const BUBBLE_MAX_PERCENT: usize = 100;
+
+#[derive(Clone, Copy)]
+enum BubbleAlign {
+    Left,
+    Right,
 }
 
-pub fn messages_to_lines(messages: &[Message], width: usize) -> Vec<Line<'_>> {
+struct BubbleSkin {
+    title: &'static str,
+    align: BubbleAlign,
+    border: Style,
+}
+
+fn user_skin() -> BubbleSkin {
+    BubbleSkin {
+        title: "User",
+        align: BubbleAlign::Right,
+        border: Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    }
+}
+
+fn assistant_skin() -> BubbleSkin {
+    BubbleSkin {
+        title: "Assistant",
+        align: BubbleAlign::Left,
+        border: Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    }
+}
+
+/// Maximum width available for the *content* (text) inside a bubble, given the
+/// total width available for a rendered line.
+fn bubble_max_content_width(line_width: usize) -> usize {
+    let max_outer = line_width * BUBBLE_MAX_PERCENT / 100;
+    max_outer.saturating_sub(4 + 4)
+}
+
+/// Clip the given line to `width` display columns (preserving span styles) and
+/// pad it with spaces so the resulting spans are exactly `width` columns wide.
+fn fit_spans<'a>(line: &Line, width: usize) -> Vec<Span<'a>> {
+    let mut out: Vec<Span<'a>> = Vec::new();
+    let mut used = 0usize;
+    for span in &line.spans {
+        if used >= width {
+            break;
+        }
+        let style = line.style.patch(span.style);
+        let remaining = width - used;
+        let content = span.content.as_ref();
+        if UnicodeWidthStr::width(content) <= remaining {
+            used += UnicodeWidthStr::width(content);
+            out.push(Span::styled(content.to_string(), style));
+        } else {
+            let mut s = String::new();
+            let mut c = 0usize;
+            for ch in content.chars() {
+                let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if c + cw > remaining {
+                    break;
+                }
+                s.push(ch);
+                c += cw;
+            }
+            used += c;
+            out.push(Span::styled(s, style));
+        }
+    }
+    if used < width {
+        out.push(Span::raw(" ".repeat(width - used)));
+    }
+    out
+}
+
+/// Wrap already-rendered body lines in a rounded chat bubble, aligned left or
+/// right within `line_width` columns.
+fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -> Vec<Line<'a>> {
+    let max_content = bubble_max_content_width(line_width);
+    let content_width = body
+        .iter()
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(0)
+        .min(max_content)
+        .max(skin.title.len() + 1)
+        .min(line_width.saturating_sub(4).max(1));
+
+    let outer = content_width + 4;
+    let indent = match skin.align {
+        BubbleAlign::Left => 0,
+        BubbleAlign::Right => line_width.saturating_sub(outer),
+    };
+    let pad = |spans: Vec<Span<'a>>| -> Line<'a> {
+        if indent > 0 {
+            let mut v = vec![Span::raw(" ".repeat(indent))];
+            v.extend(spans);
+            Line::from(v)
+        } else {
+            Line::from(spans)
+        }
+    };
+
+    let mut lines: Vec<Line<'a>> = Vec::new();
+
+    if skin.title == "Assistant" {
+        // Top border: ╭─ Assistant ───────╮
+        let head = format!("╭─ {} ", skin.title);
+        let fill = outer.saturating_sub(head.chars().count() + 1);
+        lines.push(pad(vec![Span::styled(
+            format!("{}{}╮", head, "─".repeat(fill)),
+            skin.border,
+        )]));
+    } else {
+        // Top border: ╭─────── User ─╮
+        let head = format!(" {} ─╮", skin.title);
+        let fill = outer.saturating_sub(head.chars().count() + 1);
+        lines.push(pad(vec![Span::styled(
+            format!("╭{}{}", "─".repeat(fill), head),
+            skin.border,
+        )]));
+    }
+
+    // Body
+    for line in &body {
+        let mut spans = vec![Span::styled("│ ", skin.border)];
+        spans.extend(fit_spans(line, content_width));
+        spans.push(Span::styled(" │", skin.border));
+        lines.push(pad(spans));
+    }
+
+    // Bottom border: ╰──────────────╯
+    lines.push(pad(vec![Span::styled(
+        format!("╰{}╯", "─".repeat(outer.saturating_sub(2))),
+        skin.border,
+    )]));
+
+    lines
+}
+
+/// Render a single message as a styled (syntax-highlighted) chat bubble.
+pub fn style_message<'a>(message: Message, line_width: usize, theme: Theme) -> Vec<Line<'a>> {
+    let content_width = bubble_max_content_width(line_width);
+    let (skin, text) = match &message {
+        Message::User(_) => (user_skin(), message.to_string()),
+        Message::Assistant(t) => {
+            if t.is_empty() {
+                return Vec::new();
+            }
+            (assistant_skin(), t.clone())
+        }
+    };
+    let body = process_code_blocks(text, content_width, theme);
+    let mut lines = frame_bubble(body, line_width, &skin);
+    lines.push(Line::from(""));
+    lines
+}
+
+/// Render an assistant "waiting for response" bubble with an animated spinner.
+fn waiting_bubble<'a>(line_width: usize, spinner_frame: usize) -> Vec<Line<'a>> {
+    let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
+    let thinking_split_n = (spinner_frame / 4) % THINKING_VERB.len();
+    let (think1, think2) = THINKING_VERB.split_at(thinking_split_n);
+    let body = vec![
+        Line::from(vec![
+            Span::raw(format!("{frame} ")),
+            Span::raw(think1.to_string()).bold(),
+            Span::raw(think2.to_string()).dim(),
+        ])
+        .style(Style::default().fg(Color::DarkGray)),
+    ];
+    let mut lines = frame_bubble(body, line_width, &assistant_skin());
+    lines.push(Line::from(""));
+    lines
+}
+
+/// Render all messages as plain (non-highlighted) chat bubbles.
+pub fn messages_to_lines<'a>(messages: &[Message], line_width: usize) -> Vec<Line<'a>> {
+    let content_width = bubble_max_content_width(line_width);
     let mut line_vec = Vec::new();
     for message in messages {
-        let text = message.to_string();
-        match message {
-            Message::User(_) => {
-                let wrapped_message = textwrap::wrap(&text, width - 3);
-                line_vec.push(Line::from(Span::raw("USER:").bold().yellow()));
-                line_vec.push(Line::from(Span::raw("---").bold().yellow()));
-                line_vec.extend(
-                    wrapped_message
-                        .into_iter()
-                        .map(|l| Line::from(Span::raw(l.into_owned()))),
-                );
-                line_vec.push(Line::from(Span::raw("")));
-            }
+        let (skin, text) = match message {
+            Message::User(_) => (user_skin(), message.to_string()),
             Message::Assistant(m) => {
-                if !m.is_empty() {
-                    let wrapped_message = textwrap::wrap(m, width - 3);
-                    line_vec.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-                    line_vec.push(Line::from(Span::raw("---").bold().green()));
-                    line_vec.extend(
-                        wrapped_message
-                            .into_iter()
-                            .map(|l| Line::from(Span::raw(l))),
-                    );
-                    line_vec.push(Line::from(Span::raw("")));
+                if m.is_empty() {
+                    continue;
                 }
+                (assistant_skin(), m.clone())
             }
-        }
+        };
+        let body: Vec<Line> = textwrap::wrap(&text, content_width.max(1))
+            .into_iter()
+            .map(|l| Line::from(Span::raw(l.into_owned())))
+            .collect();
+        line_vec.extend(frame_bubble(body, line_width, &skin));
+        line_vec.push(Line::from(""));
     }
     line_vec
 }
@@ -461,35 +630,22 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
         .end_symbol(Some("↓"));
+    // Width available for a rendered line inside the bordered chat block.
+    let line_width = messages_area.width.saturating_sub(2) as usize;
     let mut messages = if !app.is_streaming && app.do_highlight {
         app.cached_lines.clone()
     } else {
-        messages_to_lines(&app.messages, messages_area.width as usize)
+        messages_to_lines(&app.messages, line_width)
     };
 
     if app.is_waiting_for_response {
-        let frame = SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()];
-        let thinking_split_n = (app.spinner_frame / 4) % THINKING_VERB.len();
-        let (think1, think2) = THINKING_VERB.split_at(thinking_split_n);
-        let (think_span1, think_span2) = (Span::raw(think1).bold(), Span::raw(think2).dim());
-        messages.push(Line::from(Span::raw("ASSISTANT:").bold().green()));
-        messages.push(Line::from(Span::raw("---").bold().green()));
-        messages.push(
-            Line::from(vec![
-                Span::raw(format!("{frame} ")),
-                think_span1,
-                think_span2,
-            ])
-            .style(Style::default().fg(Color::DarkGray)),
-        );
-        messages.push(Line::from(Span::raw("")));
+        messages.extend(waiting_bubble(line_width, app.spinner_frame));
     }
 
     let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
 
     let messages_text = Text::from(messages);
     let messages = Paragraph::new(messages_text)
-        .wrap(Wrap { trim: false })
         .scroll((app.vertical_scroll as u16, 0))
         .block(Block::bordered().title(format!(
             "Chat - {} [effort: {}]",

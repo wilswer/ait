@@ -30,6 +30,7 @@ tui-big-text = "0.8"
 ratatui-textarea = "0.9"
 tiktoken-rs = "0.12"
 pathdiff = "0.2.3"
+unicode-width = "0.2"
 
 [profile.release]
 strip = true
