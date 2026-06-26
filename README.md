@@ -1,5 +1,7 @@
 # AI in the Terminal
 
+[AIT in action](./ait.mov)
+
 `ait` is a terminal user interface for interacting with several generative large
 language models from multiple providers. It uses the
 [`genai`](https://github.com/jeremychone/rust-genai) crate to communicate with
