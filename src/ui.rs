@@ -424,9 +424,7 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
 }
 
 /// Percentage of the available line width a bubble may occupy at most.
-const BUBBLE_MAX_PERCENT: usize = 80;
-/// Smallest outer bubble width (including borders + padding) we aim for.
-const BUBBLE_MIN_OUTER: usize = 24;
+const BUBBLE_MAX_PERCENT: usize = 100;
 
 #[derive(Clone, Copy)]
 enum BubbleAlign {
@@ -463,10 +461,8 @@ fn assistant_skin() -> BubbleSkin {
 /// Maximum width available for the *content* (text) inside a bubble, given the
 /// total width available for a rendered line.
 fn bubble_max_content_width(line_width: usize) -> usize {
-    let max_outer = (line_width * BUBBLE_MAX_PERCENT / 100)
-        .max(BUBBLE_MIN_OUTER.min(line_width))
-        .min(line_width);
-    max_outer.saturating_sub(4)
+    let max_outer = line_width * BUBBLE_MAX_PERCENT / 100;
+    max_outer.saturating_sub(4 + 4)
 }
 
 /// Clip the given line to `width` display columns (preserving span styles) and
@@ -535,13 +531,23 @@ fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -
 
     let mut lines: Vec<Line<'a>> = Vec::new();
 
-    // Top border: ╭─ Title ───────╮
-    let head = format!("╭─ {} ", skin.title);
-    let fill = outer.saturating_sub(head.chars().count() + 1);
-    lines.push(pad(vec![Span::styled(
-        format!("{}{}╮", head, "─".repeat(fill)),
-        skin.border,
-    )]));
+    if skin.title == "Assistant" {
+        // Top border: ╭─ Assistant ───────╮
+        let head = format!("╭─ {} ", skin.title);
+        let fill = outer.saturating_sub(head.chars().count() + 1);
+        lines.push(pad(vec![Span::styled(
+            format!("{}{}╮", head, "─".repeat(fill)),
+            skin.border,
+        )]));
+    } else {
+        // Top border: ╭─────── User ─╮
+        let head = format!(" {} ─╮", skin.title);
+        let fill = outer.saturating_sub(head.chars().count() + 1);
+        lines.push(pad(vec![Span::styled(
+            format!("╭{}{}", "─".repeat(fill), head),
+            skin.border,
+        )]));
+    }
 
     // Body
     for line in &body {
