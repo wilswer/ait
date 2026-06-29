@@ -435,6 +435,8 @@ fn render_table_block(rows: &[&str], _width: usize, style: Style) -> Vec<Line<'s
         return Vec::new();
     }
 
+    let style = style.patch(Style::default().bg(Color::Rgb(45, 45, 45)));
+
     fn parse_row(row: &str) -> Vec<String> {
         let r = row.trim();
         let inner = r.strip_prefix('|').unwrap_or(r);
