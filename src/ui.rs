@@ -260,13 +260,40 @@ fn is_separator(s: &str) -> bool {
 /// Render a markdown text segment into styled [`Line`]s, with word-wrapping.
 fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let raw_lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
 
-    for line in text.lines() {
+    while i < raw_lines.len() {
+        let line = raw_lines[i];
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
 
+        // Check if this line starts a table block (starts and ends with '|')
+        let looks_like_table = trimmed.starts_with('|') && trimmed.ends_with('|');
+        if looks_like_table {
+            // Collect all consecutive table rows
+            let mut table_rows: Vec<&str> = Vec::new();
+            while i < raw_lines.len() {
+                let tr = raw_lines[i].trim();
+                if !(tr.starts_with('|') && tr.ends_with('|')) {
+                    break;
+                }
+                table_rows.push(raw_lines[i]);
+                i += 1;
+            }
+            // Render the table block
+            let table_lines = render_table_block(&table_rows, width, style);
+            lines.extend(table_lines);
+            continue; // i already advanced
+        }
+
+        // ... rest of original processing (headings, lists, etc.) ...
+        // Use the same code as before, but wrapped in the while loop
+        // (original code omitted for brevity; keep everything from the original function)
+
         if trimmed.is_empty() {
             lines.push(Line::default());
+            i += 1;
             continue;
         }
 
@@ -275,10 +302,11 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             lines.push(
                 Line::from("─".repeat(3)).style(style.patch(Style::default().fg(Color::DarkGray))),
             );
+            i += 1;
             continue;
         }
 
-        // ATX headings: # / ## / ###
+        // ATX headings
         if trimmed.starts_with('#') {
             let level = trimmed.chars().take_while(|&c| c == '#').count().min(6);
             let heading_text = trimmed[level..].trim();
@@ -300,10 +328,11 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
                 ));
             }
             lines.push(Line::from(spans));
+            i += 1;
             continue;
         }
 
-        // Unordered list item: - / * / +
+        // Unordered list
         let is_unordered =
             trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ");
         if is_unordered {
@@ -311,8 +340,8 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             let bullet_prefix = format!("{}• ", " ".repeat(indent));
             let prefix_w = bullet_prefix.chars().count();
             let avail = width.saturating_sub(prefix_w).max(1);
-            for (i, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
-                let mut spans = if i == 0 {
+            for (idx, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+                let mut spans = if idx == 0 {
                     vec![Span::styled(
                         bullet_prefix.clone(),
                         style.patch(Style::default().fg(Color::DarkGray)),
@@ -323,10 +352,11 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
                 spans.extend(parse_inline_markdown(piece, style));
                 lines.push(Line::from(spans));
             }
+            i += 1;
             continue;
         }
 
-        // Ordered list item: 1. / 12. etc.
+        // Ordered list
         let num_end = trimmed.find(". ").unwrap_or(0);
         let is_ordered = num_end > 0 && trimmed[..num_end].chars().all(|c| c.is_ascii_digit());
         if is_ordered {
@@ -334,8 +364,8 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             let prefix_w = num_prefix.chars().count();
             let item_text = &trimmed[num_end + 2..];
             let avail = width.saturating_sub(prefix_w).max(1);
-            for (i, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
-                let mut spans = if i == 0 {
+            for (idx, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+                let mut spans = if idx == 0 {
                     vec![Span::styled(
                         num_prefix.clone(),
                         style.patch(Style::default().fg(Color::DarkGray)),
@@ -346,16 +376,229 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
                 spans.extend(parse_inline_markdown(piece, style));
                 lines.push(Line::from(spans));
             }
+            i += 1;
             continue;
         }
 
-        // Regular paragraph text (word-wrapped to the available width)
+        // Regular paragraph
         for piece in textwrap::wrap(line, width.max(1)) {
             lines.push(Line::from(parse_inline_markdown(&piece, style)));
         }
+        i += 1;
     }
 
     lines
+}
+
+/// Strip inline markdown markers (`**`, `*`, `` ` ``) to get the plain
+/// display text, so we can measure the *visible* width of a cell.
+pub fn strip_inline_markdown(text: &str) -> String {
+    let mut result = String::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        if rest.starts_with("**")
+            && let Some(end) = rest[2..].find("**")
+        {
+            result.push_str(&rest[2..2 + end]);
+            rest = &rest[2 + end + 2..];
+            continue;
+        }
+        if rest.starts_with('*')
+            && let Some(end) = rest[1..].find('*')
+        {
+            let inner = &rest[1..1 + end];
+            if !inner.is_empty() && !inner.contains('\n') {
+                result.push_str(inner);
+                rest = &rest[1 + end + 1..];
+                continue;
+            }
+        }
+        if rest.starts_with('`')
+            && let Some(end) = rest[1..].find('`')
+        {
+            let inner = &rest[1..1 + end];
+            if !inner.is_empty() {
+                result.push_str(inner);
+                rest = &rest[1 + end + 1..];
+                continue;
+            }
+        }
+        let c = rest.chars().next().unwrap();
+        result.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    result
+}
+
+fn render_table_block(rows: &[&str], _width: usize, style: Style) -> Vec<Line<'static>> {
+    if rows.len() < 2 {
+        return Vec::new();
+    }
+
+    fn parse_row(row: &str) -> Vec<String> {
+        let r = row.trim();
+        let inner = r.strip_prefix('|').unwrap_or(r);
+        let inner = inner.strip_suffix('|').unwrap_or(inner);
+        inner.split('|').map(|s| s.trim().to_string()).collect()
+    }
+
+    fn is_separator_row(cells: &[String]) -> bool {
+        cells.iter().all(|c| {
+            !c.is_empty()
+                && c.chars().all(|ch| ch == '-' || ch == ':' || ch == ' ')
+                && c.contains('-')
+        })
+    }
+
+    fn alignment_from_cell(cell: &str) -> TableAlignment {
+        let t = cell.trim();
+        if t.starts_with(':') && t.ends_with(':') {
+            TableAlignment::Center
+        } else if t.ends_with(':') {
+            TableAlignment::Right
+        } else {
+            TableAlignment::Left
+        }
+    }
+
+    /// Display width of a cell, accounting for wide (CJK) characters and
+    /// stripping markdown formatting markers.
+    fn cell_display_width(text: &str) -> usize {
+        UnicodeWidthStr::width(strip_inline_markdown(text).as_str())
+    }
+
+    /// Pad a row to have exactly `num_cols` cells (fill missing with empty strings).
+    fn pad_row(row: &[String], num_cols: usize) -> Vec<String> {
+        let mut r: Vec<String> = row.to_vec();
+        while r.len() < num_cols {
+            r.push(String::new());
+        }
+        r
+    }
+
+    let parsed_rows: Vec<Vec<String>> = rows.iter().map(|r| parse_row(r)).collect();
+    if parsed_rows.len() < 2 {
+        return Vec::new();
+    }
+
+    let header_cells = &parsed_rows[0];
+    let separator_cells = &parsed_rows[1];
+
+    let num_cols = header_cells.len();
+    if num_cols == 0 {
+        return Vec::new();
+    }
+
+    let (separator, data_rows) = if is_separator_row(separator_cells) {
+        (Some(separator_cells), &parsed_rows[2..])
+    } else {
+        (None, &parsed_rows[1..])
+    };
+
+    let mut alignments = vec![TableAlignment::Left; num_cols];
+    if let Some(sep) = separator {
+        for (i, cell) in sep.iter().enumerate().take(num_cols) {
+            alignments[i] = alignment_from_cell(cell);
+        }
+    }
+
+    // Compute column widths based on *display* width (markdown stripped, wide chars counted)
+    let mut col_widths = vec![0usize; num_cols];
+    for (i, cell) in header_cells.iter().enumerate() {
+        col_widths[i] = col_widths[i].max(cell_display_width(cell));
+    }
+    for row in data_rows {
+        for (i, cell) in row.iter().enumerate().take(num_cols) {
+            col_widths[i] = col_widths[i].max(cell_display_width(cell));
+        }
+    }
+
+    let border_style = style.patch(Style::default().fg(Color::DarkGray).dim());
+    let border_char = "│";
+
+    let mut result = Vec::new();
+
+    // Compute left/right padding for a cell given its alignment
+    let cell_padding = |i: usize, raw_width: usize| -> (usize, usize) {
+        let total_col_width = col_widths[i] + 2; // 1 space padding each side
+        let spaces = total_col_width.saturating_sub(raw_width);
+        match alignments[i] {
+            TableAlignment::Left => (1, spaces.saturating_sub(1)),
+            TableAlignment::Right => (spaces.saturating_sub(1), 1),
+            TableAlignment::Center => (spaces / 2, spaces - spaces / 2),
+        }
+    };
+
+    // --- Header row (honors alignment) ---
+    {
+        let header_cells = pad_row(header_cells, num_cols);
+        let header_style = style.patch(Style::default().bold());
+        let mut spans: Vec<Span> = vec![Span::styled(border_char, border_style)];
+        for (i, cell_text) in header_cells.iter().enumerate() {
+            let cell_style = header_style;
+            let content_spans = parse_inline_markdown(cell_text, cell_style);
+            let raw_width = cell_display_width(cell_text);
+            let (left, right) = cell_padding(i, raw_width);
+            spans.push(Span::styled(" ".repeat(left), cell_style));
+            spans.extend(content_spans);
+            spans.push(Span::styled(" ".repeat(right), cell_style));
+            spans.push(Span::styled(border_char, border_style));
+        }
+        result.push(Line::from(spans));
+    }
+
+    // --- Separator row ---
+    if let Some(sep) = separator {
+        let sep = pad_row(sep, num_cols);
+        let mut spans: Vec<Span> = vec![Span::styled(border_char, border_style)];
+        for (i, cell) in sep.iter().enumerate().take(num_cols) {
+            // Preserve alignment colons but generate dashes to exactly fill
+            // col_widths[i], so the separator matches the data cell width.
+            let t = cell.trim();
+            let has_left = t.starts_with(':');
+            let has_right = t.ends_with(':');
+            let reserved = (has_left as usize) + (has_right as usize);
+            let dash_n = col_widths[i].saturating_sub(reserved);
+            let mut dashes = String::new();
+            if has_left {
+                dashes.push(':');
+            }
+            dashes.push_str(&"-".repeat(dash_n));
+            if has_right {
+                dashes.push(':');
+            }
+            let display = format!(" {} ", dashes);
+            spans.push(Span::styled(display, border_style));
+            spans.push(Span::styled(border_char, border_style));
+        }
+        result.push(Line::from(spans));
+    }
+
+    // --- Data rows ---
+    for row in data_rows {
+        let row = pad_row(row, num_cols);
+        let mut spans: Vec<Span> = vec![Span::styled(border_char, border_style)];
+        for (i, cell_text) in row.iter().enumerate().take(num_cols) {
+            let cell_style = style;
+            let content_spans = parse_inline_markdown(cell_text, cell_style);
+            let raw_width = cell_display_width(cell_text);
+            let (left, right) = cell_padding(i, raw_width);
+            spans.push(Span::styled(" ".repeat(left), cell_style));
+            spans.extend(content_spans);
+            spans.push(Span::styled(" ".repeat(right), cell_style));
+            spans.push(Span::styled(border_char, border_style));
+        }
+        result.push(Line::from(spans));
+    }
+
+    result
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TableAlignment {
+    Left,
+    Center,
+    Right,
 }
 
 fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) -> Vec<Line<'a>> {
@@ -1310,4 +1553,144 @@ fn render_notification(f: &mut Frame, area: Rect, notification: &Notification) {
         .block(text_block)
         .wrap(Wrap { trim: true });
     f.render_widget(context_text, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Style;
+
+    fn line_to_string(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    fn lines_to_strings(lines: &[Line]) -> Vec<String> {
+        lines.iter().map(line_to_string).collect()
+    }
+
+    #[test]
+    fn test_strip_inline_markdown() {
+        assert_eq!(strip_inline_markdown("**bold**"), "bold");
+        assert_eq!(strip_inline_markdown("*italic*"), "italic");
+        assert_eq!(strip_inline_markdown("`code`"), "code");
+        assert_eq!(
+            strip_inline_markdown("Hello **world** and *universe*!"),
+            "Hello world and universe!"
+        );
+    }
+
+    #[test]
+    fn test_simple_table() {
+        let rows = vec![
+            "| Header 1 | Header 2 |",
+            "|----------|----------|",
+            "| Cell 1   | Cell 2   |",
+        ];
+        let lines = render_table_block(&rows, 80, Style::default());
+        let strings = lines_to_strings(&lines);
+
+        assert_eq!(
+            strings,
+            vec![
+                "│ Header 1 │ Header 2 │",
+                "│ -------- │ -------- │",
+                "│ Cell 1   │ Cell 2   │",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_table_with_alignments() {
+        let rows = vec![
+            "| Name | Age |",
+            "|:-----|----:|",
+            "| **Alice** | 30 |",
+            "| Bob | 100 |",
+        ];
+        let lines = render_table_block(&rows, 80, Style::default());
+        let strings = lines_to_strings(&lines);
+
+        assert_eq!(
+            strings,
+            vec![
+                "│ Name  │ Age │",
+                "│ :---- │ --: │",
+                "│ Alice │  30 │",
+                "│ Bob   │ 100 │",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_ragged_table_rows() {
+        let rows = vec![
+            "| A | B | C |",
+            "|---|---|---|",
+            "| 1 |",             // missing cells
+            "| 2 | 3 | 4 | 5 |", // extra cells
+        ];
+        let lines = render_table_block(&rows, 80, Style::default());
+        let strings = lines_to_strings(&lines);
+
+        assert_eq!(
+            strings,
+            vec![
+                "│ A │ B │ C │",
+                "│ - │ - │ - │",
+                "│ 1 │   │   │", // padded with spaces
+                "│ 2 │ 3 │ 4 │", // "5" is truncated
+            ]
+        );
+    }
+
+    #[test]
+    fn test_wide_characters_and_markdown() {
+        let rows = vec![
+            "| Item | Count |",
+            "|------|-------|",
+            "| 日 本 語  | **5** |",
+            "| English | 10 |",
+        ];
+        let lines = render_table_block(&rows, 80, Style::default());
+        let strings = lines_to_strings(&lines);
+
+        // "日 本 語 " is 3 chars, but 6 display columns wide.
+        // "English" is 7 chars wide, so col 1 width = 7.
+        assert_eq!(
+            strings,
+            vec![
+                "│ Item     │ Count │",
+                "│ -------- │ ----- │",
+                "│ 日 本 語 │ 5     │",
+                "│ English  │ 10    │",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_all_lines_same_width() {
+        let markdown = r#"
+| World | Atmosphere | Sky Color | Why? |
+|-------|------------|-----------|------|
+| **Mars** | Thin CO₂ + fine iron oxide dust | Butterscotch daytime, **blue sunset** | Dust scatters forward; fine particles scatter blue backward at low sun angles |
+| **Venus** | Thick CO₂ + sulfuric acid clouds | Yellow-orange, hazy | Mie scattering + cloud absorption dominate |
+| **Titan** | N₂ + methane + organic haze (tholins) | Orange/red | Complex hydrocarbon aerosols absorb blue/green |
+| **Moon** | None | Pitch black (day or night) | No atmosphere = no scattering |
+"#;
+        let rows: Vec<&str> = markdown.trim().lines().collect();
+        let lines = render_table_block(&rows, 200, Style::default());
+        let strings = lines_to_strings(&lines);
+
+        let first_width = UnicodeWidthStr::width(strings[0].as_str());
+        assert!(first_width > 0, "Table should have width");
+
+        for (i, s) in strings.iter().enumerate() {
+            let w = UnicodeWidthStr::width(s.as_str());
+            assert_eq!(
+                w, first_width,
+                "Line {} has width {} but expected {}. Content: {:?}",
+                i, w, first_width, s
+            );
+        }
+    }
 }
