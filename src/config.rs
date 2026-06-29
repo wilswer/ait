@@ -8,7 +8,19 @@ use std::path::PathBuf;
 pub struct Config {
     pub ollama_host: Option<String>,
     pub system_prompt: Option<String>,
-    pub default_model: Option<String>,
+    pub default_model: Option<ModelConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ModelConfig {
+    pub name: String,
+    pub provider: String,
+}
+
+impl ModelConfig {
+    pub fn new(name: String, provider: String) -> Self {
+        Self { name, provider }
+    }
 }
 
 impl Config {

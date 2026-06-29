@@ -6,9 +6,8 @@ use std::{borrow::Cow, fs::read_to_string, io};
 use anyhow::{Context, Result, anyhow};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
-use genai::adapter::AdapterKind;
+use genai::ModelSpec;
 use genai::chat::ContentPart;
-use genai::{ModelIden, ModelName, ModelSpec};
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
 
@@ -22,7 +21,8 @@ use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
 use tiktoken_rs::cl100k_base;
 
-use crate::models::ModelItem;
+use crate::config::ModelConfig;
+use crate::models::{ModelItem, generate_model_spec};
 use crate::ui::messages_to_lines;
 use crate::{
     ai::MODELS,
@@ -408,17 +408,20 @@ impl Default for App<'_> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(system_prompt: &'a str, default_model: String) -> Self {
-        let model_list = ModelList::from_iter(MODELS.map(|(provider, model)| {
-            if model == default_model {
-                (provider, model, true)
+    pub fn new(system_prompt: &'a str, default_model: ModelConfig) -> Self {
+        let model_list = ModelList::from_iter(MODELS.map(|(provider, name)| {
+            if name == default_model.name {
+                (provider, name, true)
             } else {
-                (provider, model, false)
+                (provider, name, false)
             }
         }));
         Self {
             system_prompt,
-            selected_model: default_model.into(),
+            selected_model: generate_model_spec(
+                default_model.name.as_str(),
+                default_model.provider.as_str(),
+            ),
             model_list,
             ..Default::default()
         }
@@ -853,26 +856,7 @@ impl<'a> App<'a> {
             }
             self.model_list.items[actual_idx].selected = true;
             let ModelItem { provider, name, .. } = self.model_list.items[actual_idx].clone();
-            let model_spec = match provider.as_str() {
-                "OpenAI" => {
-                    ModelSpec::from_iden(ModelIden::new(AdapterKind::OpenAI, ModelName::from(name)))
-                }
-                "Anthropic" => ModelSpec::from_iden(ModelIden::new(
-                    AdapterKind::Anthropic,
-                    ModelName::from(name),
-                )),
-                "Gemini" => {
-                    ModelSpec::from_iden(ModelIden::new(AdapterKind::Gemini, ModelName::from(name)))
-                }
-                "Ollama" => {
-                    ModelSpec::from_iden(ModelIden::new(AdapterKind::Ollama, ModelName::from(name)))
-                }
-                "OpenRouter" => ModelSpec::from_iden(ModelIden::new(
-                    AdapterKind::OpenRouter,
-                    ModelName::from(name),
-                )),
-                _ => ModelSpec::from_name(name),
-            };
+            let model_spec = generate_model_spec(name.as_str(), provider.as_str());
             self.selected_model = model_spec;
         }
     }

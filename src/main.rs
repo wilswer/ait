@@ -12,7 +12,7 @@ use tokio::task;
 use ait::ai::{assistant_response_streaming, get_models};
 use ait::app::{App, AppMode, AppResult, Message, Notification};
 use ait::cli::Cli;
-use ait::config::Config;
+use ait::config::{Config, ModelConfig};
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
 use ait::storage::{create_db, migrate_db};
@@ -132,9 +132,9 @@ Context:
     };
 
     // Resolve default model: Config > Default
-    let default_model = config
-        .default_model
-        .unwrap_or_else(|| "gemini-3.1-pro-preview".to_string());
+    let default_model = config.default_model.unwrap_or_else(|| {
+        ModelConfig::new("gemini-3.1-pro-preview".to_string(), "Gemini".to_string())
+    });
 
     // Resolve Ollama host: CLI > Config > Default
     let resolved_ollama_host = cli
