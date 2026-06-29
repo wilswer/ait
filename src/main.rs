@@ -111,7 +111,7 @@ async fn main() -> AppResult<()> {
         if !context.is_empty() {
             format!(
                 r#"
-You are a helpful assistant.
+You are a helpful, friendly assistant.
 Answer the user's query using the provided context.
 Context:
 
