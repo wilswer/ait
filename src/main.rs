@@ -1,6 +1,8 @@
 use anyhow::Context;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
+use genai::ModelSpec;
+use genai::adapter::AdapterKind;
 use genai::chat::{ChatStreamEvent, StreamChunk, StreamEnd};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -222,13 +224,25 @@ Context:
 
             // Clone data needed for the task
             let messages = app.messages.clone();
-            let selected_model = app.selected_model_name.clone();
+            let selected_model = app.selected_model.clone();
             let thinking_effort = app.thinking_effort.clone();
             let ollama_host_url = resolved_ollama_host.clone();
-            let sys_prompt = if selected_model.starts_with("gpt") {
-                None
-            } else {
-                Some(system_prompt.clone())
+            let sys_prompt = match &selected_model {
+                ModelSpec::Name(name) => {
+                    if name.starts_with("gpt") {
+                        None
+                    } else {
+                        Some(system_prompt.clone())
+                    }
+                }
+                ModelSpec::Iden(iden) => {
+                    if iden.adapter_kind == AdapterKind::OpenAI {
+                        None
+                    } else {
+                        Some(system_prompt.clone())
+                    }
+                }
+                _ => Some(system_prompt.clone()),
             };
 
             let tx = action_tx.clone();
@@ -240,7 +254,7 @@ Context:
             task::spawn(async move {
                 let response = assistant_response_streaming(
                     &messages,
-                    &selected_model,
+                    selected_model,
                     sys_prompt,
                     thinking_effort,
                     ollama_host_url,

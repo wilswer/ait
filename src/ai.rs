@@ -1,7 +1,7 @@
 use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStream, ReasoningEffort};
 use genai::resolver::{AuthData, Endpoint, ProviderConfig, ServiceTargetResolver};
-use genai::{ClientBuilder, ClientConfig, ModelIden, ServiceTarget};
+use genai::{ClientBuilder, ClientConfig, ModelIden, ModelSpec, ServiceTarget};
 
 use crate::app::{AppResult, Message, ThinkingEffort};
 
@@ -23,6 +23,7 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::Zai => "ZAI_API_KEY",
         AdapterKind::BigModel => "BIGMODEL_API_KEY",
         AdapterKind::Mimo => "MIMO_API_KEY",
+        AdapterKind::OpenRouter => "OPEN_ROUTER_API_KEY",
         _ => todo!(),
     }
 }
@@ -66,6 +67,7 @@ pub async fn get_models(ollama_host_url: Option<&str>) -> AppResult<Vec<(String,
         AdapterKind::Cohere,
         AdapterKind::Xai,
         AdapterKind::DeepSeek,
+        AdapterKind::OpenRouter,
     ];
 
     let client = init_clientbuilder(ollama_host_url, ChatOptions::default()).build();
@@ -140,7 +142,7 @@ pub async fn assistant_response(
 
 pub async fn assistant_response_streaming(
     messages: &[Message],
-    model: &str,
+    model: ModelSpec,
     system_prompt: Option<String>,
     thinking_effort: ThinkingEffort,
     ollama_host_url: Option<String>,
@@ -175,7 +177,13 @@ pub async fn assistant_response_streaming(
         ThinkingEffort::Max => ChatOptions::default().with_reasoning_effort(ReasoningEffort::Max),
     };
 
-    let clientbuilder = init_clientbuilder(ollama_host_url.as_deref(), chat_opts);
+    let clientbuilder = match &model {
+        ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::Ollama => {
+            init_clientbuilder(ollama_host_url.as_deref(), chat_opts)
+        }
+        _ => init_clientbuilder(None, chat_opts),
+    };
+
     let client = clientbuilder.build();
     let chat_res = client.exec_chat_stream(model, chat_req, None).await?;
     Ok(chat_res.stream)

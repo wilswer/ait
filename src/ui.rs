@@ -1,5 +1,6 @@
 use std::env;
 
+use genai::ModelSpec;
 use pathdiff::diff_paths;
 use ratatui::{
     Frame,
@@ -644,11 +645,24 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
 
     let messages_text = Text::from(messages);
+    let selected_model_info_str = match &app.selected_model {
+        ModelSpec::Name(name) => name.as_str(),
+        ModelSpec::Iden(iden) => &format!(
+            "{}, provided by {}",
+            iden.model_name.as_str(),
+            iden.adapter_kind.as_str()
+        ),
+        ModelSpec::Target(target) => &format!(
+            "{}, provided by {}",
+            target.model.model_name.as_str(),
+            target.model.adapter_kind.as_str(),
+        ),
+    };
     let messages = Paragraph::new(messages_text)
         .scroll((app.vertical_scroll as u16, 0))
         .block(Block::bordered().title(format!(
             "Chat - {} [effort: {}]",
-            app.selected_model_name,
+            selected_model_info_str,
             app.thinking_effort.as_str()
         )));
 

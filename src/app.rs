@@ -6,7 +6,9 @@ use std::{borrow::Cow, fs::read_to_string, io};
 use anyhow::{Context, Result, anyhow};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
+use genai::adapter::AdapterKind;
 use genai::chat::ContentPart;
+use genai::{ModelIden, ModelName, ModelSpec};
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
 
@@ -20,6 +22,7 @@ use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
 use tiktoken_rs::cl100k_base;
 
+use crate::models::ModelItem;
 use crate::ui::messages_to_lines;
 use crate::{
     ai::MODELS,
@@ -300,8 +303,8 @@ pub struct App<'a> {
     pub clipboard: Clipboard,
     /// List of models
     pub model_list: ModelList,
-    /// Selected model name
-    pub selected_model_name: String,
+    /// Selected model
+    pub selected_model: ModelSpec,
     /// Discovered snippets
     pub snippet_list: SnippetList,
     /// List of chats
@@ -372,7 +375,7 @@ impl Default for App<'_> {
                     (provider, model, false)
                 }
             })),
-            selected_model_name: "gemini-3.1-pro-preview".to_string(),
+            selected_model: "gemini-3.1-pro-preview".into(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
@@ -415,7 +418,7 @@ impl<'a> App<'a> {
         }));
         Self {
             system_prompt,
-            selected_model_name: default_model,
+            selected_model: default_model.into(),
             model_list,
             ..Default::default()
         }
@@ -849,7 +852,28 @@ impl<'a> App<'a> {
                 item.selected = false;
             }
             self.model_list.items[actual_idx].selected = true;
-            self.selected_model_name = self.model_list.items[actual_idx].name.to_string();
+            let ModelItem { provider, name, .. } = self.model_list.items[actual_idx].clone();
+            let model_spec = match provider.as_str() {
+                "OpenAI" => {
+                    ModelSpec::from_iden(ModelIden::new(AdapterKind::OpenAI, ModelName::from(name)))
+                }
+                "Anthropic" => ModelSpec::from_iden(ModelIden::new(
+                    AdapterKind::Anthropic,
+                    ModelName::from(name),
+                )),
+                "Gemini" => {
+                    ModelSpec::from_iden(ModelIden::new(AdapterKind::Gemini, ModelName::from(name)))
+                }
+                "Ollama" => {
+                    ModelSpec::from_iden(ModelIden::new(AdapterKind::Ollama, ModelName::from(name)))
+                }
+                "OpenRouter" => ModelSpec::from_iden(ModelIden::new(
+                    AdapterKind::OpenRouter,
+                    ModelName::from(name),
+                )),
+                _ => ModelSpec::from_name(name),
+            };
+            self.selected_model = model_spec;
         }
     }
 

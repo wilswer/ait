@@ -8,7 +8,7 @@ pub struct ModelList {
     pub state: ListState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModelItem {
     pub provider: String,
     pub name: String,
