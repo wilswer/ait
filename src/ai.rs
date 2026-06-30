@@ -1,5 +1,7 @@
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStream, ReasoningEffort};
+use genai::chat::{
+    CacheControl, ChatMessage, ChatOptions, ChatRequest, ChatStream, ReasoningEffort,
+};
 use genai::resolver::{AuthData, Endpoint, ProviderConfig, ServiceTargetResolver};
 use genai::{ClientBuilder, ClientConfig, ModelIden, ModelSpec, ServiceTarget};
 
@@ -164,17 +166,15 @@ pub async fn assistant_response_streaming(
         chat_req = chat_req.append_message(chat_message);
     }
 
+    let base_chat_opts = ChatOptions::default().with_cache_control(CacheControl::Ephemeral);
+
     let chat_opts = match thinking_effort {
-        ThinkingEffort::None => ChatOptions::default(),
-        ThinkingEffort::Low => ChatOptions::default().with_reasoning_effort(ReasoningEffort::Low),
-        ThinkingEffort::Medium => {
-            ChatOptions::default().with_reasoning_effort(ReasoningEffort::Medium)
-        }
-        ThinkingEffort::High => ChatOptions::default().with_reasoning_effort(ReasoningEffort::High),
-        ThinkingEffort::XHigh => {
-            ChatOptions::default().with_reasoning_effort(ReasoningEffort::XHigh)
-        }
-        ThinkingEffort::Max => ChatOptions::default().with_reasoning_effort(ReasoningEffort::Max),
+        ThinkingEffort::None => base_chat_opts.with_reasoning_effort(ReasoningEffort::None),
+        ThinkingEffort::Low => base_chat_opts.with_reasoning_effort(ReasoningEffort::Low),
+        ThinkingEffort::Medium => base_chat_opts.with_reasoning_effort(ReasoningEffort::Medium),
+        ThinkingEffort::High => base_chat_opts.with_reasoning_effort(ReasoningEffort::High),
+        ThinkingEffort::XHigh => base_chat_opts.with_reasoning_effort(ReasoningEffort::XHigh),
+        ThinkingEffort::Max => base_chat_opts.with_reasoning_effort(ReasoningEffort::Max),
     };
 
     let clientbuilder = match &model {
