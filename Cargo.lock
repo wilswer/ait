@@ -41,6 +41,7 @@ dependencies = [
  "toml",
  "tui-big-text",
  "unicode-width",
+ "walkdir",
 ]
 
 [[package]]

@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::event::{MouseEvent, MouseEventKind};
-use ratatui_explorer::Input;
+use ratatui_explorer::{File, Input};
+use walkdir::WalkDir;
 
 use crate::app::{App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, get_file_content};
 
@@ -222,10 +223,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Char('j') | KeyCode::Down => app.file_explorer.handle(Input::Down)?,
             KeyCode::Char('k') | KeyCode::Up => app.file_explorer.handle(Input::Up)?,
             KeyCode::Enter => {
-                let current_file = app.file_explorer.current();
+                let current_file = app.file_explorer.current().clone();
                 if current_file.is_file() {
                     let current_name = current_file.name.to_string();
-                    let file_result = get_file_content(current_file);
+                    let file_result = get_file_content(&current_file.path);
                     let is_valid_file = file_result.is_ok()
                         || [".png", ".jpg", ".pdf"]
                             .iter()
@@ -248,6 +249,75 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                             current_name
                         ))
                     };
+                    app.set_app_mode(AppMode::Notify { notification });
+                } else if current_file.is_dir {
+                    let mut added_count: usize = 0;
+                    let mut skipped_count: usize = 0;
+                    let mut total_token_count: Option<usize> = None;
+
+                    for entry in WalkDir::new(&current_file.path)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
+                        if !entry.file_type().is_file() {
+                            continue;
+                        }
+
+                        let path = entry.path().to_path_buf();
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let is_hidden = name.starts_with('.');
+                        let file_type = Some(entry.file_type());
+
+                        let file_result = get_file_content(&path);
+                        let is_valid_file = file_result.is_ok()
+                            || [".png", ".jpg", ".pdf"]
+                                .iter()
+                                .any(|ext| name.ends_with(ext));
+
+                        if !is_valid_file {
+                            skipped_count += 1;
+                            continue;
+                        }
+
+                        if let Ok(file_content) = file_result {
+                            let tokens = app.estimate_tokens(file_content.deref());
+                            *total_token_count.get_or_insert(0) += tokens;
+                        }
+
+                        let file_entry = File {
+                            name,
+                            path,
+                            is_dir: false,
+                            is_hidden,
+                            file_type,
+                        };
+
+                        app.add_to_context(file_entry);
+                        added_count += 1;
+                    }
+
+                    let notification = if added_count > 0 {
+                        Notification::TokenEstimate((
+                            total_token_count,
+                            if skipped_count > 0 {
+                                format!(
+                                    "Added {} files from directory \"{}\" to context! ({} skipped)",
+                                    added_count, current_file.name, skipped_count
+                                )
+                            } else {
+                                format!(
+                                    "Added {} files from directory \"{}\" to context!",
+                                    added_count, current_file.name
+                                )
+                            },
+                        ))
+                    } else {
+                        Notification::Error(format!(
+                            "No valid files found in directory \"{}\".",
+                            current_file.name
+                        ))
+                    };
+
                     app.set_app_mode(AppMode::Notify { notification });
                 }
             }

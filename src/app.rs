@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::fs;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, fs::read_to_string, io};
 
@@ -44,15 +45,8 @@ fn estimate_tokens(text: &str) -> AppResult<usize> {
     Ok(base_count)
 }
 
-pub fn get_file_content(file: &File) -> io::Result<Cow<'_, str>> {
-    // If the path is a file, read its content.
-    if file.is_file() {
-        read_to_string(&file.path).map(Into::into)
-    } else if file.is_dir {
-        Ok("".into())
-    } else {
-        Ok("<not a regular file>".into())
-    }
+pub fn get_file_content(path: &PathBuf) -> io::Result<Cow<'_, str>> {
+    read_to_string(path).map(Into::into)
 }
 
 fn get_theme() -> ratatui_explorer::Theme {
@@ -532,7 +526,7 @@ impl<'a> App<'a> {
     }
 
     pub fn add_to_context(&mut self, new_context: File) {
-        let token_count = if let Ok(c) = get_file_content(&new_context) {
+        let token_count = if let Ok(c) = get_file_content(&new_context.path) {
             Some(estimate_tokens(c.as_ref()).unwrap_or(0))
         } else {
             None
@@ -655,13 +649,15 @@ impl<'a> App<'a> {
                             } else {
                                 "Plain Text".to_string()
                             };
-                        let context_str = get_file_content(&c.file)?;
-                        content_parts.push(ContentPart::from_text(format!(
-                            "\n---\nFile name: {}\nContent:\n```{}\n{}\n```",
-                            &c.file.name,
-                            syntax_name.to_lowercase(),
-                            context_str
-                        )));
+                        if c.file.is_file() {
+                            let context_str = get_file_content(&c.file.path)?;
+                            content_parts.push(ContentPart::from_text(format!(
+                                "\n---\nFile name: {}\nContent:\n```{}\n{}\n```",
+                                &c.file.name,
+                                syntax_name.to_lowercase(),
+                                context_str
+                            )));
+                        }
                     }
                 }
             }
