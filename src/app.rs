@@ -39,7 +39,30 @@ use crate::{models::ModelList, snippets::SnippetList};
 
 pub const RECACHE_COOLDOWN: u64 = 250;
 
-fn estimate_tokens(text: &str) -> AppResult<usize> {
+/// Async actions reported back to the main event loop by background tasks.
+#[derive(Debug, Clone)]
+pub enum Action {
+    StreamStart,
+    StreamPartial(String),
+    StreamComplete(String),
+    StreamCancelled(String),
+    Error(String),
+    ModelsLoaded(Vec<(String, String)>),
+    /// A single file was validated and its tokens estimated in the background.
+    /// The file is added to the context with the estimated token count
+    /// (`Some` for text files, `None` for recognized binary files).
+    ContextFileAdded {
+        file: File,
+        est_tokens: Option<usize>,
+    },
+    /// Signals that a background context-add operation finished, switching
+    /// the app to the given notification.
+    ContextAddDone {
+        notification: Notification,
+    },
+}
+
+pub fn estimate_tokens(text: &str) -> AppResult<usize> {
     let bpe = cl100k_base()?;
     let base_count = bpe.encode_ordinary(text).len();
     Ok(base_count)
@@ -47,6 +70,29 @@ fn estimate_tokens(text: &str) -> AppResult<usize> {
 
 pub fn get_file_content(path: &PathBuf) -> io::Result<Cow<'_, str>> {
     read_to_string(path).map(Into::into)
+}
+
+/// Returns true for binary file types that are added to context as-is (no token
+/// estimation is possible).
+pub fn is_binary_file(name: &str) -> bool {
+    [".pdf", ".jpg", ".png"].iter().any(|ext| name.ends_with(ext))
+}
+
+/// Reads a file (if it is a text file) and estimates its token count.
+///
+/// Returns `Ok(Some(count))` for readable text files, `Ok(None)` for recognized
+/// binary files (`pdf`/`jpg`/`png`), and `Err` for files that are neither valid
+/// UTF-8 text nor a recognized binary type.
+pub fn estimate_file_tokens(path: &PathBuf) -> AppResult<Option<usize>> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if is_binary_file(&name) {
+        return Ok(None);
+    }
+    let content = get_file_content(path)?;
+    Ok(Some(estimate_tokens(content.as_ref())?))
 }
 
 fn get_theme() -> ratatui_explorer::Theme {
@@ -525,12 +571,7 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub fn add_to_context(&mut self, new_context: File) {
-        let token_count = if let Ok(c) = get_file_content(&new_context.path) {
-            Some(estimate_tokens(c.as_ref()).unwrap_or(0))
-        } else {
-            None
-        };
+    pub fn add_to_context(&mut self, new_context: File, est_tokens: Option<usize>) {
         if let Some(mut current_context) = self.current_context.clone() {
             if !current_context
                 .iter()
@@ -540,14 +581,14 @@ impl<'a> App<'a> {
             {
                 current_context.push(ContextContent {
                     file: new_context,
-                    est_tokens: token_count,
+                    est_tokens,
                 });
                 self.current_context = Some(current_context)
             }
         } else {
             self.current_context = Some(vec![ContextContent {
                 file: new_context,
-                est_tokens: token_count,
+                est_tokens,
             }]);
         }
     }

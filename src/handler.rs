@@ -1,16 +1,24 @@
-use std::ops::Deref;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui_explorer::{File, Input};
+use tokio::sync::mpsc;
+use tokio::task;
 use walkdir::WalkDir;
 
-use crate::app::{App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, get_file_content};
+use crate::app::{Action, App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, estimate_file_tokens};
 
 /// Handles the key events and updates the state of [`App`].
-pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
+///
+/// `action_tx` is used to spawn background work (such as token estimation for
+/// files added to the context) and report results back to the main loop.
+pub fn handle_key_events(
+    key_event: KeyEvent,
+    app: &mut App,
+    action_tx: &mpsc::Sender<Action>,
+) -> AppResult<()> {
     let KeyEvent {
         code, modifiers, ..
     } = key_event;
@@ -225,100 +233,109 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             KeyCode::Enter => {
                 let current_file = app.file_explorer.current().clone();
                 if current_file.is_file() {
-                    let current_name = current_file.name.to_string();
-                    let file_result = get_file_content(&current_file.path);
-                    let is_valid_file = file_result.is_ok()
-                        || [".png", ".jpg", ".pdf"]
-                            .iter()
-                            .any(|ext| current_name.ends_with(ext));
+                    let file = current_file.clone();
+                    let name = file.name.clone();
+                    let tx = action_tx.clone();
 
-                    let notification = if is_valid_file {
-                        let token_count = if let Ok(file_content) = file_result {
-                            Some(app.estimate_tokens(file_content.deref()))
-                        } else {
-                            None
-                        };
-                        app.add_to_context(current_file.clone());
-                        Notification::TokenEstimate((
-                            token_count,
-                            format!("File {} added to context!", current_name),
-                        ))
-                    } else {
-                        Notification::Error(format!(
-                            "Could not add file {} to context.",
-                            current_name
-                        ))
-                    };
-                    app.set_app_mode(AppMode::Notify { notification });
+                    // Reading the file and running the BPE tokenizer is
+                    // potentially slow for large files, so do it on a
+                    // blocking task to keep the UI responsive.
+                    task::spawn_blocking(move || {
+                        match estimate_file_tokens(&file.path) {
+                            Ok(est_tokens) => {
+                                let _ = tx.blocking_send(Action::ContextFileAdded {
+                                    file: file.clone(),
+                                    est_tokens,
+                                });
+                                let _ = tx.blocking_send(Action::ContextAddDone {
+                                    notification: Notification::TokenEstimate((
+                                        est_tokens,
+                                        format!("File {} added to context!", name),
+                                    )),
+                                });
+                            }
+                            Err(_) => {
+                                let _ = tx.blocking_send(Action::ContextAddDone {
+                                    notification: Notification::Error(format!(
+                                        "Could not add file {} to context.",
+                                        name
+                                    )),
+                                });
+                            }
+                        }
+                    });
                 } else if current_file.is_dir {
-                    let mut added_count: usize = 0;
-                    let mut skipped_count: usize = 0;
-                    let mut total_token_count: Option<usize> = None;
+                    let dir = current_file.clone();
+                    let dir_name = dir.name.clone();
+                    let tx = action_tx.clone();
 
-                    for entry in WalkDir::new(&current_file.path)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
-                        if !entry.file_type().is_file() {
-                            continue;
+                    task::spawn_blocking(move || {
+                        let mut added_count: usize = 0;
+                        let mut skipped_count: usize = 0;
+                        let mut total_token_count: usize = 0;
+
+                        for entry in WalkDir::new(&dir.path)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                        {
+                            if !entry.file_type().is_file() {
+                                continue;
+                            }
+
+                            let path = entry.path().to_path_buf();
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            let is_hidden = name.starts_with('.');
+                            let file_type = Some(entry.file_type());
+
+                            let file_entry = File {
+                                name,
+                                path: path.clone(),
+                                is_dir: false,
+                                is_hidden,
+                                file_type,
+                            };
+
+                            match estimate_file_tokens(&path) {
+                                Ok(est_tokens) => {
+                                    if let Some(t) = est_tokens {
+                                        total_token_count += t;
+                                    }
+                                    let _ = tx.blocking_send(Action::ContextFileAdded {
+                                        file: file_entry,
+                                        est_tokens,
+                                    });
+                                    added_count += 1;
+                                }
+                                Err(_) => {
+                                    skipped_count += 1;
+                                }
+                            }
                         }
 
-                        let path = entry.path().to_path_buf();
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        let is_hidden = name.starts_with('.');
-                        let file_type = Some(entry.file_type());
-
-                        let file_result = get_file_content(&path);
-                        let is_valid_file = file_result.is_ok()
-                            || [".png", ".jpg", ".pdf"]
-                                .iter()
-                                .any(|ext| name.ends_with(ext));
-
-                        if !is_valid_file {
-                            skipped_count += 1;
-                            continue;
-                        }
-
-                        if let Ok(file_content) = file_result {
-                            let tokens = app.estimate_tokens(file_content.deref());
-                            *total_token_count.get_or_insert(0) += tokens;
-                        }
-
-                        let file_entry = File {
-                            name,
-                            path,
-                            is_dir: false,
-                            is_hidden,
-                            file_type,
+                        let notification = if added_count > 0 {
+                            Notification::TokenEstimate((
+                                Some(total_token_count),
+                                if skipped_count > 0 {
+                                    format!(
+                                        "Added {} files from directory \"{}\" to context! ({} skipped)",
+                                        added_count, dir_name, skipped_count
+                                    )
+                                } else {
+                                    format!(
+                                        "Added {} files from directory \"{}\" to context!",
+                                        added_count, dir_name
+                                    )
+                                },
+                            ))
+                        } else {
+                            Notification::Error(format!(
+                                "No valid files found in directory \"{}\".",
+                                dir_name
+                            ))
                         };
 
-                        app.add_to_context(file_entry);
-                        added_count += 1;
-                    }
-
-                    let notification = if added_count > 0 {
-                        Notification::TokenEstimate((
-                            total_token_count,
-                            if skipped_count > 0 {
-                                format!(
-                                    "Added {} files from directory \"{}\" to context! ({} skipped)",
-                                    added_count, current_file.name, skipped_count
-                                )
-                            } else {
-                                format!(
-                                    "Added {} files from directory \"{}\" to context!",
-                                    added_count, current_file.name
-                                )
-                            },
-                        ))
-                    } else {
-                        Notification::Error(format!(
-                            "No valid files found in directory \"{}\".",
-                            current_file.name
-                        ))
-                    };
-
-                    app.set_app_mode(AppMode::Notify { notification });
+                        let _ = tx.blocking_send(Action::ContextAddDone { notification });
+                    });
                 }
             }
             KeyCode::Char('d') if app.file_explorer.current().is_file() => {
