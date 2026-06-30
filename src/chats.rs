@@ -15,12 +15,20 @@ pub struct ChatItem {
 
 impl FromIterator<(i64, String, bool)> for ChatList {
     fn from_iter<I: IntoIterator<Item = (i64, String, bool)>>(iter: I) -> Self {
-        let items = iter
+        let items: Vec<ChatItem> = iter
             .into_iter()
             .map(|(id, started_at, selected)| ChatItem::new(id, started_at, selected))
             .collect();
+
+        let index = items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.selected) // assuming ChatItem has a `selected` field
+            .map(|(idx, _)| idx)
+            .or(Some(0));
+
         let mut state = ListState::default();
-        state.select_first();
+        state.select(index);
         Self { items, state }
     }
 }

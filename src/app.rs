@@ -6,6 +6,7 @@ use std::{borrow::Cow, fs::read_to_string, io};
 use anyhow::{Context, Result, anyhow};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
+use genai::ModelSpec;
 use genai::chat::ContentPart;
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
@@ -20,6 +21,8 @@ use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
 use ratatui_textarea::TextArea;
 use tiktoken_rs::cl100k_base;
 
+use crate::config::ModelConfig;
+use crate::models::{ModelItem, generate_model_spec};
 use crate::ui::messages_to_lines;
 use crate::{
     ai::MODELS,
@@ -300,8 +303,8 @@ pub struct App<'a> {
     pub clipboard: Clipboard,
     /// List of models
     pub model_list: ModelList,
-    /// Selected model name
-    pub selected_model_name: String,
+    /// Selected model
+    pub selected_model: ModelSpec,
     /// Discovered snippets
     pub snippet_list: SnippetList,
     /// List of chats
@@ -372,7 +375,7 @@ impl Default for App<'_> {
                     (provider, model, false)
                 }
             })),
-            selected_model_name: "gemini-3.1-pro-preview".to_string(),
+            selected_model: "gemini-3.1-pro-preview".into(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
@@ -405,17 +408,20 @@ impl Default for App<'_> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(system_prompt: &'a str, default_model: String) -> Self {
-        let model_list = ModelList::from_iter(MODELS.map(|(provider, model)| {
-            if model == default_model {
-                (provider, model, true)
+    pub fn new(system_prompt: &'a str, default_model: ModelConfig) -> Self {
+        let model_list = ModelList::from_iter(MODELS.map(|(provider, name)| {
+            if name == default_model.name {
+                (provider, name, true)
             } else {
-                (provider, model, false)
+                (provider, name, false)
             }
         }));
         Self {
             system_prompt,
-            selected_model_name: default_model,
+            selected_model: generate_model_spec(
+                default_model.name.as_str(),
+                default_model.provider.as_str(),
+            ),
             model_list,
             ..Default::default()
         }
@@ -849,7 +855,9 @@ impl<'a> App<'a> {
                 item.selected = false;
             }
             self.model_list.items[actual_idx].selected = true;
-            self.selected_model_name = self.model_list.items[actual_idx].name.to_string();
+            let ModelItem { provider, name, .. } = self.model_list.items[actual_idx].clone();
+            let model_spec = generate_model_spec(name.as_str(), provider.as_str());
+            self.selected_model = model_spec;
         }
     }
 
@@ -917,7 +925,13 @@ impl<'a> App<'a> {
         let chats = list_conversations(query_filter)?;
         let chats = chats
             .into_iter()
-            .map(|(id, started_at)| (id, started_at, false))
+            .map(|(id, started_at)| {
+                if Some(&id) == self.get_selected_chat_id() {
+                    (id, started_at, true)
+                } else {
+                    (id, started_at, false)
+                }
+            })
             .collect::<Vec<(i64, String, bool)>>();
         self.chat_list = ChatList::from_iter(chats);
         Ok(())
@@ -928,10 +942,18 @@ impl<'a> App<'a> {
             let chat_id = self.chat_list.items[i].chat_id;
             delete_conversation(chat_id)?;
             self.chat_list.items.remove(i);
+            let new_chat_index = if i >= self.chat_list.items.len() {
+                i - 1
+            } else {
+                i
+            };
+            self.chat_list.items[new_chat_index].selected = true;
+            self.chat_list.state.select(Some(new_chat_index));
+            let new_chat_id = self.chat_list.items[new_chat_index].chat_id;
             self.messages.clear();
             self.cached_lines.clear();
-            self.messages = list_all_messages(chat_id)?;
-            self.conversation_id = None;
+            self.messages = list_all_messages(new_chat_id)?;
+            self.conversation_id = Some(new_chat_id);
             self.needs_recache = true;
         }
         Ok(())

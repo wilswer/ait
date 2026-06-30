@@ -17,5 +17,5 @@ system_prompt = "You are a helpful, friendly assistant."
 
 # Default model to use when the app starts.
 # Can be changed in-app via the model selection menu.
-# Default: "gemini-3.1-pro-preview"
-default_model = "gemini-3.1-pro-preview"
+# Default: {name = "gemini-3.1-pro-preview", provider = "Gemini"}
+default_model = {name = "gemini-3.1-pro-preview", provider = "Gemini"}
