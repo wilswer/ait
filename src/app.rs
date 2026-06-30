@@ -925,7 +925,13 @@ impl<'a> App<'a> {
         let chats = list_conversations(query_filter)?;
         let chats = chats
             .into_iter()
-            .map(|(id, started_at)| (id, started_at, false))
+            .map(|(id, started_at)| {
+                if Some(&id) == self.get_selected_chat_id() {
+                    (id, started_at, true)
+                } else {
+                    (id, started_at, false)
+                }
+            })
             .collect::<Vec<(i64, String, bool)>>();
         self.chat_list = ChatList::from_iter(chats);
         Ok(())
@@ -936,10 +942,18 @@ impl<'a> App<'a> {
             let chat_id = self.chat_list.items[i].chat_id;
             delete_conversation(chat_id)?;
             self.chat_list.items.remove(i);
+            let new_chat_index = if i >= self.chat_list.items.len() {
+                i - 1
+            } else {
+                i
+            };
+            self.chat_list.items[new_chat_index].selected = true;
+            self.chat_list.state.select(Some(new_chat_index));
+            let new_chat_id = self.chat_list.items[new_chat_index].chat_id;
             self.messages.clear();
             self.cached_lines.clear();
-            self.messages = list_all_messages(chat_id)?;
-            self.conversation_id = None;
+            self.messages = list_all_messages(new_chat_id)?;
+            self.conversation_id = Some(new_chat_id);
             self.needs_recache = true;
         }
         Ok(())
