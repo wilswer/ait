@@ -89,10 +89,27 @@ pub fn estimate_file_tokens(path: &PathBuf) -> AppResult<Option<usize>> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     if is_binary_file(&name) {
+        tracing::debug!(
+            path = %path.display(),
+            "skipped token estimation: recognized binary file"
+        );
         return Ok(None);
     }
-    let content = get_file_content(path)?;
-    Ok(Some(estimate_tokens(content.as_ref())?))
+    match get_file_content(path) {
+        Ok(content) => Ok(Some(estimate_tokens(content.as_ref())?)),
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "skipped file during token estimation: could not read as UTF-8 text"
+            );
+            Err(anyhow!(
+                "Could not read file \"{}\" as text: {}",
+                path.display(),
+                e
+            ))
+        }
+    }
 }
 
 fn get_theme() -> ratatui_explorer::Theme {

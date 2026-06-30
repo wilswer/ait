@@ -243,6 +243,11 @@ pub fn handle_key_events(
                     task::spawn_blocking(move || {
                         match estimate_file_tokens(&file.path) {
                             Ok(est_tokens) => {
+                                tracing::info!(
+                                    path = %file.path.display(),
+                                    est_tokens = ?est_tokens,
+                                    "file added to context"
+                                );
                                 let _ = tx.blocking_send(Action::ContextFileAdded {
                                     file: file.clone(),
                                     est_tokens,
@@ -255,6 +260,8 @@ pub fn handle_key_events(
                                 });
                             }
                             Err(_) => {
+                                // The reason is already logged (at WARN level)
+                                // inside `estimate_file_tokens`.
                                 let _ = tx.blocking_send(Action::ContextAddDone {
                                     notification: Notification::Error(format!(
                                         "Could not add file {} to context.",
@@ -273,6 +280,11 @@ pub fn handle_key_events(
                         let mut added_count: usize = 0;
                         let mut skipped_count: usize = 0;
                         let mut total_token_count: usize = 0;
+
+                        tracing::info!(
+                            dir = %dir.path.display(),
+                            "scanning directory for files to add to context"
+                        );
 
                         for entry in WalkDir::new(&dir.path)
                             .into_iter()
@@ -307,10 +319,21 @@ pub fn handle_key_events(
                                     added_count += 1;
                                 }
                                 Err(_) => {
+                                    // The reason (e.g. not valid UTF-8) is
+                                    // logged at WARN level inside
+                                    // `estimate_file_tokens`.
                                     skipped_count += 1;
                                 }
                             }
                         }
+
+                        tracing::info!(
+                            dir = %dir.path.display(),
+                            added = added_count,
+                            skipped = skipped_count,
+                            total_tokens = total_token_count,
+                            "directory scan complete"
+                        );
 
                         let notification = if added_count > 0 {
                             Notification::TokenEstimate((

@@ -142,6 +142,11 @@ Context:
     create_db().context("Failed to create database")?;
     migrate_db().context("Failed to migrate database")?;
 
+    // Initialize file-based logging. The guard must be held until shutdown so
+    // the background writer is flushed; if initialization fails logging is
+    // simply disabled and the app continues.
+    let _log_guard = ait::logger::init_logging();
+
     let mut app = App::new(&system_prompt, default_model);
 
     // Initialize the terminal user interface.
