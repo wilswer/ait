@@ -3,6 +3,9 @@
 /// Application.
 pub mod app;
 
+/// Application logging.
+pub mod logger;
+
 /// Terminal events handler.
 pub mod event;
 

@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio::task;
 
 use ait::ai::{assistant_response_streaming, get_models};
-use ait::app::{App, AppMode, AppResult, Message, Notification};
+use ait::app::{Action, App, AppMode, AppResult, Message, Notification};
 use ait::cli::Cli;
 use ait::config::{Config, ModelConfig};
 use ait::event::{Event, EventHandler};
@@ -18,21 +18,12 @@ use ait::handler::{handle_key_events, handle_mouse_events};
 use ait::storage::{create_db, migrate_db};
 use ait::tui::Tui;
 
-#[derive(Debug, Clone)]
-enum Action {
-    StreamStart,
-    StreamPartial(String),
-    StreamComplete(String),
-    StreamCancelled(String),
-    Error(String),
-    ModelsLoaded(Vec<(String, String)>),
-}
-
 /// Handle a single terminal event (key/mouse/tick/resize).
 fn handle_event(
     event: Event,
     app: &mut App,
     current_cancel_tx: &mut Option<mpsc::Sender<()>>,
+    action_tx: &mpsc::Sender<Action>,
 ) -> AppResult<()> {
     match event {
         Event::Tick => app.tick(),
@@ -45,7 +36,7 @@ fn handle_event(
                     let _ = tx.try_send(());
                 }
             }
-            handle_key_events(key_event, app).context("Error handling key events")?;
+            handle_key_events(key_event, app, action_tx).context("Error handling key events")?;
         }
         Event::Mouse(mouse_event) => {
             handle_mouse_events(mouse_event, app)?;
@@ -93,6 +84,12 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
         Action::ModelsLoaded(models) => {
             app.set_models(models);
             app.set_chat_list(None)?;
+        }
+        Action::ContextFileAdded { file, est_tokens } => {
+            app.add_to_context(file, est_tokens);
+        }
+        Action::ContextAddDone { notification } => {
+            app.set_app_mode(AppMode::Notify { notification });
         }
     }
     Ok(())
@@ -145,6 +142,11 @@ Context:
     create_db().context("Failed to create database")?;
     migrate_db().context("Failed to migrate database")?;
 
+    // Initialize file-based logging. The guard must be held until shutdown so
+    // the background writer is flushed; if initialization fails logging is
+    // simply disabled and the app continues.
+    let _log_guard = ait::logger::init_logging();
+
     let mut app = App::new(&system_prompt, default_model);
 
     // Initialize the terminal user interface.
@@ -172,11 +174,11 @@ Context:
             // --- Terminal events ---
             maybe_event = tui.events.next() => {
                 let event = maybe_event.context("Unable to get next event")?;
-                handle_event(event, &mut app, &mut current_cancel_tx)?;
+                handle_event(event, &mut app, &mut current_cancel_tx, &action_tx)?;
 
                 // Drain any terminal events that arrived immediately behind it.
                 while let Some(Ok(next_event)) = tui.events.next().now_or_never() {
-                    handle_event(next_event, &mut app, &mut current_cancel_tx)?;
+                    handle_event(next_event, &mut app, &mut current_cancel_tx, &action_tx)?;
                 }
             }
 

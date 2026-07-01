@@ -1440,7 +1440,7 @@ fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) 
 
 fn render_file_explorer(f: &mut Frame, area: Rect, app: &mut App) {
     let layout = Layout::horizontal([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]);
-    let file_content = get_file_content(app.file_explorer.current());
+    let file_content = get_file_content(&app.file_explorer.current().path);
 
     let file_content = match file_content {
         Ok(file_content) => file_content,
