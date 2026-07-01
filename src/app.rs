@@ -408,6 +408,14 @@ pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
     let mut input_textarea = TextArea::default();
     input_textarea.set_block(Block::bordered().title(title));
     input_textarea.set_style(Style::default().fg(Color::Yellow));
+    input_textarea.set_cursor_line_style(Style::default().not_underlined());
+    input_textarea.set_cursor_style(Style::default().bg(Color::DarkGray));
+    if title == "Input" {
+        input_textarea.set_placeholder_text(
+            "The mind is not a vessel to be filled, but a fire to be kindled...",
+        );
+        input_textarea.set_placeholder_style(Style::default().fg(Color::DarkGray).italic().dim());
+    }
     input_textarea
 }
 
