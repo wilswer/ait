@@ -117,8 +117,12 @@ pub fn handle_key_events(
             KeyCode::Char('s') | KeyCode::Char('S')
                 if modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                app.submit_message()
-                    .context("Handler failed to submit message")?;
+                match app.submit_message() {
+                    AppResult::Ok(_) => {}
+                    AppResult::Err(e) => app.set_app_mode(AppMode::Notify {
+                        notification: Notification::Error(format!("Cannot submit message: {}", e)),
+                    }),
+                }
             }
             _ => {
                 app.input_textarea.input(key_event);

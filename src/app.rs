@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, fs::read_to_string, io};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 use genai::ModelSpec;
@@ -690,6 +690,12 @@ impl<'a> App<'a> {
         let text = self.input_textarea.lines().join("\n");
         if text.is_empty() {
             return Ok(());
+        }
+        if self.is_waiting_for_response {
+            bail!("The app is waiting for a response.");
+        }
+        if self.is_streaming {
+            bail!("The app is streaming a response.");
         }
         let mut content_parts = Vec::new();
         if let Some(context) = &self.current_context {
