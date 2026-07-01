@@ -256,9 +256,9 @@ pub const THINKING_EFFORTS: [&str; 6] = ["None", "Low", "Medium", "High", "XHigh
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ThinkingEffort {
-    #[default]
     None,
     Low,
+    #[default]
     Medium,
     High,
     XHigh,
@@ -455,7 +455,7 @@ impl Default for App<'_> {
             current_context: None,
             search_bar: styled_textarea("Search"),
             do_highlight: true,
-            thinking_effort: ThinkingEffort::None,
+            thinking_effort: ThinkingEffort::Medium,
             thinking_effort_state: {
                 let mut s = ListState::default();
                 s.select_first();
