@@ -75,7 +75,9 @@ pub fn get_file_content(path: &PathBuf) -> io::Result<Cow<'_, str>> {
 /// Returns true for binary file types that are added to context as-is (no token
 /// estimation is possible).
 pub fn is_binary_file(name: &str) -> bool {
-    [".pdf", ".jpg", ".png"].iter().any(|ext| name.ends_with(ext))
+    [".pdf", ".jpg", ".png"]
+        .iter()
+        .any(|ext| name.ends_with(ext))
 }
 
 /// Reads a file (if it is a text file) and estimates its token count.
