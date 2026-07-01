@@ -8,7 +8,9 @@ use tokio::sync::mpsc;
 use tokio::task;
 use walkdir::WalkDir;
 
-use crate::app::{Action, App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, estimate_file_tokens};
+use crate::app::{
+    Action, App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, estimate_file_tokens,
+};
 
 /// Handles the key events and updates the state of [`App`].
 ///
@@ -286,10 +288,7 @@ pub fn handle_key_events(
                             "scanning directory for files to add to context"
                         );
 
-                        for entry in WalkDir::new(&dir.path)
-                            .into_iter()
-                            .filter_map(|e| e.ok())
-                        {
+                        for entry in WalkDir::new(&dir.path).into_iter().filter_map(|e| e.ok()) {
                             if !entry.file_type().is_file() {
                                 continue;
                             }
