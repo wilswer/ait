@@ -442,7 +442,6 @@ fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
         return vec![Line::from(spans.to_vec())];
     }
 
-    // Flatten into (style, word, trailing_space) tokens.
     #[derive(Clone)]
     struct Tok<'a> {
         style: Style,
@@ -452,33 +451,30 @@ fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
     let mut tokens: Vec<Tok> = Vec::new();
     for span in spans {
         let style = span.style;
-        for word in span.content.split(' ') {
-            // skip empties produced by consecutive spaces at split boundaries,
-            // but preserve a single-space gap
-            if word.is_empty() {
-                if let Some(last) = tokens.last()
-                    && !last.text.ends_with(' ')
-                {
+        let mut current_chunk = String::new();
+        let mut current_is_space: Option<bool> = None;
+
+        for c in span.content.chars() {
+            let c_is_space = c == ' ';
+            if current_is_space == Some(c_is_space) {
+                current_chunk.push(c);
+            } else {
+                if !current_chunk.is_empty() {
                     tokens.push(Tok {
                         style,
-                        text: " ".into(),
+                        text: std::mem::take(&mut current_chunk).into(),
                     });
                 }
-                continue;
+                current_chunk.push(c);
+                current_is_space = Some(c_is_space);
             }
+        }
+        if !current_chunk.is_empty() {
             tokens.push(Tok {
                 style,
-                text: word.into(),
-            });
-            tokens.push(Tok {
-                style,
-                text: " ".into(),
+                text: current_chunk.into(),
             });
         }
-    }
-    // trim trailing space token
-    if tokens.last().map(|t| t.text.as_ref()) == Some(" ") {
-        tokens.pop();
     }
 
     let mut out: Vec<Line<'a>> = Vec::new();
