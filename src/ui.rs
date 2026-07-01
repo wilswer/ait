@@ -287,10 +287,6 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             continue; // i already advanced
         }
 
-        // ... rest of original processing (headings, lists, etc.) ...
-        // Use the same code as before, but wrapped in the while loop
-        // (original code omitted for brevity; keep everything from the original function)
-
         if trimmed.is_empty() {
             lines.push(Line::default());
             i += 1;
@@ -340,7 +336,12 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             let bullet_prefix = format!("{}• ", " ".repeat(indent));
             let prefix_w = bullet_prefix.chars().count();
             let avail = width.saturating_sub(prefix_w).max(1);
-            for (idx, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+
+            // Parse inline markdown on the *whole* item text first so that
+            // `**bold**` / `*italic*` / `` `code` `` pairs are matched against
+            // the unbroken source — then wrap the already-styled spans.
+            let item_spans = parse_inline_markdown(item_text, style);
+            for (idx, line) in wrap_spans(&item_spans, avail).into_iter().enumerate() {
                 let mut spans = if idx == 0 {
                     vec![Span::styled(
                         bullet_prefix.clone(),
@@ -349,7 +350,7 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
                 } else {
                     vec![Span::styled(" ".repeat(prefix_w), style)]
                 };
-                spans.extend(parse_inline_markdown(piece, style));
+                spans.extend(line.spans);
                 lines.push(Line::from(spans));
             }
             i += 1;
@@ -364,7 +365,9 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             let prefix_w = num_prefix.chars().count();
             let item_text = &trimmed[num_end + 2..];
             let avail = width.saturating_sub(prefix_w).max(1);
-            for (idx, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+
+            let item_spans = parse_inline_markdown(item_text, style);
+            for (idx, line) in wrap_spans(&item_spans, avail).into_iter().enumerate() {
                 let mut spans = if idx == 0 {
                     vec![Span::styled(
                         num_prefix.clone(),
@@ -373,7 +376,7 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
                 } else {
                     vec![Span::styled(" ".repeat(prefix_w), style)]
                 };
-                spans.extend(parse_inline_markdown(piece, style));
+                spans.extend(line.spans);
                 lines.push(Line::from(spans));
             }
             i += 1;
@@ -381,9 +384,8 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
         }
 
         // Regular paragraph
-        for piece in textwrap::wrap(line, width.max(1)) {
-            lines.push(Line::from(parse_inline_markdown(&piece, style)));
-        }
+        let full_spans = parse_inline_markdown(line, style);
+        lines.extend(wrap_spans(&full_spans, width.max(1)));
         i += 1;
     }
 
@@ -428,6 +430,88 @@ pub fn strip_inline_markdown(text: &str) -> String {
         rest = &rest[c.len_utf8()..];
     }
     result
+}
+
+/// Word-wrap a sequence of styled spans into multiple lines, preserving the
+/// style of every (sub)span. Splits on whitespace; a single long word may
+/// exceed `width`.
+fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
+    use unicode_width::UnicodeWidthStr;
+
+    if width == 0 {
+        return vec![Line::from(spans.to_vec())];
+    }
+
+    // Flatten into (style, word, trailing_space) tokens.
+    #[derive(Clone)]
+    struct Tok<'a> {
+        style: Style,
+        text: std::borrow::Cow<'a, str>,
+    }
+
+    let mut tokens: Vec<Tok> = Vec::new();
+    for span in spans {
+        let style = span.style;
+        for word in span.content.split(' ') {
+            // skip empties produced by consecutive spaces at split boundaries,
+            // but preserve a single-space gap
+            if word.is_empty() {
+                if let Some(last) = tokens.last()
+                    && !last.text.ends_with(' ')
+                {
+                    tokens.push(Tok {
+                        style,
+                        text: " ".into(),
+                    });
+                }
+                continue;
+            }
+            tokens.push(Tok {
+                style,
+                text: word.into(),
+            });
+            tokens.push(Tok {
+                style,
+                text: " ".into(),
+            });
+        }
+    }
+    // trim trailing space token
+    if tokens.last().map(|t| t.text.as_ref()) == Some(" ") {
+        tokens.pop();
+    }
+
+    let mut out: Vec<Line<'a>> = Vec::new();
+    let mut cur: Vec<Span<'a>> = Vec::new();
+    let mut cur_w = 0usize;
+
+    for tok in tokens {
+        let w = UnicodeWidthStr::width(tok.text.as_ref());
+        if cur_w + w > width && !cur.is_empty() {
+            // drop trailing space from current line
+            if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
+                cur.pop();
+            }
+            out.push(Line::from(std::mem::take(&mut cur)));
+            cur_w = 0;
+            // skip leading space of new line
+            if tok.text == " " {
+                continue;
+            }
+        }
+        cur_w += w;
+        cur.push(Span::styled(tok.text.into_owned(), tok.style));
+    }
+    if !cur.is_empty() {
+        if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
+            cur.pop();
+        }
+        out.push(Line::from(cur));
+    }
+    if out.is_empty() {
+        out.push(Line::default());
+    }
+    out
 }
 
 fn render_table_block(rows: &[&str], _width: usize, style: Style) -> Vec<Line<'static>> {
