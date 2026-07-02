@@ -16,7 +16,6 @@ use ratatui::{
     },
 };
 use syntect::highlighting::Theme;
-use tui_big_text::{BigText, PixelSize};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
@@ -27,6 +26,9 @@ use crate::{
     },
     storage::list_all_messages,
 };
+
+const AIT_ASCII: &str = include_str!("../assets/ait.txt");
+
 const SPINNER_FRAMES: &[&str] = &[
     " ⠀⠀",
     "⡀⠀⠀",
@@ -287,10 +289,6 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             continue; // i already advanced
         }
 
-        // ... rest of original processing (headings, lists, etc.) ...
-        // Use the same code as before, but wrapped in the while loop
-        // (original code omitted for brevity; keep everything from the original function)
-
         if trimmed.is_empty() {
             lines.push(Line::default());
             i += 1;
@@ -340,7 +338,12 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             let bullet_prefix = format!("{}• ", " ".repeat(indent));
             let prefix_w = bullet_prefix.chars().count();
             let avail = width.saturating_sub(prefix_w).max(1);
-            for (idx, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+
+            // Parse inline markdown on the *whole* item text first so that
+            // `**bold**` / `*italic*` / `` `code` `` pairs are matched against
+            // the unbroken source — then wrap the already-styled spans.
+            let item_spans = parse_inline_markdown(item_text, style);
+            for (idx, line) in wrap_spans(&item_spans, avail).into_iter().enumerate() {
                 let mut spans = if idx == 0 {
                     vec![Span::styled(
                         bullet_prefix.clone(),
@@ -349,7 +352,7 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
                 } else {
                     vec![Span::styled(" ".repeat(prefix_w), style)]
                 };
-                spans.extend(parse_inline_markdown(piece, style));
+                spans.extend(line.spans);
                 lines.push(Line::from(spans));
             }
             i += 1;
@@ -364,7 +367,9 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
             let prefix_w = num_prefix.chars().count();
             let item_text = &trimmed[num_end + 2..];
             let avail = width.saturating_sub(prefix_w).max(1);
-            for (idx, piece) in textwrap::wrap(item_text, avail).iter().enumerate() {
+
+            let item_spans = parse_inline_markdown(item_text, style);
+            for (idx, line) in wrap_spans(&item_spans, avail).into_iter().enumerate() {
                 let mut spans = if idx == 0 {
                     vec![Span::styled(
                         num_prefix.clone(),
@@ -373,7 +378,7 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
                 } else {
                     vec![Span::styled(" ".repeat(prefix_w), style)]
                 };
-                spans.extend(parse_inline_markdown(piece, style));
+                spans.extend(line.spans);
                 lines.push(Line::from(spans));
             }
             i += 1;
@@ -381,9 +386,8 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
         }
 
         // Regular paragraph
-        for piece in textwrap::wrap(line, width.max(1)) {
-            lines.push(Line::from(parse_inline_markdown(&piece, style)));
-        }
+        let full_spans = parse_inline_markdown(line, style);
+        lines.extend(wrap_spans(&full_spans, width.max(1)));
         i += 1;
     }
 
@@ -428,6 +432,84 @@ pub fn strip_inline_markdown(text: &str) -> String {
         rest = &rest[c.len_utf8()..];
     }
     result
+}
+
+/// Word-wrap a sequence of styled spans into multiple lines, preserving the
+/// style of every (sub)span. Splits on whitespace; a single long word may
+/// exceed `width`.
+fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
+    use unicode_width::UnicodeWidthStr;
+
+    if width == 0 {
+        return vec![Line::from(spans.to_vec())];
+    }
+
+    #[derive(Clone)]
+    struct Tok<'a> {
+        style: Style,
+        text: std::borrow::Cow<'a, str>,
+    }
+
+    let mut tokens: Vec<Tok> = Vec::new();
+    for span in spans {
+        let style = span.style;
+        let mut current_chunk = String::new();
+        let mut current_is_space: Option<bool> = None;
+
+        for c in span.content.chars() {
+            let c_is_space = c == ' ';
+            if current_is_space == Some(c_is_space) {
+                current_chunk.push(c);
+            } else {
+                if !current_chunk.is_empty() {
+                    tokens.push(Tok {
+                        style,
+                        text: std::mem::take(&mut current_chunk).into(),
+                    });
+                }
+                current_chunk.push(c);
+                current_is_space = Some(c_is_space);
+            }
+        }
+        if !current_chunk.is_empty() {
+            tokens.push(Tok {
+                style,
+                text: current_chunk.into(),
+            });
+        }
+    }
+
+    let mut out: Vec<Line<'a>> = Vec::new();
+    let mut cur: Vec<Span<'a>> = Vec::new();
+    let mut cur_w = 0usize;
+
+    for tok in tokens {
+        let w = UnicodeWidthStr::width(tok.text.as_ref());
+        if cur_w + w > width && !cur.is_empty() {
+            // drop trailing space from current line
+            if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
+                cur.pop();
+            }
+            out.push(Line::from(std::mem::take(&mut cur)));
+            cur_w = 0;
+            // skip leading space of new line
+            if tok.text == " " {
+                continue;
+            }
+        }
+        cur_w += w;
+        cur.push(Span::styled(tok.text.into_owned(), tok.style));
+    }
+    if !cur.is_empty() {
+        if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
+            cur.pop();
+        }
+        out.push(Line::from(cur));
+    }
+    if out.is_empty() {
+        out.push(Line::default());
+    }
+    out
 }
 
 fn render_table_block(rows: &[&str], _width: usize, style: Style) -> Vec<Line<'static>> {
@@ -831,8 +913,8 @@ pub fn style_message<'a>(message: Message, line_width: usize, theme: Theme) -> V
 
 /// Render an assistant "waiting for response" bubble with an animated spinner.
 fn waiting_bubble<'a>(line_width: usize, spinner_frame: usize) -> Vec<Line<'a>> {
-    let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
-    let thinking_split_n = (spinner_frame / 4) % THINKING_VERB.len();
+    let frame = SPINNER_FRAMES[(spinner_frame / 2) % SPINNER_FRAMES.len()];
+    let thinking_split_n = (spinner_frame / 8) % THINKING_VERB.len();
     let (think1, think2) = THINKING_VERB.split_at(thinking_split_n);
     let body = vec![
         Line::from(vec![
@@ -924,23 +1006,185 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     );
 }
 
-// Fron Ratatui's website
-fn center_rect(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
-    let [area] = Layout::horizontal([horizontal])
-        .flex(Flex::Center)
-        .areas(area);
-    let [area] = Layout::vertical([vertical]).flex(Flex::Center).areas(area);
-    area
-}
+fn render_init_screen(f: &mut Frame, area: Rect, frame: usize) {
+    let title = AIT_ASCII;
+    let title_lines: Vec<&str> = title.lines().collect();
+    let title_height = title_lines.len();
+    let offset = 2;
 
-fn render_init_screen(f: &mut Frame, area: Rect) {
-    let big_text = BigText::builder()
-        .alignment(Alignment::Center)
-        .pixel_size(PixelSize::Full)
-        .lines(vec!["AIT".into()])
-        .build();
-    let centered_area = center_rect(area, Constraint::Length(24), Constraint::Length(8)); // 3 8x8 characters
-    f.render_widget(big_text, centered_area);
+    // --- Ripple animation ---
+    let speed = 2; // spinner frames per line advance
+
+    // Let the wave go slightly past the bottom so it fully leaves the screen
+    let wave_len = title_height + offset + 5;
+    let pause_len = title_height * 16;
+
+    // Startup sequence: filling, wait
+    let startup_len = wave_len + pause_len;
+
+    // Loop sequence: emptying, filling, wait
+    let loop_len = wave_len * 2 + pause_len;
+
+    let step = frame / speed;
+
+    let phase: u8;
+    let wave_pos: usize;
+
+    if step < startup_len {
+        // --- Startup Sequence ---
+        if step < wave_len {
+            phase = 1; // Filling
+            wave_pos = step;
+        } else {
+            phase = 4; // Wait
+            wave_pos = 0;
+        }
+    } else {
+        // --- Looping Sequence ---
+        let loop_step = (step - startup_len) % loop_len;
+        if loop_step < wave_len {
+            phase = 2; // Emptying
+            wave_pos = loop_step;
+        } else if loop_step < wave_len * 2 {
+            phase = 3; // Filling
+            wave_pos = loop_step - wave_len;
+        } else {
+            phase = 4; // Wait
+            wave_pos = 0;
+        }
+    }
+
+    let styled_title: Vec<Line> = title_lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            if phase == 4 {
+                return Line::from(*line).style(Style::default().bold().fg(Color::White));
+            }
+
+            let is_filling = phase == 1 || phase == 3;
+            let dist = wave_pos as i32 - i as i32;
+
+            let offset = offset as i32;
+            let style = if is_filling {
+                if dist >= offset + 5 {
+                    Style::default().bold().fg(Color::White)
+                } else if dist == offset + 4 {
+                    Style::default().fg(Color::White)
+                } else if dist == offset + 3 {
+                    Style::default().fg(Color::Gray)
+                } else if dist == offset + 2 {
+                    Style::default().fg(Color::DarkGray)
+                } else if dist == offset + 1 {
+                    Style::default().dim().fg(Color::DarkGray)
+                } else if dist == offset {
+                    Style::default().fg(Color::Black)
+                } else {
+                    Style::default().dim().fg(Color::Black)
+                }
+            } else {
+                if dist >= offset + 5 {
+                    Style::default().dim().fg(Color::Black)
+                } else if dist == offset + 4 {
+                    Style::default().fg(Color::Black)
+                } else if dist == offset + 3 {
+                    Style::default().dim().fg(Color::DarkGray)
+                } else if dist == offset + 2 {
+                    Style::default().fg(Color::DarkGray)
+                } else if dist == offset + 1 {
+                    Style::default().fg(Color::Gray)
+                } else if dist == offset {
+                    Style::default().fg(Color::White)
+                } else {
+                    Style::default().bold().fg(Color::White)
+                }
+            };
+            Line::from(*line).style(style)
+        })
+        .collect();
+
+    // --- Build the instructions ---
+    let key_style = Style::default().yellow().bold();
+    let text_style = Style::default().fg(Color::Gray);
+
+    let instructions = vec![
+        Line::from(Span::styled(
+            "AI in the Terminal",
+            Style::default().fg(Color::Cyan).bold(),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("i", key_style),
+            Span::styled("   Write a message", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("m", key_style),
+            Span::styled("   Choose a model", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("h", key_style),
+            Span::styled("   Browse chat history", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("s", key_style),
+            Span::styled("   Browse code snippets", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("f", key_style),
+            Span::styled("   Add files to context", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("c", key_style),
+            Span::styled("   View context files", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("n", key_style),
+            Span::styled("   Start a new chat", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("t", key_style),
+            Span::styled("   Change syntax theme", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("?", key_style),
+            Span::styled("   Full help", text_style),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Esc", key_style),
+            Span::raw(" / "),
+            Span::styled("q", key_style),
+            Span::styled("  to exit", text_style),
+        ]),
+    ];
+
+    let instructions_height = instructions.len() as u16;
+
+    // Layout: flexible top, title, gap, instructions, flexible bottom
+    let chunks = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(title_height as u16),
+        Constraint::Length(2), // gap
+        Constraint::Length(instructions_height),
+        Constraint::Fill(1),
+    ])
+    .split(area);
+
+    // Render the title
+    let title_widget = Paragraph::new(Text::from(styled_title)).alignment(Alignment::Center);
+    f.render_widget(title_widget, chunks[1]);
+
+    // Measure the widest instruction line
+    let instructions_width = instructions.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+
+    // Center the instructions block horizontally under the title
+    let [instructions_area] = Layout::horizontal([Constraint::Length(instructions_width)])
+        .flex(Flex::Center)
+        .areas(chunks[3]);
+
+    // Render instructions (left-aligned within the centered area)
+    let instructions_widget = Paragraph::new(Text::from(instructions)).alignment(Alignment::Left);
+    f.render_widget(instructions_widget, instructions_area);
 }
 
 pub fn render(f: &mut Frame, app: &mut App) {
@@ -987,7 +1231,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             if !app.messages.is_empty() {
                 render_messages(f, app, messages_area);
             } else {
-                render_init_screen(f, messages_area);
+                render_init_screen(f, messages_area, app.spinner_frame);
             }
         }
         AppMode::Editing => {

@@ -156,7 +156,7 @@ Context:
     // Find the terminal size.
     app.set_terminal_size(terminal.size()?.width, terminal.size()?.height);
 
-    let events = EventHandler::new(100);
+    let events = EventHandler::new(16);
     let (action_tx, mut action_rx) = mpsc::channel(32);
     let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
 
@@ -294,7 +294,34 @@ Context:
                                                     full_content.push_str(&content);
                                                     partial_updated = true;
                                                 }
-                                                ChatStreamEvent::End(StreamEnd {captured_content: Some(content), captured_reasoning_content: reasoning_content, ..}) => {
+                                                ChatStreamEvent::End(StreamEnd {captured_content: Some(content), captured_reasoning_content: reasoning_content, captured_usage: usage, ..}) => {
+                                                    // Log token usage
+                                                    if let Some(u) = &usage {
+                                                        let prompt = u.prompt_tokens.unwrap_or(0);
+                                                        let completion = u.completion_tokens.unwrap_or(0);
+                                                        let total = u.total_tokens.unwrap_or(0);
+                                                        let cached = u
+                                                            .prompt_tokens_details
+                                                            .as_ref()
+                                                            .and_then(|d| d.cached_tokens)
+                                                            .unwrap_or(0);
+                                                        let cache_creation = u
+                                                            .prompt_tokens_details
+                                                            .as_ref()
+                                                            .and_then(|d| d.cache_creation_tokens)
+                                                            .unwrap_or(0);
+
+                                                        tracing::info!(
+                                                            prompt_tokens = prompt,
+                                                            completion_tokens = completion,
+                                                            total_tokens = total,
+                                                            cached_tokens = cached,
+                                                            cache_creation_tokens = cache_creation,
+                                                            "stream completed - token usage"
+                                                        );
+                                                    } else {
+                                                        tracing::info!("stream completed - no token usage returned");
+                                                    }
                                                     if let Some(texts) = content.into_joined_texts() {
                                                         let full = if let Some(reasoning) = reasoning_content {
                                                             format!("<think>\n{}\n</think>\n{}", reasoning, texts)

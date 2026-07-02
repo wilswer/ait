@@ -8,7 +8,9 @@ use tokio::sync::mpsc;
 use tokio::task;
 use walkdir::WalkDir;
 
-use crate::app::{Action, App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, estimate_file_tokens};
+use crate::app::{
+    Action, App, AppMode, AppResult, Notification, RECACHE_COOLDOWN, estimate_file_tokens,
+};
 
 /// Handles the key events and updates the state of [`App`].
 ///
@@ -115,8 +117,12 @@ pub fn handle_key_events(
             KeyCode::Char('s') | KeyCode::Char('S')
                 if modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                app.submit_message()
-                    .context("Handler failed to submit message")?;
+                match app.submit_message() {
+                    AppResult::Ok(_) => {}
+                    AppResult::Err(e) => app.set_app_mode(AppMode::Notify {
+                        notification: Notification::Error(format!("Cannot submit message: {}", e)),
+                    }),
+                }
             }
             _ => {
                 app.input_textarea.input(key_event);
@@ -286,10 +292,7 @@ pub fn handle_key_events(
                             "scanning directory for files to add to context"
                         );
 
-                        for entry in WalkDir::new(&dir.path)
-                            .into_iter()
-                            .filter_map(|e| e.ok())
-                        {
+                        for entry in WalkDir::new(&dir.path).into_iter().filter_map(|e| e.ok()) {
                             if !entry.file_type().is_file() {
                                 continue;
                             }

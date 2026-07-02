@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, fs::read_to_string, io};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 use genai::ModelSpec;
@@ -408,6 +408,10 @@ pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
     let mut input_textarea = TextArea::default();
     input_textarea.set_block(Block::bordered().title(title));
     input_textarea.set_style(Style::default().fg(Color::Yellow));
+    input_textarea.set_cursor_line_style(Style::default().not_underlined());
+    input_textarea.set_cursor_style(Style::default().bg(Color::DarkGray));
+    input_textarea.set_placeholder_text("Start typing...");
+    input_textarea.set_placeholder_style(Style::default().fg(Color::DarkGray).italic().dim());
     input_textarea
 }
 
@@ -488,9 +492,7 @@ impl<'a> App<'a> {
 
     /// Handles the tick event of the terminal.
     pub fn tick(&mut self) {
-        if self.is_waiting_for_response {
-            self.spinner_frame = self.spinner_frame.wrapping_add(1);
-        }
+        self.spinner_frame = self.spinner_frame.wrapping_add(1);
     }
 
     pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
@@ -682,6 +684,12 @@ impl<'a> App<'a> {
         let text = self.input_textarea.lines().join("\n");
         if text.is_empty() {
             return Ok(());
+        }
+        if self.is_waiting_for_response {
+            bail!("The app is waiting for a response.");
+        }
+        if self.is_streaming {
+            bail!("The app is streaming a response.");
         }
         let mut content_parts = Vec::new();
         if let Some(context) = &self.current_context {

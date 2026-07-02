@@ -26,7 +26,6 @@ textwrap = "0.16"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
-tui-big-text = "0.8"
 ratatui-textarea = "0.9"
 tiktoken-rs = "0.12"
 pathdiff = "0.2"
@@ -35,7 +34,6 @@ walkdir = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-schemars = "1"
 
 [profile.release]
 strip = true

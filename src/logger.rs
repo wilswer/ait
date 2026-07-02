@@ -22,8 +22,8 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 /// This lives under the project's data directory (alongside `chats.db`) in a
 /// `logs` sub-directory.
 pub fn get_log_dir() -> Result<PathBuf> {
-    let project_dirs = ProjectDirs::from("", "", "ait")
-        .context("Could not determine project directories")?;
+    let project_dirs =
+        ProjectDirs::from("", "", "ait").context("Could not determine project directories")?;
     Ok(project_dirs.data_dir().join("logs"))
 }
 
