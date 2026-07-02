@@ -156,7 +156,7 @@ Context:
     // Find the terminal size.
     app.set_terminal_size(terminal.size()?.width, terminal.size()?.height);
 
-    let events = EventHandler::new(100);
+    let events = EventHandler::new(16);
     let (action_tx, mut action_rx) = mpsc::channel(32);
     let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
 

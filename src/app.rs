@@ -492,9 +492,7 @@ impl<'a> App<'a> {
 
     /// Handles the tick event of the terminal.
     pub fn tick(&mut self) {
-        if self.is_waiting_for_response {
-            self.spinner_frame = self.spinner_frame.wrapping_add(1);
-        }
+        self.spinner_frame = self.spinner_frame.wrapping_add(1);
     }
 
     pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
