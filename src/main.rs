@@ -1,8 +1,6 @@
 use anyhow::Context;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
-use genai::ModelSpec;
-use genai::adapter::AdapterKind;
 use genai::chat::{ChatStreamEvent, StreamChunk, StreamEnd};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -10,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio::task;
 
 use ait::ai::{assistant_response_streaming, get_models};
-use ait::app::{Action, App, AppMode, AppResult, Message, Notification};
+use ait::app::{Action, App, AppMode, AppResult, Message, Notification, SpawnArgs};
 use ait::cli::Cli;
 use ait::config::{Config, ModelConfig};
 use ait::event::{Event, EventHandler};
@@ -22,7 +20,6 @@ use ait::tui::Tui;
 fn handle_event(
     event: Event,
     app: &mut App,
-    current_cancel_tx: &mut Option<mpsc::Sender<()>>,
     action_tx: &mpsc::Sender<Action>,
 ) -> AppResult<()> {
     match event {
@@ -31,10 +28,9 @@ fn handle_event(
             if key_event.code == crossterm::event::KeyCode::Char('u')
                 && app.app_mode == AppMode::Normal
             {
-                // If we have an active stream, send the cancel signal
-                if let Some(tx) = current_cancel_tx.take() {
-                    let _ = tx.try_send(());
-                }
+                // Cancel the in-flight stream for the currently viewed
+                // conversation, if any.
+                app.cancel_current_stream();
             }
             handle_key_events(key_event, app, action_tx).context("Error handling key events")?;
         }
@@ -52,45 +48,61 @@ fn handle_event(
 /// Handle a single async action coming back from a spawned task.
 async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
     match action {
-        Action::StreamStart => {
+        Action::StreamStart { conversation_id } => {
             // Only seed the in-memory partial message for the view when the
             // user is still on the conversation that owns the stream.
-            if app.pending_conversation_id == app.conversation_id {
-                app.receive_incomplete_message("").await?;
+            if app.conversation_id == Some(conversation_id) {
+                app.receive_incomplete_message(conversation_id, "").await?;
             }
         }
-        Action::StreamPartial(content) => {
-            // The first chunk means the response has started, regardless of
-            // which chat is currently viewed.
-            app.is_waiting_for_response = false;
-            if app.pending_conversation_id == app.conversation_id {
-                if !app.is_streaming {
-                    app.is_streaming = true;
-                    app.scroll_to_bottom()?;
-                }
-                app.receive_incomplete_message(&content).await?;
+        Action::StreamPartial {
+            conversation_id,
+            content,
+        } => {
+            app.receive_incomplete_message(conversation_id, &content).await?;
+        }
+        Action::StreamComplete {
+            conversation_id,
+            content,
+        } => {
+            app.receive_message(conversation_id, Message::Assistant(content))
+                .await?;
+        }
+        Action::StreamCancelled {
+            conversation_id,
+            content,
+        } => {
+            // Persist whatever portion of the message was generated before
+            // stopping.
+            app.receive_message(conversation_id, Message::Assistant(content))
+                .await?;
+        }
+        Action::Error {
+            conversation_id,
+            message,
+        } => {
+            // Drop the in-flight state for this conversation (if any).
+            if let Some(id) = conversation_id {
+                app.streams.remove(&id);
             }
-        }
-        Action::StreamComplete(content) => {
-            app.is_streaming = false;
-            app.is_waiting_for_response = false;
-            app.receive_message(Message::Assistant(content)).await?;
-        }
-        Action::StreamCancelled(content) => {
-            app.is_streaming = false;
-            app.is_waiting_for_response = false;
-            // Persist whatever portion of the message was generated before stopping
-            app.receive_message(Message::Assistant(content)).await?;
-        }
-        Action::Error(err_msg) => {
-            app.is_waiting_for_response = false;
-            app.has_unprocessed_messages = false;
-            app.is_streaming = false;
-            // The in-flight request failed; release its conversation association.
-            app.pending_conversation_id = None;
-            app.set_app_mode(AppMode::Notify {
-                notification: Notification::Error(err_msg),
-            });
+            // Surface the error notification when it either isn't tied to a
+            // specific conversation (e.g. model discovery) or the user is
+            // looking at the conversation it belongs to. Background stream
+            // failures don't interrupt the current view.
+            let show_notification = match conversation_id {
+                None => true,
+                Some(id) => app.conversation_id == Some(id),
+            };
+            if show_notification {
+                app.set_app_mode(AppMode::Notify {
+                    notification: Notification::Error(message),
+                });
+            } else {
+                tracing::warn!(
+                    ?conversation_id,
+                    "background stream errored while viewing a different chat"
+                );
+            }
         }
         Action::ModelsLoaded(models) => {
             app.set_models(models);
@@ -169,7 +181,6 @@ Context:
 
     let events = EventHandler::new(16);
     let (action_tx, mut action_rx) = mpsc::channel(32);
-    let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
 
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
@@ -185,11 +196,11 @@ Context:
             // --- Terminal events ---
             maybe_event = tui.events.next() => {
                 let event = maybe_event.context("Unable to get next event")?;
-                handle_event(event, &mut app, &mut current_cancel_tx, &action_tx)?;
+                handle_event(event, &mut app, &action_tx)?;
 
                 // Drain any terminal events that arrived immediately behind it.
                 while let Some(Ok(next_event)) = tui.events.next().now_or_never() {
-                    handle_event(next_event, &mut app, &mut current_cancel_tx, &action_tx)?;
+                    handle_event(next_event, &mut app, &action_tx)?;
                 }
             }
 
@@ -219,7 +230,10 @@ Context:
                     }
                     Err(e) => {
                         let _ = tx
-                            .send(Action::Error(format!("Failed to find models: {}", e)))
+                            .send(Action::Error {
+                                conversation_id: None,
+                                message: format!("Failed to find models: {}", e),
+                            })
                             .await;
                     }
                 }
@@ -231,39 +245,22 @@ Context:
             app.needs_recache = false;
         }
 
-        if app.has_unprocessed_messages {
-            app.has_unprocessed_messages = false;
-            app.is_waiting_for_response = true;
-
-            // Clone data needed for the task
-            let messages = app.messages.clone();
-            let selected_model = app.selected_model.clone();
-            let thinking_effort = app.thinking_effort.clone();
+        // Launch streaming tasks for any conversations that have been
+        // submitted but not yet spawned. Scanning every iteration is cheap
+        // (the map is small and bounded by `MAX_CONCURRENT_STREAMS`).
+        for args in app.take_pending_spawns() {
+            let SpawnArgs {
+                conversation_id,
+                messages,
+                selected_model,
+                thinking_effort,
+                system_prompt: sys_prompt,
+                mut cancel_rx,
+            } = args;
             let ollama_host_url = resolved_ollama_host.clone();
-            let sys_prompt = match &selected_model {
-                ModelSpec::Name(name) => {
-                    if name.starts_with("gpt") {
-                        None
-                    } else {
-                        Some(system_prompt.clone())
-                    }
-                }
-                ModelSpec::Iden(iden) => {
-                    if iden.adapter_kind == AdapterKind::OpenAI {
-                        None
-                    } else {
-                        Some(system_prompt.clone())
-                    }
-                }
-                _ => Some(system_prompt.clone()),
-            };
-
             let tx = action_tx.clone();
 
-            let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
-            current_cancel_tx = Some(cancel_tx);
-
-            // Spawn ONE task that does everything
+            // Spawn ONE task per conversation that does everything.
             task::spawn(async move {
                 let response = assistant_response_streaming(
                     &messages,
@@ -278,7 +275,9 @@ Context:
                     Ok(mut stream) => {
                         let mut full_content = String::new();
                         let mut full_thinking_content = String::new();
-                        let _ = tx.send(Action::StreamStart).await;
+                        let _ = tx
+                            .send(Action::StreamStart { conversation_id })
+                            .await;
 
                         loop {
                             tokio::select! {
@@ -288,7 +287,7 @@ Context:
                                     } else {
                                         full_content
                                     };
-                                    let _ = tx.send(Action::StreamCancelled(all_content)).await;
+                                    let _ = tx.send(Action::StreamCancelled { conversation_id, content: all_content }).await;
                                     break;
                                 }
                                 result_opt = stream.next() => {
@@ -339,7 +338,7 @@ Context:
                                                         } else {
                                                             texts
                                                         };
-                                                        let _ = tx.send(Action::StreamComplete(full)).await;
+                                                        let _ = tx.send(Action::StreamComplete { conversation_id, content: full }).await;
                                                     }
                                                 }
                                                 _ => {}
@@ -351,11 +350,11 @@ Context:
                                                 } else {
                                                     full_content.clone()
                                                 };
-                                                let _ = tx.send(Action::StreamPartial(all_content)).await;
+                                                let _ = tx.send(Action::StreamPartial { conversation_id, content: all_content }).await;
                                             }
                                         }
                                         Some(Err(e)) => {
-                                            let _ = tx.send(Action::Error(format!("Stream error: {}", e))).await;
+                                            let _ = tx.send(Action::Error { conversation_id: Some(conversation_id), message: format!("Stream error: {}", e) }).await;
                                             break;
                                         }
                                         None => {
@@ -364,7 +363,7 @@ Context:
                                             } else {
                                                 full_content
                                             };
-                                            let _ = tx.send(Action::StreamComplete(all_content)).await;
+                                            let _ = tx.send(Action::StreamComplete { conversation_id, content: all_content }).await;
                                             break;
                                         }
                                     }
@@ -373,7 +372,7 @@ Context:
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(Action::Error(format!("API Error: {}", e))).await;
+                        let _ = tx.send(Action::Error { conversation_id: Some(conversation_id), message: format!("API Error: {}", e) }).await;
                     }
                 }
             });

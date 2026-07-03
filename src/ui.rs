@@ -1451,7 +1451,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
     }
 
-    let msg = match app.app_mode {
+    let mut msg = match app.app_mode {
         AppMode::Editing => {
             vec![
                 "Press ".into(),
@@ -1543,6 +1543,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ]
         }
     };
+    if app.active_stream_count() > 0 {
+        msg.push("  ".into());
+        msg.push(Span::styled(
+            format!("⏳ streaming {} chat(s)", app.active_stream_count()),
+            Style::default().fg(Color::Cyan),
+        ));
+        if app.is_view_streaming() || app.is_view_waiting() {
+            msg.push(Span::styled(
+                " (this chat) — u to cancel",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+    }
     let text = Text::from(Line::from(msg)).patch_style(Style::default());
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);

@@ -59,13 +59,12 @@ pub fn handle_key_events(
             }
             KeyCode::Char('r') => {
                 if modifiers.contains(KeyModifiers::CONTROL)
-                    && !app.has_unprocessed_messages
-                    && !app.is_waiting_for_response
+                    && !app.current_has_stream()
                 {
                     app.redo_last_message()?;
                     app.set_app_mode(AppMode::Editing);
                 } else if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN)
-                    && !app.is_streaming
+                    && !app.is_view_streaming()
                 {
                     app.toggle_highlighting();
                     app.last_recache = Instant::now();
