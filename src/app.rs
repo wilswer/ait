@@ -343,6 +343,12 @@ pub struct App<'a> {
     pub app_mode: AppMode,
     /// Conversation ID for chat database.
     pub conversation_id: Option<i64>,
+    /// Conversation ID that the currently in-flight stream belongs to.
+    ///
+    /// Captured at submit time so that the assistant's response is always
+    /// persisted to the conversation that originated the request, even if the
+    /// user browses to a different chat while the stream is in flight.
+    pub pending_conversation_id: Option<i64>,
     /// System prompt
     pub system_prompt: &'a str,
     /// Has unprocessed messages
@@ -422,6 +428,7 @@ impl Default for App<'_> {
             app_mode: AppMode::Normal,
             system_prompt: "You are a helpful, friendly assistant.",
             conversation_id: None,
+            pending_conversation_id: None,
             has_unprocessed_messages: false,
             messages: Vec::new(),
             // user_messages: Vec::new(),
@@ -497,6 +504,23 @@ impl<'a> App<'a> {
 
     pub fn set_app_mode(&mut self, new_app_mode: AppMode) {
         self.app_mode = new_app_mode;
+    }
+
+    /// Returns true if the conversation currently being viewed is the one that
+    /// has an in-flight stream. When this is false, streaming-related UI (spinner,
+    /// partial message) should not be shown for the current view.
+    pub fn is_view_streaming(&self) -> bool {
+        self.is_streaming
+            && self.pending_conversation_id.is_some()
+            && self.pending_conversation_id == self.conversation_id
+    }
+
+    /// Returns true if the current view should show the "waiting for response"
+    /// indicator, i.e. the in-flight request belongs to the viewed conversation.
+    pub fn is_view_waiting(&self) -> bool {
+        self.is_waiting_for_response
+            && self.pending_conversation_id.is_some()
+            && self.pending_conversation_id == self.conversation_id
     }
 
     pub fn create_conversation(&mut self) -> AppResult<i64> {
@@ -629,12 +653,12 @@ impl<'a> App<'a> {
         // Bubble lines are pre-wrapped to fit the chat block, and the chat
         // paragraph is rendered without wrapping, so the line count is simply
         // the number of generated lines.
-        let total_lines = if !self.is_streaming && self.do_highlight {
+        let total_lines = if !self.is_view_streaming() && self.do_highlight {
             self.cached_lines.len()
         } else {
             messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
         };
-        let sub = if self.is_streaming {
+        let sub = if self.is_view_streaming() {
             (height - 4) as usize
         } else if self.has_unprocessed_messages {
             (height - 8) as usize
@@ -759,6 +783,10 @@ impl<'a> App<'a> {
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
         }
+        // Tie the upcoming streamed response to the conversation that this
+        // message was submitted to, so it persists here even if the user
+        // browses to another chat before the response arrives.
+        self.pending_conversation_id = self.conversation_id;
         self.add_cached_lines(message.clone());
         self.messages.push(message);
 
@@ -780,30 +808,56 @@ impl<'a> App<'a> {
 
     pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {
         self.is_streaming = false;
-        if let Some(Message::Assistant(_)) = self.messages.last() {
-            self.messages.pop();
-        }
-        let message_content = message.to_string();
-        let discovered_snippets =
-            find_fenced_code_snippets(message_content.split('\n').map(|s| s.to_string()).collect());
-        let snippet_items: Vec<SnippetItem> = discovered_snippets
-            .into_iter()
-            .map(|snippet| snippet.into())
-            .collect();
-        self.snippet_list.items.extend(snippet_items);
+        self.is_waiting_for_response = false;
         self.has_unprocessed_messages = false;
-        self.write_chat_log()
-            .context("Unable to write received message to chat log")?;
-        if let Some(id) = self.conversation_id {
+
+        // The response always belongs to the conversation that originated the
+        // request, regardless of which chat the user is currently viewing.
+        let target_id = self.pending_conversation_id.or(self.conversation_id);
+        let is_current = target_id == self.conversation_id;
+
+        // Only mutate the in-memory view when the user is still looking at the
+        // conversation that the stream belongs to. Otherwise persist silently
+        // to the database; the message will appear when the user reopens that
+        // chat (which reloads from the database).
+        if is_current {
+            if let Some(Message::Assistant(_)) = self.messages.last() {
+                self.messages.pop();
+            }
+
+            let message_content = message.to_string();
+            let discovered_snippets = find_fenced_code_snippets(
+                message_content.split('\n').map(|s| s.to_string()).collect(),
+            );
+            let snippet_items: Vec<SnippetItem> = discovered_snippets
+                .into_iter()
+                .map(|snippet| snippet.into())
+                .collect();
+            self.snippet_list.items.extend(snippet_items);
+
+            self.write_chat_log()
+                .context("Unable to write received message to chat log")?;
+        }
+
+        if let Some(id) = target_id {
             insert_message(id, &message)?;
             touch_conversation(id)?;
         } else {
+            // No conversation exists yet; create one for the response. This
+            // only happens if the user message was never persisted, which
+            // should not occur in normal flow but is handled defensively.
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
             touch_conversation(id)?;
         }
-        self.add_cached_lines(message.clone());
-        self.messages.push(message);
+
+        if is_current {
+            self.add_cached_lines(message.clone());
+            self.messages.push(message);
+        }
+
+        // Stream resolved; clear the pending association.
+        self.pending_conversation_id = None;
         Ok(())
     }
 
@@ -811,8 +865,12 @@ impl<'a> App<'a> {
         // If we are already scrolled to the bottom, continue scrolling.
         let do_scroll =
             self.vertical_scroll == self.get_max_scroll().context("Could not get max scroll.")?;
-        if captured_content.is_empty() {
-            self.messages.push(Message::Assistant("".to_string()));
+        // Ensure there is an assistant message at the tail to update. This is
+        // also needed when the user browses away and back to the streaming
+        // conversation mid-stream (the partial message would have been
+        // dropped when reloading from the database).
+        if !matches!(self.messages.last(), Some(Message::Assistant(_))) {
+            self.messages.push(Message::Assistant(String::new()));
         }
         if let Some(Message::Assistant(last)) = self.messages.last_mut() {
             *last = captured_content.to_string();
@@ -1034,9 +1092,14 @@ impl<'a> App<'a> {
             self.cached_lines.clear();
             self.conversation_id = None;
             self.has_unprocessed_messages = false;
-            self.is_waiting_for_response = false;
-            self.is_streaming = false;
             self.snippet_list = SnippetList::new();
+            // NOTE: `is_streaming` / `is_waiting_for_response` / `pending_conversation_id`
+            // are intentionally left untouched here. They describe the global
+            // in-flight request, which may belong to a different conversation
+            // than the freshly created (empty) chat. Resetting them would
+            // allow a second concurrent stream to be spawned. The view only
+            // shows streaming state for the conversation that owns the stream
+            // (see `is_view_streaming` / `is_view_waiting`).
         }
     }
 

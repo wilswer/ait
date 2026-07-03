@@ -959,13 +959,13 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
         .end_symbol(Some("↓"));
     // Width available for a rendered line inside the bordered chat block.
     let line_width = messages_area.width.saturating_sub(2) as usize;
-    let mut messages = if !app.is_streaming && app.do_highlight {
+    let mut messages = if !app.is_view_streaming() && app.do_highlight {
         app.cached_lines.clone()
     } else {
         messages_to_lines(&app.messages, line_width)
     };
 
-    if app.is_waiting_for_response {
+    if app.is_view_waiting() {
         messages.extend(waiting_bubble(line_width, app.spinner_frame));
     }
 

@@ -53,18 +53,27 @@ fn handle_event(
 async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
     match action {
         Action::StreamStart => {
-            app.receive_incomplete_message("").await?;
+            // Only seed the in-memory partial message for the view when the
+            // user is still on the conversation that owns the stream.
+            if app.pending_conversation_id == app.conversation_id {
+                app.receive_incomplete_message("").await?;
+            }
         }
         Action::StreamPartial(content) => {
-            if !app.is_streaming {
-                app.is_streaming = true;
-                app.scroll_to_bottom()?;
-                app.is_waiting_for_response = false;
+            // The first chunk means the response has started, regardless of
+            // which chat is currently viewed.
+            app.is_waiting_for_response = false;
+            if app.pending_conversation_id == app.conversation_id {
+                if !app.is_streaming {
+                    app.is_streaming = true;
+                    app.scroll_to_bottom()?;
+                }
+                app.receive_incomplete_message(&content).await?;
             }
-            app.receive_incomplete_message(&content).await?;
         }
         Action::StreamComplete(content) => {
             app.is_streaming = false;
+            app.is_waiting_for_response = false;
             app.receive_message(Message::Assistant(content)).await?;
         }
         Action::StreamCancelled(content) => {
@@ -77,6 +86,8 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
             app.is_waiting_for_response = false;
             app.has_unprocessed_messages = false;
             app.is_streaming = false;
+            // The in-flight request failed; release its conversation association.
+            app.pending_conversation_id = None;
             app.set_app_mode(AppMode::Notify {
                 notification: Notification::Error(err_msg),
             });
