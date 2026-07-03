@@ -24,6 +24,9 @@ pub fn handle_key_events(
     let KeyEvent {
         code, modifiers, ..
     } = key_event;
+    if code.is_char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+        app.quit()
+    }
     match app.app_mode {
         AppMode::Normal => match code {
             // Exit application on `ESC` or `q`
