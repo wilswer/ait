@@ -179,12 +179,17 @@ fn centered_rects_with_search(percent_x: u16, percent_y: u16, r: Rect) -> (Rect,
     (main_rect, search_rect)
 }
 
-fn right_aligned_rect(r: Rect, p: u16) -> Rect {
+fn right_aligned_rect_percent(r: Rect, p: u16) -> Rect {
     Layout::horizontal([Constraint::Percentage(100 - p), Constraint::Fill(1)]).split(r)[1]
 }
 
-fn left_aligned_rect(r: Rect, p: u16) -> Rect {
+fn left_aligned_rect_percent(r: Rect, p: u16) -> Rect {
     Layout::horizontal([Constraint::Fill(1), Constraint::Percentage(100 - p)]).split(r)[0]
+}
+
+fn make_rects_from_left_aligned_constraint(r: Rect, l: u16) -> (Rect, Rect) {
+    let rects = Layout::horizontal([Constraint::Length(l), Constraint::Fill(1)]).split(r);
+    (rects[0], rects[1])
 }
 
 /// Parse a single line for inline markdown markers (`**bold**`, `*italic*`, `` `code` ``).
@@ -1255,11 +1260,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_thinking_effort_list(f, area, app);
         }
         AppMode::SnippetSelection => {
-            let area = left_aligned_rect(messages_area, 25);
+            let area = left_aligned_rect_percent(messages_area, 25);
             render_popup(f, "Select Snippet", area);
             render_snippet_list(f, area, app);
 
-            let preview_area = right_aligned_rect(messages_area, 75);
+            let preview_area = right_aligned_rect_percent(messages_area, 75);
             render_popup(f, "Snippet Preview", preview_area);
             if let Some(snippet) = app.get_snippet() {
                 let snippet_text = if let Some(lang) = &snippet.language {
@@ -1667,28 +1672,44 @@ fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) {
-    let area = left_aligned_rect(messages_area, 25);
+    let (area, preview_area) = make_rects_from_left_aligned_constraint(messages_area, 36);
     render_popup(f, "Select Chat", area);
     render_chat_history_list(f, area, app);
 
-    let preview_area = right_aligned_rect(messages_area, 75);
     render_popup(f, "Chat Preview", preview_area);
 
     let preview_text = app.get_selected_chat_id().map(|id| {
         list_all_messages(*id)
             .unwrap_or_default()
             .into_iter()
-            .map(|m| match m {
-                Message::User(_) => format!("USER: {}\n", m),
-                Message::Assistant(t) => format!("ASSISTANT: {t}\n"),
+            .flat_map(|m| match m {
+                Message::User(_) => {
+                    let mut lines = Vec::new();
+                    lines.push(Line::from("USER:").style(Style::default().yellow().bold()));
+                    lines.extend(
+                        format!("{}\n", m)
+                            .split('\n')
+                            .map(|l| Line::from(l.to_owned()).style(Style::default().yellow())),
+                    );
+                    lines
+                }
+                Message::Assistant(t) => {
+                    let mut lines = Vec::new();
+                    lines.push(Line::from("ASSISTANT:").style(Style::default().green().bold()));
+                    lines.extend(
+                        format!("{t}\n")
+                            .split('\n')
+                            .map(|l| Line::from(l.to_owned()).style(Style::default().green())),
+                    );
+                    lines
+                }
             })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect::<Vec<Line>>()
     });
     if let Some(text) = preview_text {
         f.render_widget(
-            Paragraph::new(Text::from(text.as_str()).magenta())
-                .wrap(Wrap { trim: true })
+            Paragraph::new(text)
+                .wrap(Wrap { trim: false })
                 .block(Block::new().padding(Padding::uniform(1))),
             preview_area,
         );
