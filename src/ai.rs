@@ -25,7 +25,7 @@ fn get_api_key_name(kind: &AdapterKind) -> &'static str {
         AdapterKind::Zai => "ZAI_API_KEY",
         AdapterKind::BigModel => "BIGMODEL_API_KEY",
         AdapterKind::Mimo => "MIMO_API_KEY",
-        AdapterKind::OpenRouter => "OPEN_ROUTER_API_KEY",
+        AdapterKind::OpenRouter => "OPENROUTER_API_KEY",
         _ => todo!(),
     }
 }
