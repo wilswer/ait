@@ -1671,6 +1671,78 @@ fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(styled_list(items, block), area, &mut app.chat_list.state);
 }
 
+/// Case-insensitive substring test. Used to decide which lines of the chat
+/// preview are shown while filtering conversations by message content.
+fn ci_contains(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack.to_lowercase().contains(&needle.to_lowercase())
+}
+
+/// If `slice` starts with a case-insensitive match of `needle` (compared
+/// character by character), returns the byte length of the matched prefix.
+/// Otherwise returns `None`. Unicode case folding is handled via
+/// `char::to_lowercase`.
+fn ci_match_len(slice: &str, needle: &[char]) -> Option<usize> {
+    let mut si = slice.char_indices();
+    for nc in needle {
+        let (_, sc) = si.next()?;
+        if !sc.to_lowercase().eq(nc.to_lowercase()) {
+            return None;
+        }
+    }
+    // Byte offset where the next char starts, or slice length if we consumed
+    // everything — i.e. the byte length of the matched prefix.
+    Some(match si.next() {
+        Some((nb, _)) => nb,
+        None => slice.len(),
+    })
+}
+
+/// Split `line` into styled spans, wrapping every (case-insensitive)
+/// occurrence of `query` in `match_style` and the surrounding text in
+/// `base_style`. Slicing is byte-correct and Unicode-aware.
+fn highlight_line(
+    line: &str,
+    query: &str,
+    base_style: Style,
+    match_style: Style,
+) -> Vec<Span<'static>> {
+    if query.is_empty() {
+        return vec![Span::styled(line.to_string(), base_style)];
+    }
+    let needle: Vec<char> = query.chars().collect();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut rest = 0usize; // byte offset of the un-emitted prefix
+    let mut pos = 0usize; // current search position
+    let len = line.len();
+    while pos < len {
+        if let Some(mlen) = ci_match_len(&line[pos..], &needle) {
+            let abs_end = pos + mlen;
+            if pos > rest {
+                spans.push(Span::styled(line[rest..pos].to_string(), base_style));
+            }
+            spans.push(Span::styled(line[pos..abs_end].to_string(), match_style));
+            pos = abs_end;
+            rest = pos;
+        } else {
+            // Advance one character boundary.
+            match line[pos..].char_indices().nth(1) {
+                Some((nb, _)) => pos += nb,
+                None => break,
+            }
+        }
+    }
+    if rest < len {
+        spans.push(Span::styled(line[rest..].to_string(), base_style));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(line.to_string(), base_style));
+    }
+    spans
+}
+
 fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) {
     let (area, preview_area) = make_rects_from_left_aligned_constraint(messages_area, 36);
     render_popup(f, "Select Chat", area);
@@ -1678,33 +1750,67 @@ fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) 
 
     render_popup(f, "Chat Preview", preview_area);
 
+    // The active search query (if any) drives match highlighting and line
+    // filtering in the preview. When a query is present, only lines that
+    // contain it (case-insensitively) are shown, with every occurrence
+    // highlighted in bold; otherwise the full conversation is shown plainly.
+    let query: Option<String> = app
+        .search_bar
+        .lines()
+        .first()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let preview_text = app.get_selected_chat_id().map(|id| {
-        list_all_messages(*id)
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|m| match m {
-                Message::User(_) => {
-                    let mut lines = Vec::new();
-                    lines.push(Line::from("USER:").style(Style::default().yellow().bold()));
-                    lines.extend(
-                        format!("{}\n", m)
-                            .split('\n')
-                            .map(|l| Line::from(l.to_owned()).style(Style::default().yellow())),
-                    );
-                    lines
+        let messages = list_all_messages(*id).unwrap_or_default();
+        let mut out: Vec<Line> = Vec::new();
+        for m in messages {
+            let (header, body, role_style): (&str, String, Style) = match &m {
+                Message::User(_) => ("USER:", m.to_string(), Style::default().yellow()),
+                Message::Assistant(t) => ("ASSISTANT:", t.clone(), Style::default().green()),
+            };
+            // Match style keeps the role color but adds bold + a highlight
+            // background so occurrences are easy to spot in the preview.
+            let match_style = role_style.add_modifier(Modifier::BOLD).bg(Color::DarkGray);
+
+            let mut wrote_header = false;
+            let mut last_emitted_idx: Option<usize> = None;
+            // Trailing "\n" mirrors the original behaviour (a blank separator
+            // line per message in the unfiltered view). Indexing the lines
+            // lets us detect gaps between matches and insert a dim "..."
+            // separator so the user can tell non-matching lines were skipped.
+            let body_with_newline = format!("{body}\n");
+            let lines: Vec<&str> = body_with_newline.split('\n').collect();
+            for (i, line) in lines.iter().enumerate() {
+                let matches = query.as_ref().is_some_and(|q| ci_contains(line, q));
+                if query.is_some() && !matches {
+                    continue;
                 }
-                Message::Assistant(t) => {
-                    let mut lines = Vec::new();
-                    lines.push(Line::from("ASSISTANT:").style(Style::default().green().bold()));
-                    lines.extend(
-                        format!("{t}\n")
-                            .split('\n')
-                            .map(|l| Line::from(l.to_owned()).style(Style::default().green())),
-                    );
-                    lines
+                if !wrote_header {
+                    out.push(Line::from(header).style(role_style.bold()));
+                    wrote_header = true;
                 }
-            })
-            .collect::<Vec<Line>>()
+                // Insert a "..." gap separator when lines were skipped between
+                // the previously shown line and this one (also covers the gap
+                // before the first match of a message). Only meaningful while
+                // filtering — in the unfiltered view every line is shown.
+                if query.is_some()
+                    && match last_emitted_idx {
+                        Some(prev) => prev + 1 != i,
+                        None => i != 0,
+                    }
+                {
+                    out.push(Line::from("...").style(Style::default().fg(Color::DarkGray).dim()));
+                }
+                let spans = match &query {
+                    Some(q) => highlight_line(line, q, role_style, match_style),
+                    None => vec![Span::styled(line.to_string(), role_style)],
+                };
+                out.push(Line::from(spans));
+                last_emitted_idx = Some(i);
+            }
+        }
+        out
     });
     if let Some(text) = preview_text {
         f.render_widget(
