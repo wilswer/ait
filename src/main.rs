@@ -65,7 +65,7 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
             conversation_id,
             content,
         } => {
-            app.receive_message(conversation_id, Message::Assistant(content))
+            app.receive_message(conversation_id, Message::Assistant(content, None, None))
                 .await?;
         }
         Action::StreamCancelled {
@@ -74,7 +74,7 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
         } => {
             // Persist whatever portion of the message was generated before
             // stopping.
-            app.receive_message(conversation_id, Message::Assistant(content))
+            app.receive_message(conversation_id, Message::Assistant(content, None, None))
                 .await?;
         }
         Action::Error {

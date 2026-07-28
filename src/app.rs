@@ -26,7 +26,7 @@ use ratatui_textarea::TextArea;
 use tiktoken_rs::cl100k_base;
 
 use crate::config::ModelConfig;
-use crate::models::{ModelItem, generate_model_spec};
+use crate::models::{ModelItem, generate_model_spec, model_provider_from_spec};
 use crate::ui::messages_to_lines;
 use crate::{
     ai::MODELS,
@@ -251,10 +251,17 @@ pub enum UserContent {
     Context,
 }
 
+/**
+ * A chat message.
+ *
+ * Assistant messages additionally carry the `model` and `provider` that
+ * produced them (`None` for messages created before this was tracked, or
+ * for synthetic placeholder messages).
+ */
 #[derive(Debug, Clone)]
 pub enum Message {
     User(Vec<ContentPart>),
-    Assistant(String),
+    Assistant(String, Option<String>, Option<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -301,7 +308,7 @@ impl Display for Message {
                 }
                 Ok(())
             }
-            Message::Assistant(text) => write!(f, "{}", text),
+            Message::Assistant(text, _, _) => write!(f, "{}", text),
         }
     }
 }
@@ -694,8 +701,12 @@ impl<'a> App<'a> {
                 Message::User(_) => {
                     chat_log.push_str(&format!("User: {}\n", message));
                 }
-                Message::Assistant(message) => {
-                    chat_log.push_str(&format!("Assistant: {message}\n"));
+                Message::Assistant(message, model, provider) => {
+                    let model = model.as_deref().unwrap_or("unknown");
+                    let provider = provider.as_deref().unwrap_or("unknown");
+                    chat_log.push_str(&format!(
+                        "Assistant ({model} -- {provider}): {message}\n"
+                    ));
                 }
             }
         }
@@ -859,7 +870,7 @@ impl<'a> App<'a> {
         let n_assistant_messages = self
             .messages
             .iter()
-            .filter(|m| matches!(m, Message::Assistant(_)))
+            .filter(|m| matches!(m, Message::Assistant(..)))
             .count();
         if n_user_messages != n_assistant_messages {
             return Ok(());
@@ -925,9 +936,23 @@ impl<'a> App<'a> {
         // The stream is resolved; drop its state. If the state is already gone
         // (e.g. the conversation was deleted mid-stream), there is nothing to
         // persist and nothing to update in the view.
-        if self.streams.remove(&conversation_id).is_none() {
-            return Ok(());
-        }
+        let stream_state = match self.streams.remove(&conversation_id) {
+            Some(state) => state,
+            None => return Ok(()),
+        };
+
+        // Record which model produced this assistant message, taken from the
+        // in-flight stream state (the source of truth for the request that
+        // just completed). The incoming message from the streaming action
+        // carries no model info, so we attach it here before persisting /
+        // updating the view.
+        let message = match message {
+            Message::Assistant(text, model, provider) => {
+                let (m, p) = model_provider_from_spec(&stream_state.selected_model);
+                Message::Assistant(text, model.or(m), provider.or(p))
+            }
+            other => other,
+        };
 
         let is_current = self.conversation_id == Some(conversation_id);
 
@@ -936,7 +961,7 @@ impl<'a> App<'a> {
         // to the database; the message will appear when the user reopens that
         // chat (which reloads from the database).
         if is_current {
-            if let Some(Message::Assistant(_)) = self.messages.last() {
+            if let Some(Message::Assistant(..)) = self.messages.last() {
                 self.messages.pop();
             }
 
@@ -1017,10 +1042,18 @@ impl<'a> App<'a> {
             // is also needed when the user browses away and back to the
             // streaming conversation mid-stream (the partial message would
             // have been dropped when reloading from the database).
-            if !matches!(self.messages.last(), Some(Message::Assistant(_))) {
-                self.messages.push(Message::Assistant(String::new()));
+            if !matches!(self.messages.last(), Some(Message::Assistant(..))) {
+                // Seed a placeholder assistant message carrying the model /
+                // provider from the in-flight stream so the bubble header
+                // shows which model is responding even mid-stream.
+                let (model, provider) = match self.streams.get(&conversation_id) {
+                    Some(s) => model_provider_from_spec(&s.selected_model),
+                    None => (None, None),
+                };
+                self.messages
+                    .push(Message::Assistant(String::new(), model, provider));
             }
-            if let Some(Message::Assistant(last)) = self.messages.last_mut() {
+            if let Some(Message::Assistant(last, _, _)) = self.messages.last_mut() {
                 *last = captured_content.to_string();
             }
             if do_scroll {
@@ -1041,7 +1074,7 @@ impl<'a> App<'a> {
     #[cfg(not(target_os = "linux"))]
     pub fn yank_latest_assistant_message(&mut self) {
         let mut assistant_messages = self.messages.iter().filter_map(|m| match m {
-            Message::Assistant(message) => Some(message),
+            Message::Assistant(message, _, _) => Some(message),
             _ => None,
         });
         if let Some(message) = assistant_messages.next_back() {
@@ -1349,8 +1382,9 @@ impl<'a> App<'a> {
             if let Some(state) = self.streams.get(&conv_id)
                 && !state.partial.is_empty()
             {
+                let (model, provider) = model_provider_from_spec(&state.selected_model);
                 self.messages
-                    .push(Message::Assistant(state.partial.clone()));
+                    .push(Message::Assistant(state.partial.clone(), model, provider));
             }
             self.needs_recache = true;
             self.vertical_scroll = 0;

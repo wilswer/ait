@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::env;
 
 use genai::ModelSpec;
@@ -765,14 +766,14 @@ enum BubbleAlign {
 }
 
 struct BubbleSkin {
-    title: &'static str,
+    title: Cow<'static, str>,
     align: BubbleAlign,
     border: Style,
 }
 
 fn user_skin() -> BubbleSkin {
     BubbleSkin {
-        title: "User",
+        title: Cow::Borrowed("User"),
         align: BubbleAlign::Right,
         border: Style::default()
             .fg(Color::Yellow)
@@ -782,12 +783,21 @@ fn user_skin() -> BubbleSkin {
 
 fn assistant_skin() -> BubbleSkin {
     BubbleSkin {
-        title: "Assistant",
+        title: Cow::Borrowed("Assistant"),
         align: BubbleAlign::Left,
         border: Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
     }
+}
+
+/// Build the title for an assistant bubble, including which model produced
+/// the response. Falls back to "unknown" for messages that predate model
+/// tracking (or while the model is not yet known).
+fn assistant_title(model: Option<&str>, provider: Option<&str>) -> Cow<'static, str> {
+    let model = model.unwrap_or("unknown");
+    let provider = provider.unwrap_or("unknown");
+    Cow::Owned(format!("Assistant ({model} -- {provider})"))
 }
 
 /// Maximum width available for the *content* (text) inside a bubble, given the
@@ -833,6 +843,66 @@ fn fit_spans<'a>(line: &Line, width: usize) -> Vec<Span<'a>> {
     out
 }
 
+/// Build the styled spans for a chat-history-preview role header, dimming
+/// and italicizing the model attribution `(<model> -- <provider>)` while the
+/// role label and trailing colon use `role_style.bold()`.
+fn style_preview_header(header: &str, role_style: Style) -> Vec<Span<'static>> {
+    let label_style = role_style.bold();
+    let attr_style = Style::default().dim().italic();
+    match header.split_once('(') {
+        Some((role, rest)) => {
+            let mut spans = vec![Span::styled(role.to_string(), label_style)];
+            spans.push(Span::styled("(".to_string(), attr_style));
+            if let Some((attr, tail)) = rest.split_once(')') {
+                spans.push(Span::styled(attr.to_string(), attr_style));
+                spans.push(Span::styled(")".to_string(), attr_style));
+                spans.push(Span::styled(tail.to_string(), label_style));
+            } else {
+                spans.push(Span::styled(rest.to_string(), attr_style));
+            }
+            spans
+        }
+        None => vec![Span::styled(header.to_string(), label_style)],
+    }
+}
+
+/// Build the styled spans for an assistant bubble's top border header, with
+/// the model attribution (`(<model> -- <provider>)`) dimmed and italicized
+/// to de-emphasize it next to the bold "Assistant" role label. Only the
+/// portion matching `attribution` (i.e. starting at the first `(`) is
+/// de-emphasized; the role label and surrounding border chars use `border`.
+fn bubble_title_spans(
+    prefix: &str,
+    title: &str,
+    suffix: &str,
+    border: Style,
+) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let attr_style = Style::default().dim().italic();
+    // Split the title into role + attribution at the first '('.
+    match title.split_once('(') {
+        Some((role, rest)) => {
+            spans.push(Span::styled(prefix.to_string(), border));
+            spans.push(Span::styled(role.to_string(), border));
+            spans.push(Span::styled("(".to_string(), attr_style));
+            // `rest` includes the trailing ')' (and any text after it).
+            if let Some((attr, tail)) = rest.split_once(')') {
+                spans.push(Span::styled(attr.to_string(), attr_style));
+                spans.push(Span::styled(")".to_string(), attr_style));
+                spans.push(Span::styled(tail.to_string(), border));
+            } else {
+                spans.push(Span::styled(rest.to_string(), attr_style));
+            }
+            spans.push(Span::styled(suffix.to_string(), border));
+        }
+        None => {
+            // No attribution (e.g. plain "Assistant"): emit as a single span.
+            spans.push(Span::styled(format!("{prefix}{title}{suffix}"), border));
+        }
+    }
+    spans
+}
+
 /// Wrap already-rendered body lines in a rounded chat bubble, aligned left or
 /// right within `line_width` columns.
 fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -> Vec<Line<'a>> {
@@ -864,13 +934,15 @@ fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -
     let mut lines: Vec<Line<'a>> = Vec::new();
 
     if skin.title == "Assistant" {
-        // Top border: ╭─ Assistant ───────╮
-        let head = format!("╭─ {} ", skin.title);
-        let fill = outer.saturating_sub(head.chars().count() + 1);
-        lines.push(pad(vec![Span::styled(
-            format!("{}{}╮", head, "─".repeat(fill)),
-            skin.border,
-        )]));
+        // Top border: ╭─ Assistant (<model> -- <provider>) ───────╮
+        // The model attribution is separated out and dimmed/italicized so
+        // the role label stays the visual anchor.
+        let head_spans = bubble_title_spans("╭─ ", &skin.title, " ", skin.border);
+        let head_w = skin.title.chars().count() + "╭─ ".chars().count() + 1;
+        let fill = outer.saturating_sub(head_w + 1);
+        let mut spans = head_spans;
+        spans.push(Span::styled(format!("{}╮", "─".repeat(fill)), skin.border));
+        lines.push(pad(spans));
     } else {
         // Top border: ╭─────── User ─╮
         let head = format!(" {} ─╮", skin.title);
@@ -903,11 +975,13 @@ pub fn style_message<'a>(message: Message, line_width: usize, theme: Theme) -> V
     let content_width = bubble_max_content_width(line_width);
     let (skin, text) = match &message {
         Message::User(_) => (user_skin(), message.to_string()),
-        Message::Assistant(t) => {
+        Message::Assistant(t, model, provider) => {
             if t.is_empty() {
                 return Vec::new();
             }
-            (assistant_skin(), t.clone())
+            let mut skin = assistant_skin();
+            skin.title = assistant_title(model.as_deref(), provider.as_deref());
+            (skin, t.clone())
         }
     };
     let body = process_code_blocks(text, content_width, theme);
@@ -917,7 +991,14 @@ pub fn style_message<'a>(message: Message, line_width: usize, theme: Theme) -> V
 }
 
 /// Render an assistant "waiting for response" bubble with an animated spinner.
-fn waiting_bubble<'a>(line_width: usize, spinner_frame: usize) -> Vec<Line<'a>> {
+/// `model`/`provider` (taken from the in-flight stream state) are shown in
+/// the bubble header so the user can see which model is responding.
+fn waiting_bubble<'a>(
+    line_width: usize,
+    spinner_frame: usize,
+    model: Option<&str>,
+    provider: Option<&str>,
+) -> Vec<Line<'a>> {
     let frame = SPINNER_FRAMES[(spinner_frame / 2) % SPINNER_FRAMES.len()];
     let thinking_split_n = (spinner_frame / 8) % THINKING_VERB.len();
     let (think1, think2) = THINKING_VERB.split_at(thinking_split_n);
@@ -929,7 +1010,9 @@ fn waiting_bubble<'a>(line_width: usize, spinner_frame: usize) -> Vec<Line<'a>> 
         ])
         .style(Style::default().fg(Color::DarkGray)),
     ];
-    let mut lines = frame_bubble(body, line_width, &assistant_skin());
+    let mut skin = assistant_skin();
+    skin.title = assistant_title(model, provider);
+    let mut lines = frame_bubble(body, line_width, &skin);
     lines.push(Line::from(""));
     lines
 }
@@ -941,11 +1024,13 @@ pub fn messages_to_lines<'a>(messages: &[Message], line_width: usize) -> Vec<Lin
     for message in messages {
         let (skin, text) = match message {
             Message::User(_) => (user_skin(), message.to_string()),
-            Message::Assistant(m) => {
+            Message::Assistant(m, model, provider) => {
                 if m.is_empty() {
                     continue;
                 }
-                (assistant_skin(), m.clone())
+                let mut skin = assistant_skin();
+                skin.title = assistant_title(model.as_deref(), provider.as_deref());
+                (skin, m.clone())
             }
         };
         let body: Vec<Line> = textwrap::wrap(&text, content_width.max(1))
@@ -971,7 +1056,18 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
     };
 
     if app.is_view_waiting() {
-        messages.extend(waiting_bubble(line_width, app.spinner_frame));
+        // Pull the model/provider from the in-flight stream state so the
+        // waiting bubble header shows which model is being queried.
+        let (wm, wp) = match app.conversation_id.and_then(|id| app.streams.get(&id)) {
+            Some(s) => crate::models::model_provider_from_spec(&s.selected_model),
+            None => (None, None),
+        };
+        messages.extend(waiting_bubble(
+            line_width,
+            app.spinner_frame,
+            wm.as_deref(),
+            wp.as_deref(),
+        ));
     }
 
     let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
@@ -1765,9 +1861,21 @@ fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) 
         let messages = list_all_messages(*id).unwrap_or_default();
         let mut out: Vec<Line> = Vec::new();
         for m in messages {
-            let (header, body, role_style): (&str, String, Style) = match &m {
-                Message::User(_) => ("USER:", m.to_string(), Style::default().yellow()),
-                Message::Assistant(t) => ("ASSISTANT:", t.clone(), Style::default().green()),
+            let (header, body, role_style): (Cow<'static, str>, String, Style) = match &m {
+                Message::User(_) => (
+                    Cow::Borrowed("USER:"),
+                    m.to_string(),
+                    Style::default().yellow(),
+                ),
+                Message::Assistant(t, model, provider) => {
+                    let model = model.as_deref().unwrap_or("unknown");
+                    let provider = provider.as_deref().unwrap_or("unknown");
+                    (
+                        Cow::Owned(format!("ASSISTANT: ({model} -- {provider})")),
+                        t.clone(),
+                        Style::default().green(),
+                    )
+                }
             };
             // Match style keeps the role color but adds bold + a highlight
             // background so occurrences are easy to spot in the preview.
@@ -1787,7 +1895,12 @@ fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) 
                     continue;
                 }
                 if !wrote_header {
-                    out.push(Line::from(header).style(role_style.bold()));
+                    // De-emphasize the model attribution in the preview
+                    // header to match the chat bubble styling: the role label
+                    // and colon use the role color + bold, while the
+                    // `(<model> -- <provider>)` part is dimmed/italicized.
+                    let header_spans = style_preview_header(&header, role_style);
+                    out.push(Line::from(header_spans));
                     wrote_header = true;
                 }
                 // Insert a "..." gap separator when lines were skipped between
