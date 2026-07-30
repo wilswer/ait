@@ -22,7 +22,7 @@ use ratatui::{
     widgets::{Block, Borders, ListState},
 };
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{TextArea, WrapMode};
 use tiktoken_rs::cl100k_base;
 
 use crate::config::ModelConfig;
@@ -474,6 +474,7 @@ pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
     input_textarea.set_cursor_style(Style::default().bg(Color::DarkGray));
     input_textarea.set_placeholder_text("Start typing...");
     input_textarea.set_placeholder_style(Style::default().fg(Color::DarkGray).italic().dim());
+    input_textarea.set_wrap_mode(WrapMode::WordOrGlyph);
     input_textarea
 }
 
