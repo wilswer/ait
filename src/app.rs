@@ -99,11 +99,25 @@ pub struct SpawnArgs {
 /// Async actions reported back to the main event loop by background tasks.
 #[derive(Debug, Clone)]
 pub enum Action {
-    StreamStart { conversation_id: i64 },
-    StreamPartial { conversation_id: i64, content: String },
-    StreamComplete { conversation_id: i64, content: String },
-    StreamCancelled { conversation_id: i64, content: String },
-    Error { conversation_id: Option<i64>, message: String },
+    StreamStart {
+        conversation_id: i64,
+    },
+    StreamPartial {
+        conversation_id: i64,
+        content: String,
+    },
+    StreamComplete {
+        conversation_id: i64,
+        content: String,
+    },
+    StreamCancelled {
+        conversation_id: i64,
+        content: String,
+    },
+    Error {
+        conversation_id: Option<i64>,
+        message: String,
+    },
     ModelsLoaded(Vec<(String, String)>),
     /// A single file was validated and its tokens estimated in the background.
     /// The file is added to the context with the estimated token count
@@ -705,9 +719,7 @@ impl<'a> App<'a> {
                 Message::Assistant(message, model, provider) => {
                     let model = model.as_deref().unwrap_or("unknown");
                     let provider = provider.as_deref().unwrap_or("unknown");
-                    chat_log.push_str(&format!(
-                        "Assistant ({model} -- {provider}): {message}\n"
-                    ));
+                    chat_log.push_str(&format!("Assistant ({model} -- {provider}): {message}\n"));
                 }
             }
         }
