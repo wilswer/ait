@@ -92,7 +92,7 @@ pub async fn get_models(ollama_host_url: Option<&str>) -> AppResult<Vec<(String,
             let endpoint = Endpoint::from_owned(host_url);
             ProviderConfig::from_endpoint(endpoint)
         } else {
-            ProviderConfig::default()
+            ProviderConfig::from_auth(AuthData::FromEnv(env_name.to_string()))
         };
         let models_provider_res = client.all_model_names(kind, provider_config).await;
         let models_provider = match models_provider_res {
@@ -228,9 +228,7 @@ fn base_chat_opts(thinking_effort: ThinkingEffort) -> ChatOptions {
 /// to the [`McpToolBridge`] that owns it (used to dispatch `tools/call`). On
 /// name collisions across servers the last server seen wins and a warning is
 /// logged; a future revision could namespace by server id.
-async fn resolve_tools(
-    bridges: &[McpToolBridge],
-) -> (Vec<Tool>, HashMap<String, McpToolBridge>) {
+async fn resolve_tools(bridges: &[McpToolBridge]) -> (Vec<Tool>, HashMap<String, McpToolBridge>) {
     let mut tools = Vec::new();
     let mut by_name = HashMap::new();
     for bridge in bridges {
@@ -300,17 +298,11 @@ pub async fn run_assistant_stream(
     };
     let client = clientbuilder.build();
 
-    let mut full_content = String::new();
-    let mut full_thinking_content = String::new();
-
     let _ = action_tx
         .send(Action::StreamStart { conversation_id })
         .await;
 
-    let mut helper = StreamHelper {
-        full_content: &mut full_content,
-        full_thinking_content: &mut full_thinking_content,
-    };
+    let mut helper = StreamHelper::new();
 
     for _round in 0..MAX_TOOL_ROUNDS {
         // Re-resolve the tool set each round so servers that finish connecting
@@ -505,75 +497,106 @@ pub async fn run_assistant_stream(
 
 /// Borrowed view over the accumulating stream content, used to emit
 /// `StreamPartial`/`StreamComplete`/`StreamCancelled` payloads consistently.
-/// Owns the mutation methods so the mutable borrows stay in one place.
-struct StreamHelper<'a> {
-    full_content: &'a mut String,
-    full_thinking_content: &'a mut String,
+///
+/// Content is tracked **per round** as a list of [`RoundContent`] entries,
+/// so the display alternates thinking blocks and assistant text across
+/// tool-calling rounds instead of one big block:
+///
+/// ```text
+/// <think>
+/// reasoning + tool notes for round 1
+/// </think>
+/// assistant text for round 1
+///
+/// <think>
+/// reasoning + tool notes for round 2
+/// </think>
+/// assistant text for round 2
+/// ```
+struct StreamHelper {
+    rounds: Vec<RoundContent>,
 }
 
-impl<'a> StreamHelper<'a> {
-    /// Append an assistant text chunk.
+/// One tool-calling round's accumulated content: reasoning/tool notes go
+/// in `thinking` (rendered inside a `<think>` block), assistant text goes in
+/// `text` (rendered after the `<think>` block).
+#[derive(Default)]
+struct RoundContent {
+    thinking: String,
+    text: String,
+}
+
+impl StreamHelper {
+    fn new() -> Self {
+        Self {
+            rounds: vec![RoundContent::default()],
+        }
+    }
+
+    /// The current (latest) round, mutable.
+    fn current(&mut self) -> &mut RoundContent {
+        self.rounds.last_mut().expect("always at least one round")
+    }
+
+    /// Append an assistant text chunk to the current round.
     fn push_text(&mut self, content: &str) {
-        self.full_content.push_str(content);
+        self.current().text.push_str(content);
     }
 
-    /// Append a reasoning text chunk.
+    /// Append a reasoning text chunk to the current round.
     fn push_reasoning(&mut self, content: &str) {
-        self.full_thinking_content.push_str(content);
+        self.current().thinking.push_str(content);
     }
 
-    /// Append a tool-call/result annotation as its own line in the thinking
-    /// trace (inside the `<think>` block). Ensures a separating newline on
+    /// Append a tool-call/result annotation as its own line in the
+    /// current round's thinking buffer. Ensures a separating newline on
     /// both sides so it never merges with model reasoning text.
     fn push_tool_note(&mut self, note: &str) {
-        if !self.full_thinking_content.is_empty()
-            && !self.full_thinking_content.ends_with('\n')
-        {
-            self.full_thinking_content.push('\n');
+        let thinking = &mut self.current().thinking;
+        if !thinking.is_empty() && !thinking.ends_with('\n') {
+            thinking.push('\n');
         }
-        self.full_thinking_content.push_str(note);
-        self.full_thinking_content.push('\n');
+        thinking.push_str(note);
+        thinking.push('\n');
     }
 
-    /// Insert a separator between tool-calling rounds so text from one round
-    /// doesn't concatenate with the next round's text, and the thinking trace
-    /// gets a blank line before the next round's reasoning.
-    ///
-    /// Called after all tool calls in a round have executed, right before
-    /// looping into the next round.
+    /// Finalize the current round and start a fresh one. Called after all
+    /// tool calls in a round have executed, right before looping into the
+    /// next round. The next round's reasoning/text accumulate separately
+    /// so they render as a new `<think>`/text block pair.
     fn end_round(&mut self) {
-        // Ensure assistant text ends with a newline so the next round's text
-        // starts on a fresh line instead of concatenating mid-line.
-        if !self.full_content.is_empty() && !self.full_content.ends_with('\n') {
-            self.full_content.push('\n');
-        }
-        // Add a blank line in the thinking trace to visually separate this
-        // round's tool notes from the next round's reasoning.
-        if !self.full_thinking_content.is_empty()
-            && !self.full_thinking_content.ends_with("\n\n")
-        {
-            if !self.full_thinking_content.ends_with('\n') {
-                self.full_thinking_content.push('\n');
-            }
-            self.full_thinking_content.push('\n');
-        }
+        self.rounds.push(RoundContent::default());
     }
 
-    /// Combine the accumulated reasoning + assistant text into the display
-    /// payload, matching the format the UI already expects.
+    /// Render all rounds as alternating `<think>` thinking blocks and assistant
+    /// text, joined by blank lines. Empty rounds and empty sections are
+    /// skipped so the display stays clean.
     fn combined(&self) -> String {
-        if self.full_thinking_content.is_empty() {
-            self.full_content.clone()
-        } else {
-            format!(
-                "<think>\n{}\n</think>\n{}",
-                self.full_thinking_content, self.full_content
-            )
+        let mut blocks: Vec<String> = Vec::new();
+        for round in &self.rounds {
+            let thinking = round.thinking.trim_end();
+            let text = round.text.trim_end();
+            if thinking.is_empty() && text.is_empty() {
+                continue;
+            }
+            let mut block = String::new();
+            if !thinking.is_empty() {
+                block.push_str("<think>\n");
+                block.push_str(thinking);
+                block.push_str("\n</think>");
+            }
+            if !text.is_empty() {
+                if !block.is_empty() {
+                    block.push('\n');
+                }
+                block.push_str(text);
+            }
+            blocks.push(block);
         }
+        blocks.join("\n\n")
     }
 }
 
-/// Log the token-usage info carried by a stream end, if present.
 fn log_usage(end: &StreamEnd) {
     if let Some(u) = &end.captured_usage {
         let prompt = u.prompt_tokens.unwrap_or(0);
@@ -714,81 +737,84 @@ mod tests {
         assert_eq!(line.chars().count(), 300 + 3);
     }
 
-    // --- end_round separator ---
+    // --- per-round combined() ---
 
     #[test]
-    fn end_round_adds_newline_to_text() {
-        let mut text = String::from("Let me check.");
-        let mut thinking = String::new();
-        let mut helper = StreamHelper {
-            full_content: &mut text,
-            full_thinking_content: &mut thinking,
-        };
-        helper.end_round();
-        assert_eq!(text, "Let me check.\n");
+    fn combined_single_round_text_only() {
+        let mut h = StreamHelper::new();
+        h.push_text("Hello world.");
+        assert_eq!(h.combined(), "Hello world.");
     }
 
     #[test]
-    fn end_round_noop_if_text_already_ends_with_newline() {
-        let mut text = String::from("Hello\n");
-        let mut thinking = String::new();
-        let mut helper = StreamHelper {
-            full_content: &mut text,
-            full_thinking_content: &mut thinking,
-        };
-        helper.end_round();
-        assert_eq!(text, "Hello\n");
+    fn combined_single_round_thinking_and_text() {
+        let mut h = StreamHelper::new();
+        h.push_reasoning("Let me think...");
+        h.push_text("The answer is 42.");
+        assert_eq!(h.combined(), "<think>\nLet me think...\n</think>\nThe answer is 42.");
     }
 
     #[test]
-    fn end_round_noop_if_text_empty() {
-        let mut text = String::new();
-        let mut thinking = String::new();
-        let mut helper = StreamHelper {
-            full_content: &mut text,
-            full_thinking_content: &mut thinking,
-        };
-        helper.end_round();
-        assert_eq!(text, "");
+    fn combined_thinking_only_no_text() {
+        let mut h = StreamHelper::new();
+        h.push_reasoning("Just reasoning.");
+        assert_eq!(h.combined(), "<think>\nJust reasoning.\n</think>");
     }
 
     #[test]
-    fn end_round_adds_blank_line_to_thinking_after_tool_note() {
-        let mut text = String::new();
-        let mut thinking = String::from("> calling `echo`\n< result\n");
-        let mut helper = StreamHelper {
-            full_content: &mut text,
-            full_thinking_content: &mut thinking,
-        };
-        helper.end_round();
-        // Should end with double newline (blank line separator).
-        assert_eq!(thinking, "> calling `echo`\n< result\n\n");
+    fn combined_empty_round_skipped() {
+        let mut h = StreamHelper::new();
+        h.push_text("round 1 text");
+        h.end_round(); // start round 2 (empty so far)
+        h.end_round(); // start round 3
+        h.push_text("round 3 text");
+        assert_eq!(h.combined(), "round 1 text\n\nround 3 text");
     }
 
     #[test]
-    fn end_round_thinking_noop_if_already_double_newline() {
-        let mut text = String::new();
-        let mut thinking = String::from("> calling `echo`\n< result\n\n");
-        let mut helper = StreamHelper {
-            full_content: &mut text,
-            full_thinking_content: &mut thinking,
-        };
-        helper.end_round();
-        assert_eq!(thinking, "> calling `echo`\n< result\n\n");
+    fn combined_multi_round_with_tool_notes() {
+        let mut h = StreamHelper::new();
+        // Round 1: reasoning + tool call (no text)
+        h.push_reasoning("let me check the weather.");
+        h.push_tool_note("> calling `get_weather`");
+        h.push_tool_note("< 18C");
+        h.end_round();
+        // Round 2: reasoning + tool call + text response
+        h.push_reasoning("now check the time.");
+        h.push_tool_note("> calling `search`");
+        h.push_tool_note("< 14:00");
+        h.push_text("the time is 14:00.");
+        let out = h.combined();
+        let expected = concat!(
+            "<think>\n",
+            "let me check the weather.\n",
+            "> calling `get_weather`\n< 18C\n",
+            "</think>\n\n",
+            "<think>\n",
+            "now check the time.\n",
+            "> calling `search`\n< 14:00\n",
+            "</think>\n",
+            "the time is 14:00.",
+        );
+        assert_eq!(out, expected);
     }
 
     #[test]
-    fn end_round_separates_text_across_rounds() {
-        // Simulate: round 1 text + tool note, end_round, round 2 text.
-        let mut text = String::from("Let me check.");
-        let mut thinking = String::from("> calling `echo`\n< ok\n");
-        let mut helper = StreamHelper {
-            full_content: &mut text,
-            full_thinking_content: &mut thinking,
-        };
-        helper.end_round();
-        // Round 2 text arrives:
-        helper.push_text("The result is ok.");
-        assert_eq!(text, "Let me check.\nThe result is ok.");
+    fn end_round_starts_new_round() {
+        let mut h = StreamHelper::new();
+        h.push_text("round 1");
+        h.end_round();
+        h.push_text("round 2");
+        assert_eq!(h.combined(), "round 1\n\nround 2");
     }
+
+    #[test]
+    fn push_tool_note_separates_from_reasoning() {
+        let mut h = StreamHelper::new();
+        h.push_reasoning("some reasoning");
+        h.push_tool_note("> calling `echo`");
+        // The tool note should be on its own line, after the reasoning.
+        assert_eq!(h.current().thinking, "some reasoning\n> calling `echo`\n");
+    }
+
 }
