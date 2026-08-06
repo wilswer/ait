@@ -34,6 +34,10 @@ walkdir = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+rmcp = "3.1.1"
+
+[workspace]
+members = [".", "mcp-genai-glue"]
 
 [profile.release]
 strip = true
