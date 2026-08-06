@@ -1,13 +1,12 @@
 use anyhow::Context;
 use clap::Parser;
-use futures::{FutureExt, StreamExt};
-use genai::chat::{ChatStreamEvent, StreamChunk, StreamEnd};
+use futures::FutureExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio::task;
 
-use ait::ai::{assistant_response_streaming, get_models};
+use ait::ai::{get_models, run_assistant_stream};
 use ait::app::{Action, App, AppMode, AppResult, Message, Notification, SpawnArgs};
 use ait::cli::Cli;
 use ait::config::{Config, ModelConfig};
@@ -114,6 +113,10 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
         Action::ContextAddDone { notification } => {
             app.set_app_mode(AppMode::Notify { notification });
         }
+        // MCP outcomes are consumed directly in the main `tokio::select!`
+        // (they own a `McpConnection` that can't go through the action
+        // channel). These arms should never fire; if they do, ignore them.
+        Action::McpServerReady { .. } | Action::McpServerFailed { .. } => {}
     }
     Ok(())
 }
@@ -172,18 +175,23 @@ Context:
 
     let mut app = App::new(&system_prompt, default_model);
 
+    // Seed MCP status (one `Connecting` entry per enabled server) so the
+    // footer shows "connecting" immediately, before any server resolves.
+    app.mcp_statuses = ait::mcp::initial_statuses(&config.mcp);
+
     // Connect to MCP servers declared (and enabled) in the config. This runs
     // in the background so a slow/hanging server never blocks the TUI; each
-    // successful connection is delivered to the main loop and stored on the
-    // app as it becomes ready.
-    let (mcp_tx, mut mcp_rx) = mpsc::channel::<ait::mcp::McpConnection>(16);
+    // server's outcome (ready/failed) is delivered to the main loop as a
+    // dedicated action, updating the footer and the tool bridge list.
     let mcp_config = config.mcp.clone();
+    let (mcp_tx, mut mcp_rx) =
+        mpsc::channel::<ait::mcp::McpServerOutcome>(16);
     task::spawn(async move {
-        let connections = ait::mcp::connect_all(&mcp_config).await;
-        for conn in connections {
-            let _ = mcp_tx.send(conn).await;
-        }
+        ait::mcp::connect_all_streaming(&mcp_config, mcp_tx).await;
     });
+    // Connections live here so their `RunningService`s stay alive for the
+    // session; only the cheap `McpToolBridge` clones flow into `App`.
+    let mut mcp_keepalive: Vec<ait::mcp::McpConnection> = Vec::new();
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
@@ -227,15 +235,32 @@ Context:
                 }
             }
 
-            // --- MCP server connections coming online ---
-            Some(conn) = mcp_rx.recv() => {
-                let count = conn.tool_count().await;
-                tracing::info!(
-                    mcp.server = %conn.id,
-                    tools = count,
-                    "MCP server ready"
-                );
-                app.mcp_connections.push(conn);
+            // --- MCP server outcomes coming online ---
+            Some(outcome) = mcp_rx.recv() => {
+                use ait::mcp::McpServerOutcome;
+                match outcome {
+                    McpServerOutcome::Ready(conn) => {
+                        let conn = *conn;
+                        let id = conn.id.clone();
+                        let display_name = conn.display_name.clone();
+                        let bridge = conn.bridge.clone();
+                        let tool_count = conn.tool_count().await;
+                        app.mcp_server_ready(id, display_name, tool_count, bridge);
+                        // Keep the connection (and its `RunningService`) alive
+                        // for the whole session.
+                        mcp_keepalive.push(conn);
+                    }
+                    McpServerOutcome::Failed { id, error } => {
+                        // Look up the display name we seeded earlier.
+                        let display_name = app
+                            .mcp_statuses
+                            .iter()
+                            .find(|s| s.id() == id)
+                            .map(|s| s.display_name().to_string())
+                            .unwrap_or_else(|| id.clone());
+                        app.mcp_server_failed(id, display_name, error);
+                    }
+                }
             }
         }
 
@@ -279,125 +304,33 @@ Context:
                 selected_model,
                 thinking_effort,
                 system_prompt: sys_prompt,
-                mut cancel_rx,
+                cancel_rx,
             } = args;
             let ollama_host_url = resolved_ollama_host.clone();
             let tx = action_tx.clone();
+            // Snapshot the currently-connected MCP bridges so the spawned
+            // task can resolve and execute tools. `McpToolBridge` is cheap to
+            // clone (it holds a channel handle to the running service).
+            let mcp_bridges: Vec<mcp_genai_glue::McpToolBridge> =
+                app.mcp_bridges.clone();
 
-            // Spawn ONE task per conversation that does everything.
+            // Spawn ONE task per conversation that drives the full streaming
+            // + MCP tool-calling loop, reporting progress via `tx`.
             task::spawn(async move {
-                let response = assistant_response_streaming(
+                if let Err(e) = run_assistant_stream(
                     &messages,
                     selected_model,
                     sys_prompt,
                     thinking_effort,
                     ollama_host_url,
+                    mcp_bridges,
+                    conversation_id,
+                    tx,
+                    cancel_rx,
                 )
-                .await;
-
-                match response {
-                    Ok(mut stream) => {
-                        let mut full_content = String::new();
-                        let mut full_thinking_content = String::new();
-                        let _ = tx
-                            .send(Action::StreamStart { conversation_id })
-                            .await;
-
-                        loop {
-                            tokio::select! {
-                                _ = cancel_rx.recv() => {
-                                    let all_content = if !full_thinking_content.is_empty() {
-                                        format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
-                                    } else {
-                                        full_content
-                                    };
-                                    let _ = tx.send(Action::StreamCancelled { conversation_id, content: all_content }).await;
-                                    break;
-                                }
-                                result_opt = stream.next() => {
-                                    match result_opt {
-                                        Some(Ok(event)) => {
-                                            let mut partial_updated = false;
-
-                                            match event {
-                                                ChatStreamEvent::ReasoningChunk(StreamChunk { content }) if !content.is_empty() => {
-                                                    full_thinking_content.push_str(&content);
-                                                    partial_updated = true;
-                                                }
-                                                ChatStreamEvent::Chunk(StreamChunk { content }) if !content.is_empty() => {
-                                                    full_content.push_str(&content);
-                                                    partial_updated = true;
-                                                }
-                                                ChatStreamEvent::End(StreamEnd {captured_content: Some(content), captured_reasoning_content: reasoning_content, captured_usage: usage, ..}) => {
-                                                    // Log token usage
-                                                    if let Some(u) = &usage {
-                                                        let prompt = u.prompt_tokens.unwrap_or(0);
-                                                        let completion = u.completion_tokens.unwrap_or(0);
-                                                        let total = u.total_tokens.unwrap_or(0);
-                                                        let cached = u
-                                                            .prompt_tokens_details
-                                                            .as_ref()
-                                                            .and_then(|d| d.cached_tokens)
-                                                            .unwrap_or(0);
-                                                        let cache_creation = u
-                                                            .prompt_tokens_details
-                                                            .as_ref()
-                                                            .and_then(|d| d.cache_creation_tokens)
-                                                            .unwrap_or(0);
-
-                                                        tracing::info!(
-                                                            prompt_tokens = prompt,
-                                                            completion_tokens = completion,
-                                                            total_tokens = total,
-                                                            cached_tokens = cached,
-                                                            cache_creation_tokens = cache_creation,
-                                                            "stream completed - token usage"
-                                                        );
-                                                    } else {
-                                                        tracing::info!("stream completed - no token usage returned");
-                                                    }
-                                                    if let Some(texts) = content.into_joined_texts() {
-                                                        let full = if let Some(reasoning) = reasoning_content {
-                                                            format!("<think>\n{}\n</think>\n{}", reasoning, texts)
-                                                        } else {
-                                                            texts
-                                                        };
-                                                        let _ = tx.send(Action::StreamComplete { conversation_id, content: full }).await;
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-
-                                            if partial_updated {
-                                                let all_content = if !full_thinking_content.is_empty() {
-                                                    format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
-                                                } else {
-                                                    full_content.clone()
-                                                };
-                                                let _ = tx.send(Action::StreamPartial { conversation_id, content: all_content }).await;
-                                            }
-                                        }
-                                        Some(Err(e)) => {
-                                            let _ = tx.send(Action::Error { conversation_id: Some(conversation_id), message: format!("Stream error: {}", e) }).await;
-                                            break;
-                                        }
-                                        None => {
-                                            let all_content = if !full_thinking_content.is_empty() {
-                                                format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
-                                            } else {
-                                                full_content
-                                            };
-                                            let _ = tx.send(Action::StreamComplete { conversation_id, content: all_content }).await;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Action::Error { conversation_id: Some(conversation_id), message: format!("API Error: {}", e) }).await;
-                    }
+                .await
+                {
+                    tracing::error!(error = %e, "assistant stream task failed");
                 }
             });
         }

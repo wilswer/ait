@@ -26,6 +26,57 @@ use tracing::{info, warn};
 
 use crate::config::{McpConfig, McpServerConfig, McpTransportKind};
 
+/// Outcome of a single server connection attempt, streamed out of
+/// [`connect_all_streaming`].
+///
+/// `Ready` is boxed because [`McpConnection`] is large (it owns a
+/// `RunningService`); the enum crosses an `mpsc` channel so we keep it small.
+pub enum McpServerOutcome {
+    /// The server connected successfully.
+    Ready(Box<McpConnection>),
+    /// The connection attempt failed.
+    Failed { id: String, error: String },
+}
+
+/// UI-facing status of a single MCP server.
+///
+/// `App` holds a `Vec<McpServerStatus>` (one per `enabled` server in the
+/// config) so the footer can render counts without touching async state.
+#[derive(Debug, Clone)]
+pub enum McpServerStatus {
+    /// Config says `enabled = true` but the connection hasn't resolved yet.
+    Connecting { id: String, display_name: String },
+    /// Connected; exposes `tool_count` tools.
+    Ready { id: String, display_name: String, tool_count: usize },
+    /// Connection attempt failed (`error` is a short, display-safe string).
+    Failed { id: String, display_name: String, error: String },
+}
+
+impl McpServerStatus {
+    /// Stable server id.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Connecting { id, .. }
+            | Self::Ready { id, .. }
+            | Self::Failed { id, .. } => id,
+        }
+    }
+
+    /// Human-readable display name (falls back to the id).
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Connecting { display_name, .. }
+            | Self::Ready { display_name, .. }
+            | Self::Failed { display_name, .. } => display_name,
+        }
+    }
+
+    /// `true` when this server is connected and usable.
+    pub fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready { .. })
+    }
+}
+
 /// A live MCP server connection.
 ///
 /// Holds the running client service (which drives the transport) together
@@ -50,12 +101,52 @@ impl McpConnection {
     }
 }
 
-/// Connect to every `enabled` MCP server defined in the config.
+/// Connect to every `enabled` MCP server defined in the config, returning
+/// only the successful connections once all attempts have resolved.
+///
+/// Kept for examples/tests that don't care about per-server status. The app
+/// uses [`connect_all_streaming`] instead so it can show live status.
+pub async fn connect_all(config: &McpConfig) -> Vec<McpConnection> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<McpServerOutcome>(16);
+    connect_all_streaming(config, tx).await;
+    let mut connections = Vec::new();
+    while let Some(outcome) = rx.recv().await {
+        if let McpServerOutcome::Ready(conn) = outcome {
+            connections.push(*conn);
+        }
+    }
+    connections
+}
+
+/// Build the initial per-server status list from a config: one
+/// [`McpServerStatus::Connecting`] entry per `enabled` server. Disabled
+/// servers are omitted entirely. Used to seed `App` before any connection
+/// has resolved.
+pub fn initial_statuses(config: &McpConfig) -> Vec<McpServerStatus> {
+    config
+        .servers
+        .iter()
+        .filter(|(_, cfg)| cfg.enabled)
+        .map(|(id, cfg)| McpServerStatus::Connecting {
+            id: id.clone(),
+            display_name: cfg.display_name(id).to_string(),
+        })
+        .collect()
+}
+/// per-server outcomes (ready or failed) to `tx` as each server resolves.
 ///
 /// Servers are connected **concurrently**; each server that fails to connect
-/// is logged and skipped — one bad server does not abort the others. Returns
-/// the connections that succeeded, in the config's (sorted) order.
-pub async fn connect_all(config: &McpConfig) -> Vec<McpConnection> {
+/// is reported as [`McpServerOutcome::Failed`] — one bad server does not
+/// abort the others. The config's (sorted) order is preserved in the order
+/// outcomes are sent.
+///
+/// This is the streaming variant used by the app so the UI can show
+/// per-server status (connecting → ready/failed) in real time. The
+/// all-at-once [`connect_all`] is kept for examples/tests.
+pub async fn connect_all_streaming(
+    config: &McpConfig,
+    tx: tokio::sync::mpsc::Sender<McpServerOutcome>,
+) {
     let mut tasks = Vec::new();
     for (id, server_cfg) in &config.servers {
         if !server_cfg.enabled {
@@ -66,28 +157,35 @@ pub async fn connect_all(config: &McpConfig) -> Vec<McpConnection> {
         let server_cfg = server_cfg.clone();
         tasks.push(tokio::spawn(async move {
             match connect_one(id.clone(), server_cfg).await {
-                Ok(conn) => Some(conn),
+                Ok(conn) => McpServerOutcome::Ready(Box::new(conn)),
                 Err(e) => {
                     warn!(mcp.server = %id, error = %e, "failed to connect MCP server");
-                    None
+                    McpServerOutcome::Failed { id, error: e.to_string() }
                 }
             }
         }));
     }
 
-    let mut connections = Vec::new();
     for task in tasks {
         match task.await {
-            Ok(Some(conn)) => connections.push(conn),
-            Ok(None) => {}
+            Ok(outcome) => {
+                let _ = tx.send(outcome).await;
+            }
             Err(e) => warn!(error = %e, "MCP loader task panicked"),
         }
     }
-    connections
 }
 
 /// Connect to a single MCP server.
-async fn connect_one(id: String, cfg: McpServerConfig) -> Result<McpConnection> {
+///
+/// Public so that examples/tests can drive a single server without going
+/// through the full config loader.
+pub async fn connect_one(id: String, mut cfg: McpServerConfig) -> Result<McpConnection> {
+    // Resolve ${VAR}/$VAR references right before connecting. The on-disk
+    // config keeps the placeholders; only this in-memory clone is expanded.
+    cfg.expand_env()
+        .with_context(|| format!("server `{id}`: failed to expand env vars"))?;
+
     let display_name = cfg.display_name(&id).to_string();
     let kind = cfg
         .transport_kind()

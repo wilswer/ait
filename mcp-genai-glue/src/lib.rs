@@ -47,7 +47,7 @@ pub enum BridgeError {
 ///
 /// [`McpToolBridge`] is cheap to clone — it holds a single
 /// [`Peer<RoleClient>`], which is itself a channel handle.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct McpToolBridge {
     peer: Peer<RoleClient>,
 }

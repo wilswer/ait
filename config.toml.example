@@ -42,6 +42,21 @@ default_model = {name = "gemini-3.1-pro-preview", provider = "Gemini"}
 # `api_key` (sent as `Authorization: Bearer <api_key>`) or a custom `headers`
 # entry. Note that these values are stored in plaintext in this file.
 #
+# To avoid pasting secrets verbatim, reference environment variables with
+# `${VAR}` (or `$VAR`) anywhere in a server config — they are expanded at
+# connect time, so the on-disk file only ever holds the placeholder:
+#
+#   [mcp.servers.kagi]
+#   command = "uvx"
+#   args = ["kagimcp"]
+#   env = { KAGI_API_KEY = "${KAGI_API_KEY}" }   # set KAGI_API_KEY in your shell
+#
+# Supported forms:
+#   ${VAR}              → value of VAR (error if unset)
+#   ${VAR:-default}     → value of VAR, or `default` if unset
+#   $VAR                → value of VAR (error if unset)
+#   $$                  → literal `$`
+#
 # Example — a stdio server (the official filesystem server):
 #
 #   [mcp.servers.filesystem]

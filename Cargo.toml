@@ -42,6 +42,9 @@ rmcp = { version = "3.1.1", default-features = false, features = [
 ] }
 mcp-genai-glue = { path = "mcp-genai-glue" }
 
+[dev-dependencies]
+serde_json = "1"
+
 [workspace]
 members = [".", "mcp-genai-glue"]
 

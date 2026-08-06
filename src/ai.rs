@@ -1,11 +1,17 @@
+use std::collections::HashMap;
+
+use futures::StreamExt;
 use genai::adapter::AdapterKind;
 use genai::chat::{
-    CacheControl, ChatMessage, ChatOptions, ChatRequest, ChatStream, ReasoningEffort,
+    CacheControl, ChatMessage, ChatOptions, ChatRequest, ChatStream, ChatStreamEvent,
+    ReasoningEffort, StreamChunk, StreamEnd, Tool, ToolCall, ToolResponse,
 };
 use genai::resolver::{AuthData, Endpoint, ProviderConfig, ServiceTargetResolver};
 use genai::{ClientBuilder, ClientConfig, ModelIden, ModelSpec, ServiceTarget};
+use mcp_genai_glue::McpToolBridge;
+use tokio::sync::mpsc;
 
-use crate::app::{AppResult, Message, ThinkingEffort};
+use crate::app::{Action, AppResult, Message, ThinkingEffort};
 
 pub const MODELS: [(&str, &str); 1] = [("Gemini", "gemini-3.1-pro-preview")];
 
@@ -188,3 +194,340 @@ pub async fn assistant_response_streaming(
     let chat_res = client.exec_chat_stream(model, chat_req, None).await?;
     Ok(chat_res.stream)
 }
+
+// region:    --- MCP tool-calling loop ---
+
+/// Hard cap on how many tool-calling rounds a single assistant response may
+/// run, to avoid runaway loops (the model keeps asking for tools forever).
+const MAX_TOOL_ROUNDS: usize = 12;
+
+/// Build the per-request [`ChatOptions`] with the streaming captures enabled
+/// (text, reasoning, usage, and tool calls) plus the given thinking effort.
+fn base_chat_opts(thinking_effort: ThinkingEffort) -> ChatOptions {
+    let base = ChatOptions::default()
+        .with_cache_control(CacheControl::Ephemeral)
+        .with_capture_content(true)
+        .with_capture_reasoning_content(true)
+        .with_capture_usage(true)
+        .with_capture_tool_calls(true);
+
+    match thinking_effort {
+        ThinkingEffort::None => base.with_reasoning_effort(ReasoningEffort::None),
+        ThinkingEffort::Low => base.with_reasoning_effort(ReasoningEffort::Low),
+        ThinkingEffort::Medium => base.with_reasoning_effort(ReasoningEffort::Medium),
+        ThinkingEffort::High => base.with_reasoning_effort(ReasoningEffort::High),
+        ThinkingEffort::XHigh => base.with_reasoning_effort(ReasoningEffort::XHigh),
+        ThinkingEffort::Max => base.with_reasoning_effort(ReasoningEffort::Max),
+    }
+}
+
+/// Resolve the union of tools across all connected MCP servers.
+///
+/// Returns the genai tool list to send to the model, plus a map from tool name
+/// to the [`McpToolBridge`] that owns it (used to dispatch `tools/call`). On
+/// name collisions across servers the last server seen wins and a warning is
+/// logged; a future revision could namespace by server id.
+async fn resolve_tools(
+    bridges: &[McpToolBridge],
+) -> (Vec<Tool>, HashMap<String, McpToolBridge>) {
+    let mut tools = Vec::new();
+    let mut by_name = HashMap::new();
+    for bridge in bridges {
+        match bridge.tools().await {
+            Ok(server_tools) => {
+                for tool in server_tools {
+                    let name = tool.name.as_str().to_string();
+                    if by_name.contains_key(&name) {
+                        tracing::warn!(
+                            mcp.tool = %name,
+                            "tool name collision across MCP servers; last definition wins"
+                        );
+                    }
+                    by_name.insert(name, bridge.clone());
+                    tools.push(tool);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to list tools from an MCP server; skipping");
+            }
+        }
+    }
+    (tools, by_name)
+}
+
+/// Run the full assistant response stream, including the agentic tool-calling
+/// loop.
+///
+/// The model is allowed to call MCP tools (resolved from `mcp_bridges`); each
+/// tool-call round is executed against the owning server and the result is
+/// fed back as a tool-response turn, up to [`MAX_TOOL_ROUNDS`] rounds. Text and
+/// reasoning chunks are streamed back to the UI via `action_tx` as
+/// [`Action::StreamPartial`] updates; the final message is sent as
+/// [`Action::StreamComplete`] (or [`Action::StreamCancelled`] if the user
+/// cancels).
+///
+/// This owns the entire multi-round conversation so the caller (`main.rs`)
+/// only has to spawn it once per submitted message.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_assistant_stream(
+    messages: &[Message],
+    model: ModelSpec,
+    system_prompt: Option<String>,
+    thinking_effort: ThinkingEffort,
+    ollama_host_url: Option<String>,
+    mcp_bridges: Vec<McpToolBridge>,
+    conversation_id: i64,
+    action_tx: mpsc::Sender<Action>,
+    mut cancel_rx: mpsc::Receiver<()>,
+) -> AppResult<()> {
+    // Genai chat messages for the conversation history. This grows across
+    // tool-calling rounds as we append assistant tool-use turns and tool
+    // responses.
+    let mut chat_messages: Vec<ChatMessage> = messages
+        .iter()
+        .map(|m| match m {
+            Message::User(m) => ChatMessage::user(m.clone()),
+            Message::Assistant(m, _, _) => ChatMessage::assistant(m.clone()),
+        })
+        .collect();
+
+    let clientbuilder = match &model {
+        ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::Ollama => {
+            init_clientbuilder(ollama_host_url.as_deref(), base_chat_opts(thinking_effort))
+        }
+        _ => init_clientbuilder(None, base_chat_opts(thinking_effort)),
+    };
+    let client = clientbuilder.build();
+
+    let mut full_content = String::new();
+    let mut full_thinking_content = String::new();
+
+    let _ = action_tx
+        .send(Action::StreamStart { conversation_id })
+        .await;
+
+    let mut helper = StreamHelper {
+        full_content: &mut full_content,
+        full_thinking_content: &mut full_thinking_content,
+    };
+
+    for _round in 0..MAX_TOOL_ROUNDS {
+        // Re-resolve the tool set each round so servers that finish connecting
+        // mid-conversation become available without re-sending the prompt.
+        let (tools, tool_map) = resolve_tools(&mcp_bridges).await;
+        let has_tools = !tools.is_empty();
+
+        // Build this round's request from the (possibly extended) history.
+        let mut chat_req = if let Some(ref sp) = system_prompt {
+            ChatRequest::new(vec![ChatMessage::system(sp.clone())])
+        } else {
+            ChatRequest::new(vec![])
+        };
+        for cm in &chat_messages {
+            chat_req = chat_req.append_message(cm.clone());
+        }
+        if has_tools {
+            chat_req = chat_req.with_tools(tools.clone());
+        }
+
+        let mut stream = match client.exec_chat_stream(model.clone(), chat_req, None).await {
+            Ok(res) => res.stream,
+            Err(e) => {
+                let _ = action_tx
+                    .send(Action::Error {
+                        conversation_id: Some(conversation_id),
+                        message: format!("API Error: {e}"),
+                    })
+                    .await;
+                return Ok(());
+            }
+        };
+
+        // Drive this round's stream until it ends. If the model emitted tool
+        // calls, execute them and loop into the next round; otherwise finalize.
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    let _ = action_tx
+                        .send(Action::StreamCancelled {
+                            conversation_id,
+                            content: helper.combined(),
+                        })
+                        .await;
+                    return Ok(());
+                }
+                result_opt = stream.next() => {
+                    match result_opt {
+                        Some(Ok(event)) => match event {
+                            ChatStreamEvent::ReasoningChunk(StreamChunk { content })
+                                if !content.is_empty() =>
+                            {
+                                helper.push_reasoning(&content);
+                                let combined = helper.combined();
+                                let _ = action_tx
+                                    .send(Action::StreamPartial {
+                                        conversation_id,
+                                        content: combined,
+                                    })
+                                    .await;
+                            }
+                            ChatStreamEvent::Chunk(StreamChunk { content }) if !content.is_empty() => {
+                                helper.push_text(&content);
+                                let combined = helper.combined();
+                                let _ = action_tx
+                                    .send(Action::StreamPartial {
+                                        conversation_id,
+                                        content: combined,
+                                    })
+                                    .await;
+                            }
+                            ChatStreamEvent::End(end) => {
+                                log_usage(&end);
+                                let tool_calls: Vec<ToolCall> = end
+                                    .captured_tool_calls()
+                                    .map(|c| c.into_iter().cloned().collect())
+                                    .unwrap_or_default();
+
+                                if !tool_calls.is_empty() && !tool_map.is_empty() {
+                                    // Append the assistant tool-use turn (thought
+                                    // signatures included, ordered before calls).
+                                    if let Some(msg) = end.into_assistant_message_for_tool_use() {
+                                        chat_messages.push(msg);
+                                    }
+                                    // Execute each tool call against its owning server.
+                                    for tc in &tool_calls {
+                                        let fn_name = tc.fn_name.clone();
+                                        let content = match tool_map.get(&fn_name) {
+                                            Some(bridge) => match bridge.execute(tc).await {
+                                                Ok(resp) => resp.content,
+                                                Err(e) => format!("Error: {e}"),
+                                            },
+                                            None => format!(
+                                                "Error: no MCP server provides tool `{fn_name}`"
+                                            ),
+                                        };
+                                        tracing::info!(
+                                            mcp.tool = %fn_name,
+                                            result_len = content.len(),
+                                            "executed MCP tool"
+                                        );
+                                        let resp = ToolResponse::from_tool_call(tc, content);
+                                        chat_messages.push(ChatMessage::from(resp));
+                                    }
+                                    // Break the inner loop; the outer loop runs the next round.
+                                    break;
+                                }
+
+                                // No (executable) tool calls: this is the final turn.
+                                let _ = action_tx
+                                    .send(Action::StreamComplete {
+                                        conversation_id,
+                                        content: helper.combined(),
+                                    })
+                                    .await;
+                                return Ok(());
+                            }
+                            _ => {}
+                        },
+                        Some(Err(e)) => {
+                            let _ = action_tx
+                                .send(Action::Error {
+                                    conversation_id: Some(conversation_id),
+                                    message: format!("Stream error: {e}"),
+                                })
+                                .await;
+                            return Ok(());
+                        }
+                        None => {
+                            // Stream ended without an explicit `End` event.
+                            let _ = action_tx
+                                .send(Action::StreamComplete {
+                                    conversation_id,
+                                    content: helper.combined(),
+                                })
+                                .await;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Loop cap reached: finalize with whatever we have so the conversation stays usable.
+    tracing::warn!(
+        rounds = MAX_TOOL_ROUNDS,
+        "MCP tool-calling loop hit the round cap; finalizing"
+    );
+    let _ = action_tx
+        .send(Action::StreamComplete {
+            conversation_id,
+            content: helper.combined(),
+        })
+        .await;
+    Ok(())
+}
+
+/// Borrowed view over the accumulating stream content, used to emit
+/// `StreamPartial`/`StreamComplete`/`StreamCancelled` payloads consistently.
+/// Owns the mutation methods so the mutable borrows stay in one place.
+struct StreamHelper<'a> {
+    full_content: &'a mut String,
+    full_thinking_content: &'a mut String,
+}
+
+impl<'a> StreamHelper<'a> {
+    /// Append an assistant text chunk.
+    fn push_text(&mut self, content: &str) {
+        self.full_content.push_str(content);
+    }
+
+    /// Append a reasoning text chunk.
+    fn push_reasoning(&mut self, content: &str) {
+        self.full_thinking_content.push_str(content);
+    }
+
+    /// Combine the accumulated reasoning + assistant text into the display
+    /// payload, matching the format the UI already expects.
+    fn combined(&self) -> String {
+        if self.full_thinking_content.is_empty() {
+            self.full_content.clone()
+        } else {
+            format!(
+                "<think>\n{}\n</think>\n{}",
+                self.full_thinking_content, self.full_content
+            )
+        }
+    }
+}
+
+/// Log the token-usage info carried by a stream end, if present.
+fn log_usage(end: &StreamEnd) {
+    if let Some(u) = &end.captured_usage {
+        let prompt = u.prompt_tokens.unwrap_or(0);
+        let completion = u.completion_tokens.unwrap_or(0);
+        let total = u.total_tokens.unwrap_or(0);
+        let cached = u
+            .prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cached_tokens)
+            .unwrap_or(0);
+        let cache_creation = u
+            .prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cache_creation_tokens)
+            .unwrap_or(0);
+        tracing::info!(
+            prompt_tokens = prompt,
+            completion_tokens = completion,
+            total_tokens = total,
+            cached_tokens = cached,
+            cache_creation_tokens = cache_creation,
+            "stream completed - token usage"
+        );
+    } else {
+        tracing::info!("stream completed - no token usage returned");
+    }
+}
+
+// endregion:    --- MCP tool-calling loop ---

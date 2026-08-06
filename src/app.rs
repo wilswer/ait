@@ -131,6 +131,20 @@ pub enum Action {
     ContextAddDone {
         notification: Notification,
     },
+    /// An MCP server finished connecting and is ready for tool calls. The
+    /// connection is moved into the app so it stays alive for the session.
+    McpServerReady {
+        id: String,
+        display_name: String,
+        tool_count: usize,
+        bridge: mcp_genai_glue::McpToolBridge,
+    },
+    /// An MCP server failed to connect.
+    McpServerFailed {
+        id: String,
+        display_name: String,
+        error: String,
+    },
 }
 
 pub fn estimate_tokens(text: &str) -> AppResult<usize> {
@@ -478,9 +492,14 @@ pub struct App<'a> {
     pub thinking_effort_state: ListState,
     /// Is the app loading available models?
     pub is_loading_models: bool,
-    /// Connected MCP servers (loaded from `[mcp.servers]` at startup). Kept
-    /// here so they stay alive and are available for tool-calling.
-    pub mcp_connections: Vec<crate::mcp::McpConnection>,
+    /// Per-server status for the MCP footer (connecting/ready/failed), one
+    /// entry per `enabled` server in the config. Drives the status counts.
+    pub mcp_statuses: Vec<crate::mcp::McpServerStatus>,
+    /// Bridges of currently-connected MCP servers. Snapshot by streaming
+    /// tasks so they can resolve/execute tools. The owning `RunningService`
+    /// is kept alive inside each bridge's `McpConnection` (held by the main
+    /// loop, not here — bridges are cheap channel handles).
+    pub mcp_bridges: Vec<mcp_genai_glue::McpToolBridge>,
 }
 
 pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
@@ -544,7 +563,8 @@ impl Default for App<'_> {
                 s
             },
             is_loading_models: true,
-            mcp_connections: Vec::new(),
+            mcp_statuses: Vec::new(),
+            mcp_bridges: Vec::new(),
         }
     }
 }
@@ -603,6 +623,67 @@ impl<'a> App<'a> {
     /// Number of conversations with an in-flight stream.
     pub fn active_stream_count(&self) -> usize {
         self.streams.len()
+    }
+
+    // --- MCP status ---
+
+    /// Mark an MCP server as connected and register its bridge for tool calls.
+    /// Replaces any prior status entry with the same id.
+    pub fn mcp_server_ready(
+        &mut self,
+        id: String,
+        display_name: String,
+        tool_count: usize,
+        bridge: mcp_genai_glue::McpToolBridge,
+    ) {
+        tracing::info!(mcp.server = %id, tools = tool_count, "MCP server ready");
+        self.update_mcp_status(crate::mcp::McpServerStatus::Ready {
+            id,
+            display_name,
+            tool_count,
+        });
+        self.mcp_bridges.push(bridge);
+    }
+
+    /// Mark an MCP server as failed. Replaces any prior status entry with the
+    /// same id.
+    pub fn mcp_server_failed(&mut self, id: String, display_name: String, error: String) {
+        tracing::warn!(mcp.server = %id, error = %error, "MCP server failed to connect");
+        self.update_mcp_status(crate::mcp::McpServerStatus::Failed {
+            id,
+            display_name,
+            error,
+        });
+    }
+
+    /// Replace the status entry matching `id`, or push a new one.
+    fn update_mcp_status(&mut self, status: crate::mcp::McpServerStatus) {
+        let id = status.id().to_string();
+        if let Some(slot) = self.mcp_statuses.iter_mut().find(|s| s.id() == id) {
+            *slot = status;
+        } else {
+            self.mcp_statuses.push(status);
+        }
+    }
+
+    /// Counts of MCP servers by state, for the footer summary. Returns
+    /// `(ready, ready_tool_total, connecting, failed)`.
+    pub fn mcp_status_counts(&self) -> (usize, usize, usize, usize) {
+        let mut ready = 0;
+        let mut ready_tools = 0;
+        let mut connecting = 0;
+        let mut failed = 0;
+        for s in &self.mcp_statuses {
+            match s {
+                crate::mcp::McpServerStatus::Ready { tool_count, .. } => {
+                    ready += 1;
+                    ready_tools += *tool_count;
+                }
+                crate::mcp::McpServerStatus::Connecting { .. } => connecting += 1,
+                crate::mcp::McpServerStatus::Failed { .. } => failed += 1,
+            }
+        }
+        (ready, ready_tools, connecting, failed)
     }
 
     /// Cancels the in-flight stream for the currently viewed conversation, if

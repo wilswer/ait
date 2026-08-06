@@ -37,6 +37,7 @@ dependencies = [
  "rmcp",
  "rusqlite",
  "serde",
+ "serde_json",
  "syntect",
  "textwrap",
  "tiktoken-rs",

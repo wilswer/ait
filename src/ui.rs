@@ -1657,6 +1657,35 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ));
         }
     }
+
+    // MCP server status summary (only when at least one server is configured).
+    if !app.mcp_statuses.is_empty() {
+        let (ready, ready_tools, connecting, failed) = app.mcp_status_counts();
+        msg.push("   ".into());
+        msg.push(Span::styled("MCP:", Style::default().fg(Color::DarkGray)));
+        if ready > 0 {
+            msg.push(" ".into());
+            msg.push(Span::styled(
+                format!("{ready} ready ({ready_tools} tools)"),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        if connecting > 0 {
+            msg.push(" ".into());
+            msg.push(Span::styled(
+                format!("{connecting} connecting"),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        if failed > 0 {
+            msg.push(" ".into());
+            msg.push(Span::styled(
+                format!("{failed} failed"),
+                Style::default().fg(Color::Red),
+            ));
+        }
+    }
+
     let text = Text::from(Line::from(msg)).patch_style(Style::default());
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);
