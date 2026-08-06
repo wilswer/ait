@@ -172,6 +172,19 @@ Context:
 
     let mut app = App::new(&system_prompt, default_model);
 
+    // Connect to MCP servers declared (and enabled) in the config. This runs
+    // in the background so a slow/hanging server never blocks the TUI; each
+    // successful connection is delivered to the main loop and stored on the
+    // app as it becomes ready.
+    let (mcp_tx, mut mcp_rx) = mpsc::channel::<ait::mcp::McpConnection>(16);
+    let mcp_config = config.mcp.clone();
+    task::spawn(async move {
+        let connections = ait::mcp::connect_all(&mcp_config).await;
+        for conn in connections {
+            let _ = mcp_tx.send(conn).await;
+        }
+    });
+
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend).context("Failed to create terminal")?;
@@ -212,6 +225,17 @@ Context:
                 while let Ok(action) = action_rx.try_recv() {
                     handle_action(action, &mut app).await?;
                 }
+            }
+
+            // --- MCP server connections coming online ---
+            Some(conn) = mcp_rx.recv() => {
+                let count = conn.tool_count().await;
+                tracing::info!(
+                    mcp.server = %conn.id,
+                    tools = count,
+                    "MCP server ready"
+                );
+                app.mcp_connections.push(conn);
             }
         }
 

@@ -18,6 +18,7 @@ crossterm = { version = "0.29", features = ["event-stream", "use-dev-tty", "libc
 directories = "6"
 futures = "0.3"
 genai = "0.6.5"
+http = "1"
 ratatui = { version = "0.30", features = ["unstable-widget-ref", "unstable-rendered-line-info"] }
 ratatui-explorer = "0.3"
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -34,7 +35,12 @@ walkdir = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-rmcp = "3.1.1"
+rmcp = { version = "3.1.1", default-features = false, features = [
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+] }
+mcp-genai-glue = { path = "mcp-genai-glue" }
 
 [workspace]
 members = [".", "mcp-genai-glue"]

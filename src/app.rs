@@ -478,6 +478,9 @@ pub struct App<'a> {
     pub thinking_effort_state: ListState,
     /// Is the app loading available models?
     pub is_loading_models: bool,
+    /// Connected MCP servers (loaded from `[mcp.servers]` at startup). Kept
+    /// here so they stay alive and are available for tool-calling.
+    pub mcp_connections: Vec<crate::mcp::McpConnection>,
 }
 
 pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
@@ -541,6 +544,7 @@ impl Default for App<'_> {
                 s
             },
             is_loading_models: true,
+            mcp_connections: Vec::new(),
         }
     }
 }

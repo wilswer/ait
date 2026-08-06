@@ -19,3 +19,44 @@ system_prompt = "You are a helpful, friendly assistant."
 # Can be changed in-app via the model selection menu.
 # Default: {name = "gemini-3.1-pro-preview", provider = "Gemini"}
 default_model = {name = "gemini-3.1-pro-preview", provider = "Gemini"}
+
+# ──────────────────────────────────────────────────────────────────────────
+# MCP (Model Context Protocol) servers
+# ──────────────────────────────────────────────────────────────────────────
+# Define one sub-table per server under [mcp.servers]. The table key is the
+# server's stable id. Each server is either a stdio server (spawn a child
+# process) or an http server (connect to a remote URL):
+#
+#   stdio  → set `command` (and optionally `args`, `env`)
+#   http   → set `url`      (and optionally `api_key`, `headers`)
+#
+# Setting both `command` and `url` (or neither) is an error.
+#
+# `enabled` controls whether the server is connected automatically on startup.
+# It defaults to `true` when omitted; set it to `false` to define a server but
+# keep it disconnected until you toggle it on in-app (coming soon).
+#
+# `name` is an optional display name; it defaults to the server id.
+#
+# Secrets: for stdio servers pass them via `env`; for http servers use
+# `api_key` (sent as `Authorization: Bearer <api_key>`) or a custom `headers`
+# entry. Note that these values are stored in plaintext in this file.
+#
+# Example — a stdio server (the official filesystem server):
+#
+#   [mcp.servers.filesystem]
+#   name = "Filesystem"
+#   enabled = true
+#   command = "npx"
+#   args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+#   env = {}
+#
+# Example — an http server with an API key:
+#
+#   [mcp.servers.weather]
+#   name = "Weather"
+#   enabled = true
+#   url = "https://weather.example.com/mcp"
+#   api_key = "your-secret-key"
+#   headers = { "X-Custom-Header" = "value" }
+
