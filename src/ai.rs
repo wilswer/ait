@@ -9,6 +9,7 @@ use genai::chat::{
 use genai::resolver::{AuthData, Endpoint, ProviderConfig, ServiceTargetResolver};
 use genai::{ClientBuilder, ClientConfig, ModelIden, ModelSpec, ServiceTarget};
 use mcp_genai_glue::McpToolBridge;
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::app::{Action, AppResult, Message, ThinkingEffort};
@@ -397,6 +398,20 @@ pub async fn run_assistant_stream(
                                     // Execute each tool call against its owning server.
                                     for tc in &tool_calls {
                                         let fn_name = tc.fn_name.clone();
+
+                                        // Announce the call in the thinking trace
+                                        // so the user sees what's happening live.
+                                        helper.push_tool_note(&format_tool_call_line(
+                                            &fn_name,
+                                            &tc.fn_arguments,
+                                        ));
+                                        let _ = action_tx
+                                            .send(Action::StreamPartial {
+                                                conversation_id,
+                                                content: helper.combined(),
+                                            })
+                                            .await;
+
                                         let content = match tool_map.get(&fn_name) {
                                             Some(bridge) => match bridge.execute(tc).await {
                                                 Ok(resp) => resp.content,
@@ -411,9 +426,29 @@ pub async fn run_assistant_stream(
                                             result_len = content.len(),
                                             "executed MCP tool"
                                         );
+
+                                        // Append a truncated result line to the
+                                        // thinking trace, then refresh the UI.
+                                        helper.push_tool_note(&format_tool_result_line(&content));
+                                        let _ = action_tx
+                                            .send(Action::StreamPartial {
+                                                conversation_id,
+                                                content: helper.combined(),
+                                            })
+                                            .await;
+
                                         let resp = ToolResponse::from_tool_call(tc, content);
                                         chat_messages.push(ChatMessage::from(resp));
                                     }
+                                    // Separate this round's text/notes from the
+                                    // next round's so they don't concatenate.
+                                    helper.end_round();
+                                    let _ = action_tx
+                                        .send(Action::StreamPartial {
+                                            conversation_id,
+                                            content: helper.combined(),
+                                        })
+                                        .await;
                                     // Break the inner loop; the outer loop runs the next round.
                                     break;
                                 }
@@ -487,6 +522,43 @@ impl<'a> StreamHelper<'a> {
         self.full_thinking_content.push_str(content);
     }
 
+    /// Append a tool-call/result annotation as its own line in the thinking
+    /// trace (inside the `<think>` block). Ensures a separating newline on
+    /// both sides so it never merges with model reasoning text.
+    fn push_tool_note(&mut self, note: &str) {
+        if !self.full_thinking_content.is_empty()
+            && !self.full_thinking_content.ends_with('\n')
+        {
+            self.full_thinking_content.push('\n');
+        }
+        self.full_thinking_content.push_str(note);
+        self.full_thinking_content.push('\n');
+    }
+
+    /// Insert a separator between tool-calling rounds so text from one round
+    /// doesn't concatenate with the next round's text, and the thinking trace
+    /// gets a blank line before the next round's reasoning.
+    ///
+    /// Called after all tool calls in a round have executed, right before
+    /// looping into the next round.
+    fn end_round(&mut self) {
+        // Ensure assistant text ends with a newline so the next round's text
+        // starts on a fresh line instead of concatenating mid-line.
+        if !self.full_content.is_empty() && !self.full_content.ends_with('\n') {
+            self.full_content.push('\n');
+        }
+        // Add a blank line in the thinking trace to visually separate this
+        // round's tool notes from the next round's reasoning.
+        if !self.full_thinking_content.is_empty()
+            && !self.full_thinking_content.ends_with("\n\n")
+        {
+            if !self.full_thinking_content.ends_with('\n') {
+                self.full_thinking_content.push('\n');
+            }
+            self.full_thinking_content.push('\n');
+        }
+    }
+
     /// Combine the accumulated reasoning + assistant text into the display
     /// payload, matching the format the UI already expects.
     fn combined(&self) -> String {
@@ -530,4 +602,193 @@ fn log_usage(end: &StreamEnd) {
     }
 }
 
+/// Format a tool-call announcement for the thinking trace, e.g.
+/// `> calling `get_weather` with arguments location="stockholm", unit="celsius"`.
+fn format_tool_call_line(name: &str, args: &Value) -> String {
+    let args_str = match args {
+        Value::Null => String::new(),
+        Value::Object(map) => {
+            let pairs: Vec<String> = map
+                .iter()
+                .map(|(k, v)| {
+                    let v_str = match v {
+                        Value::String(s) => format!("\"{s}\""),
+                        other => other.to_string(),
+                    };
+                    format!("{k}={v_str}")
+                })
+                .collect();
+            pairs.join(", ")
+        }
+        other => other.to_string(),
+    };
+    if args_str.is_empty() {
+        format!("> calling `{name}`")
+    } else {
+        format!("> calling `{name}` with arguments {args_str}")
+    }
+}
+
+/// Format a (truncated) tool-result line for the thinking trace, e.g.
+/// `< 18°C, partly cloudy`. Long results are truncated to a char budget so
+/// the bubble stays readable; the full result is still sent to the model.
+fn format_tool_result_line(content: &str) -> String {
+    const MAX_CHARS: usize = 300;
+    let trimmed = content.trim();
+    let mut out = String::from("< ");
+    let char_count = trimmed.chars().count();
+    if char_count <= MAX_CHARS {
+        out.push_str(trimmed);
+    } else {
+        out.extend(trimmed.chars().take(MAX_CHARS));
+        out.push('…');
+    }
+    out
+}
+
 // endregion:    --- MCP tool-calling loop ---
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn format_tool_call_with_object_args() {
+        let line = format_tool_call_line(
+            "get_weather",
+            &json!({ "location": "stockholm", "unit": "celsius" }),
+        );
+        // Order from a JSON object is insertion order (serde_json preserves it).
+        assert_eq!(
+            line,
+            "> calling `get_weather` with arguments location=\"stockholm\", unit=\"celsius\""
+        );
+    }
+
+    #[test]
+    fn format_tool_call_with_no_args() {
+        let line = format_tool_call_line("ping", &Value::Null);
+        assert_eq!(line, "> calling `ping`");
+    }
+
+    #[test]
+    fn format_tool_call_with_non_string_args() {
+        let line = format_tool_call_line("add", &json!({ "a": 2, "b": 3 }));
+        assert_eq!(line, "> calling `add` with arguments a=2, b=3");
+    }
+
+    #[test]
+    fn format_tool_call_with_non_object_args() {
+        let line = format_tool_call_line("echo", &json!("just a string"));
+        assert_eq!(line, "> calling `echo` with arguments \"just a string\"");
+    }
+
+    #[test]
+    fn format_tool_result_short() {
+        let line = format_tool_result_line("18°C, partly cloudy");
+        assert_eq!(line, "< 18°C, partly cloudy");
+    }
+
+    #[test]
+    fn format_tool_result_truncates_long() {
+        let long = "x".repeat(500);
+        let line = format_tool_result_line(&long);
+        assert!(line.starts_with("< "));
+        assert!(line.ends_with('…'));
+        // 300 chars of content + "< " (2) + "…" (1)
+        assert_eq!(line.chars().count(), 300 + 3);
+    }
+
+    #[test]
+    fn format_tool_result_trims_whitespace() {
+        let line = format_tool_result_line("  \n  hello  \n");
+        assert_eq!(line, "< hello");
+    }
+
+    #[test]
+    fn format_tool_result_respects_unicode_boundary() {
+        let s = "é".repeat(350); // each é is 2 bytes but 1 char
+        let line = format_tool_result_line(&s);
+        // Should not panic on char boundary; truncated to 300 chars + ellipsis.
+        assert_eq!(line.chars().count(), 300 + 3);
+    }
+
+    // --- end_round separator ---
+
+    #[test]
+    fn end_round_adds_newline_to_text() {
+        let mut text = String::from("Let me check.");
+        let mut thinking = String::new();
+        let mut helper = StreamHelper {
+            full_content: &mut text,
+            full_thinking_content: &mut thinking,
+        };
+        helper.end_round();
+        assert_eq!(text, "Let me check.\n");
+    }
+
+    #[test]
+    fn end_round_noop_if_text_already_ends_with_newline() {
+        let mut text = String::from("Hello\n");
+        let mut thinking = String::new();
+        let mut helper = StreamHelper {
+            full_content: &mut text,
+            full_thinking_content: &mut thinking,
+        };
+        helper.end_round();
+        assert_eq!(text, "Hello\n");
+    }
+
+    #[test]
+    fn end_round_noop_if_text_empty() {
+        let mut text = String::new();
+        let mut thinking = String::new();
+        let mut helper = StreamHelper {
+            full_content: &mut text,
+            full_thinking_content: &mut thinking,
+        };
+        helper.end_round();
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn end_round_adds_blank_line_to_thinking_after_tool_note() {
+        let mut text = String::new();
+        let mut thinking = String::from("> calling `echo`\n< result\n");
+        let mut helper = StreamHelper {
+            full_content: &mut text,
+            full_thinking_content: &mut thinking,
+        };
+        helper.end_round();
+        // Should end with double newline (blank line separator).
+        assert_eq!(thinking, "> calling `echo`\n< result\n\n");
+    }
+
+    #[test]
+    fn end_round_thinking_noop_if_already_double_newline() {
+        let mut text = String::new();
+        let mut thinking = String::from("> calling `echo`\n< result\n\n");
+        let mut helper = StreamHelper {
+            full_content: &mut text,
+            full_thinking_content: &mut thinking,
+        };
+        helper.end_round();
+        assert_eq!(thinking, "> calling `echo`\n< result\n\n");
+    }
+
+    #[test]
+    fn end_round_separates_text_across_rounds() {
+        // Simulate: round 1 text + tool note, end_round, round 2 text.
+        let mut text = String::from("Let me check.");
+        let mut thinking = String::from("> calling `echo`\n< ok\n");
+        let mut helper = StreamHelper {
+            full_content: &mut text,
+            full_thinking_content: &mut thinking,
+        };
+        helper.end_round();
+        // Round 2 text arrives:
+        helper.push_text("The result is ok.");
+        assert_eq!(text, "Let me check.\nThe result is ok.");
+    }
+}
