@@ -1423,6 +1423,26 @@ impl<'a> App<'a> {
         self.chat_list.state.select_last();
     }
 
+    /// Automatically select the model that produced the latest
+    /// assistant response in the current conversation (if any), so the
+    /// model selector reflects the model used for the most recent message.
+    fn sync_model_from_messages(&mut self) {
+        for msg in self.messages.iter().rev() {
+            if let Message::Assistant(_, Some(model), Some(provider)) = msg {
+                for (idx, item) in self.model_list.items.iter_mut().enumerate() {
+                    if item.name == *model && item.provider == *provider {
+                        item.selected = true;
+                        self.model_list.state.select(Some(idx));
+                    } else {
+                        item.selected = false;
+                    }
+                }
+                self.selected_model = generate_model_spec(model, provider);
+                break;
+            }
+        }
+    }
+
     pub fn set_chat_list(&mut self, query_filter: Option<String>) -> AppResult<()> {
         let chats = list_conversations(query_filter)?;
         let chats = chats
@@ -1464,6 +1484,7 @@ impl<'a> App<'a> {
             self.cached_lines.clear();
             self.messages = list_all_messages(new_chat_id)?;
             self.conversation_id = Some(new_chat_id);
+            self.sync_model_from_messages();
             self.needs_recache = true;
         }
         Ok(())
@@ -1584,6 +1605,12 @@ impl<'a> App<'a> {
                 self.messages
                     .push(Message::Assistant(state.partial.clone(), model, provider));
             }
+
+            // Automatically select the model that produced the latest
+            // assistant response in this conversation, so the model selector
+            // reflects the model used for the most recent message.
+            self.sync_model_from_messages();
+
             self.needs_recache = true;
             self.vertical_scroll = 0;
         }
@@ -1704,6 +1731,84 @@ mod tests {
         assert_eq!(tools, 5);
         assert_eq!(connecting, 1);
         assert_eq!(failed, 0);
+    }
+
+    /// Build an `App` with a custom set of models in the model list.
+    fn app_with_models(models: &[(&'static str, &'static str)]) -> App<'static> {
+        let mut app = App::default();
+        app.model_list = ModelList::from_iter(
+            models
+                .iter()
+                .map(|&(provider, name)| (provider, name, false))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        );
+        app
+    }
+
+    #[test]
+    fn sync_model_selects_last_assistant_model() {
+        let mut app = app_with_models(&[
+            ("OpenAI", "gpt-4o"),
+            ("Anthropic", "claude-sonnet-4-20250514"),
+            ("Gemini", "gemini-3.1-pro-preview"),
+        ]);
+
+        // Messages from a conversation that used different models.
+        app.messages = vec![
+            Message::User(vec![]),
+            Message::Assistant("hello".into(), Some("gpt-4o".into()), Some("OpenAI".into())),
+            Message::User(vec![]),
+            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into())),
+        ];
+
+        app.sync_model_from_messages();
+
+        // The last assistant message used Claude — that should be selected.
+        assert_eq!(app.model_list.items[0].selected, false); // gpt-4o
+        assert_eq!(app.model_list.items[1].selected, true);  // claude
+        assert_eq!(app.model_list.items[2].selected, false); // gemini
+        let (name, provider) = model_provider_from_spec(&app.selected_model);
+        assert_eq!(name.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(provider.as_deref(), Some("Anthropic"));
+    }
+
+    #[test]
+    fn sync_model_no_assistant_messages_keeps_current() {
+        let mut app = app_with_models(&[("Gemini", "gemini-3.1-pro-preview")]);
+        app.model_list.items[0].selected = true;
+
+        // Conversation with only a user message.
+        app.messages = vec![Message::User(vec![])];
+
+        app.sync_model_from_messages();
+
+        // Nothing should change.
+        assert!(app.model_list.items[0].selected);
+    }
+
+    #[test]
+    fn sync_model_missing_from_list_deselects_all() {
+        let mut app = app_with_models(&[
+            ("OpenAI", "gpt-4o"),
+            ("Gemini", "gemini-3.1-pro-preview"),
+        ]);
+        app.model_list.items[0].selected = true;
+
+        // Last assistant response used a model that's not in the list.
+        app.messages = vec![
+            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into())),
+        ];
+
+        app.sync_model_from_messages();
+
+        // No item in the list matches, so none should be selected.
+        assert_eq!(app.model_list.items[0].selected, false);
+        assert_eq!(app.model_list.items[1].selected, false);
+        // But selected_model is still set to the historical model.
+        let (name, provider) = model_provider_from_spec(&app.selected_model);
+        assert_eq!(name.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(provider.as_deref(), Some("Anthropic"));
     }
 
     #[test]
