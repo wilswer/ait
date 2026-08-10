@@ -1414,6 +1414,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to explore files, ".into(),
                 "c".bold(),
                 " to view context files, ".into(),
+                "S".bold(),
+                " to manage MCP servers, ".into(),
                 "n".bold(),
                 " to start a new chat, ".into(),
                 "u".bold(),
@@ -1481,6 +1483,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Esc/q/Enter".bold(),
                 " to return to 'normal' mode.".into(),
             ];
+            let server_keys = vec![
+                "Press ".into(),
+                "Up/Down".bold(),
+                " to navigate the server list, ".into(),
+                "Space".bold(),
+                " to toggle a server's enabled state (connecting/disconnecting it), or press ".into(),
+                "Esc/q/S".bold(),
+                " to return to 'normal' mode.".into(),
+            ];
             let msg = vec![
                 Line::from(Span::raw("Welcome to AI in the Terminal! ").bold()),
                 Line::from(""),
@@ -1512,6 +1523,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Line::from(""),
                 Line::from(Span::raw("When viewing context:").bold()),
                 Line::from(context_keys),
+                Line::from(""),
+                Line::from(Span::raw("When managing MCP servers:").bold()),
+                Line::from(server_keys),
             ];
             let help_text_block = Block::new().padding(Padding::uniform(1));
             let text = Text::from(msg).patch_style(Style::default());
@@ -1525,7 +1539,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
                 .end_symbol(Some("↓"));
-            let mut scrollbar_state = ScrollbarState::new(30).position(app.help_scroll);
+            let mut scrollbar_state = ScrollbarState::new(40).position(app.help_scroll);
             f.render_stateful_widget(
                 scrollbar,
                 area.inner(Margin {
@@ -1544,6 +1558,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let area = centered_rect(40, 40, messages_area);
             render_popup(f, "Files Added to Context", area);
             render_context_list(f, area, app);
+        }
+        AppMode::ServerManagement => {
+            let area = centered_rect(70, 60, messages_area);
+            render_popup(f, "MCP Servers - Space to toggle, Esc/q to return", area);
+            render_server_management(f, area, app);
         }
         AppMode::Notify { notification } => {
             let area = centered_rect(40, 40, messages_area);
@@ -1579,6 +1598,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
             vec![
                 "These files will be included in your next message. Press ".into(),
                 "Esc/q/Enter".bold(),
+                " to return.".into(),
+            ]
+        }
+        AppMode::ServerManagement => {
+            vec![
+                "Navigate: ".into(),
+                "j/k or Up/Down".bold(),
+                ". ".into(),
+                "Space".bold(),
+                " to toggle enabled. ".into(),
+                "Esc/q/S".bold(),
                 " to return.".into(),
             ]
         }
@@ -2081,6 +2111,68 @@ fn render_notification(f: &mut Frame, area: Rect, notification: &Notification) {
         .block(text_block)
         .wrap(Wrap { trim: true });
     f.render_widget(context_text, area);
+}
+
+/// Render the MCP server management list: one row per configured server with
+/// its enabled state, connection status, tool count, and any error.
+fn render_server_management(f: &mut Frame, area: Rect, app: &mut App) {
+    use crate::mcp::McpServerStatus;
+
+    let block = Block::new().padding(Padding::uniform(1));
+
+    if app.mcp_statuses.is_empty() {
+        let p = Paragraph::new(
+            Text::from("No MCP servers configured. Add servers under [mcp.servers] in config.toml.")
+                .yellow(),
+        )
+        .wrap(Wrap { trim: true })
+        .block(block);
+        f.render_widget(p, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .mcp_statuses
+        .iter()
+        .map(|s| {
+            let id = s.id();
+            let display = s.display_name();
+            let enabled = app.mcp_is_enabled(id);
+
+            // Status glyph + label + detail.
+            let (glyph, color, detail) = match s {
+                McpServerStatus::Ready { tool_count, .. } => (
+                    "✓",
+                    Color::Green,
+                    format!("{tool_count} tools"),
+                ),
+                McpServerStatus::Connecting { .. } => ("…", Color::Yellow, "connecting".to_string()),
+                McpServerStatus::Failed { error, .. } => {
+                    // Truncate long errors to keep the row readable.
+                    let short: String = error.chars().take(60).collect();
+                    ("✗", Color::Red, format!("failed: {short}"))
+                }
+                McpServerStatus::Disabled { .. } => {
+                    ("○", Color::DarkGray, "disabled".to_string())
+                }
+            };
+
+            let on_off = if enabled { "on" } else { "off" };
+            let on_off_color = if enabled { Color::Green } else { Color::DarkGray };
+
+            let line = Line::from(vec![
+                Span::styled(format!("{glyph} "), Style::default().fg(color)),
+                Span::styled(display.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw("  ["),
+                Span::styled(on_off, Style::default().fg(on_off_color)),
+                Span::raw("]  "),
+                Span::styled(detail, Style::default().fg(Color::DarkGray)),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    f.render_stateful_widget(styled_list(items, block), area, &mut app.mcp_server_state);
 }
 
 #[cfg(test)]

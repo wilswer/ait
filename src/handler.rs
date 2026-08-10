@@ -77,6 +77,10 @@ pub fn handle_key_events(
             KeyCode::Char('c') => {
                 app.set_app_mode(AppMode::ShowContext);
             }
+            KeyCode::Char('S') => {
+                app.mcp_server_state.select(Some(0));
+                app.set_app_mode(AppMode::ServerManagement);
+            }
             KeyCode::Char('p') => {
                 let token_count = app.estimate_messages_tokens();
                 app.set_app_mode(AppMode::Notify {
@@ -392,7 +396,7 @@ pub fn handle_key_events(
                 app.reset_help_scroll();
             }
             KeyCode::Char('G') => {
-                app.help_scroll = 30;
+                app.help_scroll = 40;
             }
             _ => {}
         },
@@ -419,6 +423,43 @@ pub fn handle_key_events(
                 let query_filter = app.search_bar.lines().first().cloned();
                 app.set_chat_list(query_filter)?;
             }
+        },
+        AppMode::ServerManagement => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('S') => {
+                app.set_app_mode(AppMode::Normal);
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let len = app.mcp_server_ids().len();
+                if len > 0 {
+                    let i = app.mcp_server_state.selected().unwrap_or(0);
+                    app.mcp_server_state.select(Some((i + 1).min(len - 1)));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let i = app.mcp_server_state.selected().unwrap_or(0);
+                app.mcp_server_state.select(Some(i.saturating_sub(1)));
+            }
+            KeyCode::Char('g') | KeyCode::Home => {
+                app.mcp_server_state.select(Some(0));
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                let len = app.mcp_server_ids().len();
+                if len > 0 {
+                    app.mcp_server_state.select(Some(len - 1));
+                }
+            }
+            // Toggle the selected server's enabled state.
+            KeyCode::Char(' ') => {
+                if let Some(id) = app.mcp_selected_id() {
+                    if app.mcp_is_enabled(&id) {
+                        app.mcp_disable(&id);
+                    } else {
+                        app.mcp_enable(&id);
+                        let _ = action_tx.try_send(Action::McpEnableRequested { id });
+                    }
+                }
+            }
+            _ => {}
         },
         AppMode::Notify { notification: _ } | AppMode::ShowContext => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => app.set_app_mode(AppMode::Normal),

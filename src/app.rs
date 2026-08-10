@@ -145,6 +145,11 @@ pub enum Action {
         display_name: String,
         error: String,
     },
+    /// The user enabled a server in the management view; the main loop spawns
+    /// a connect attempt for it. Carries the server id.
+    McpEnableRequested {
+        id: String,
+    },
 }
 
 pub fn estimate_tokens(text: &str) -> AppResult<usize> {
@@ -404,6 +409,7 @@ pub enum AppMode {
     FilterHistory,
     ExploreFiles,
     ShowContext,
+    ServerManagement,
     Help,
     Notify { notification: Notification },
 }
@@ -496,10 +502,18 @@ pub struct App<'a> {
     /// entry per `enabled` server in the config. Drives the status counts.
     pub mcp_statuses: Vec<crate::mcp::McpServerStatus>,
     /// Bridges of currently-connected MCP servers. Snapshot by streaming
-    /// tasks so they can resolve/execute tools. The owning `RunningService`
-    /// is kept alive inside each bridge's `McpConnection` (held by the main
-    /// loop, not here — bridges are cheap channel handles).
+    /// tasks so they can resolve/execute tools.
     pub mcp_bridges: Vec<mcp_genai_glue::McpToolBridge>,
+    /// Owning `McpConnection`s, keyed by server id. Keeping these alive keeps
+    /// the underlying `RunningService` (transport) running. Removed when the
+    /// user disables a server.
+    pub mcp_connections: std::collections::HashMap<String, crate::mcp::McpConnection>,
+    /// User intent for this session: which server ids should be connected.
+    /// Initialized from config (`enabled = true`); toggled in the server
+    /// management view. Independent of live connection status.
+    pub mcp_enabled: std::collections::HashSet<String>,
+    /// List selection state for the server management view.
+    pub mcp_server_state: ratatui::widgets::ListState,
 }
 
 pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
@@ -565,6 +579,9 @@ impl Default for App<'_> {
             is_loading_models: true,
             mcp_statuses: Vec::new(),
             mcp_bridges: Vec::new(),
+            mcp_connections: std::collections::HashMap::new(),
+            mcp_enabled: std::collections::HashSet::new(),
+            mcp_server_state: ratatui::widgets::ListState::default(),
         }
     }
 }
@@ -627,22 +644,33 @@ impl<'a> App<'a> {
 
     // --- MCP status ---
 
-    /// Mark an MCP server as connected and register its bridge for tool calls.
-    /// Replaces any prior status entry with the same id.
+    /// Mark an MCP server as connected, store its owning connection, and
+    /// register its bridge for tool calls. Replaces any prior status entry
+    /// with the same id.
+    ///
+    /// `tool_count` is computed by the caller (it requires an async query);
+    /// we keep this method sync since `App` methods run on the sync UI loop.
     pub fn mcp_server_ready(
         &mut self,
-        id: String,
-        display_name: String,
+        conn: crate::mcp::McpConnection,
         tool_count: usize,
-        bridge: mcp_genai_glue::McpToolBridge,
     ) {
+        let id = conn.id.clone();
+        let display_name = conn.display_name.clone();
         tracing::info!(mcp.server = %id, tools = tool_count, "MCP server ready");
         self.update_mcp_status(crate::mcp::McpServerStatus::Ready {
-            id,
+            id: id.clone(),
             display_name,
             tool_count,
         });
-        self.mcp_bridges.push(bridge);
+        // Replace any prior connection for this id (avoids duplicate bridges
+        // on reconnect), then rebuild the bridges list.
+        self.mcp_connections.insert(id, conn);
+        self.mcp_bridges = self
+            .mcp_connections
+            .values()
+            .map(|c| c.bridge.clone())
+            .collect();
     }
 
     /// Mark an MCP server as failed. Replaces any prior status entry with the
@@ -681,9 +709,81 @@ impl<'a> App<'a> {
                 }
                 crate::mcp::McpServerStatus::Connecting { .. } => connecting += 1,
                 crate::mcp::McpServerStatus::Failed { .. } => failed += 1,
+                // Disabled servers are omitted from the footer counts.
+                crate::mcp::McpServerStatus::Disabled { .. } => {}
             }
         }
         (ready, ready_tools, connecting, failed)
+    }
+
+    // --- Server management (enable/disable) ---
+
+    /// User intent: should this server be connected right now?
+    pub fn mcp_is_enabled(&self, id: &str) -> bool {
+        self.mcp_enabled.contains(id)
+    }
+
+    /// Disconnect a server: drop its owning connection (cancels the
+    /// transport), remove its bridge, and mark its status `Disabled`.
+    pub fn mcp_disable(&mut self, id: &str) {
+        if !self.mcp_enabled.remove(id) {
+            // Already disabled; nothing to do.
+            return;
+        }
+        // Drop the owning connection (cancels the running service).
+        self.mcp_connections.remove(id);
+        // Rebuild the bridges list from remaining connections (the one we
+        // just removed is gone, so its bridge drops out too).
+        self.mcp_bridges = self
+            .mcp_connections
+            .values()
+            .map(|c| c.bridge.clone())
+            .collect();
+        // Update status to Disabled, preserving the display name.
+        let display_name = self
+            .mcp_statuses
+            .iter()
+            .find(|s| s.id() == id)
+            .map(|s| s.display_name().to_string())
+            .unwrap_or_else(|| id.to_string());
+        self.update_mcp_status(crate::mcp::McpServerStatus::Disabled {
+            id: id.to_string(),
+            display_name,
+        });
+        tracing::info!(mcp.server = id, "MCP server disabled");
+    }
+
+    /// Mark a server as user-enabled and set its status to `Connecting`.
+    /// The caller is responsible for spawning the actual connect attempt.
+    pub fn mcp_enable(&mut self, id: &str) {
+        if self.mcp_enabled.insert(id.to_string()) {
+            let display_name = self
+                .mcp_statuses
+                .iter()
+                .find(|s| s.id() == id)
+                .map(|s| s.display_name().to_string())
+                .unwrap_or_else(|| id.to_string());
+            self.update_mcp_status(crate::mcp::McpServerStatus::Connecting {
+                id: id.to_string(),
+                display_name,
+            });
+            tracing::info!(mcp.server = id, "MCP server enabled");
+        }
+    }
+
+    /// The server ids in the management list order (sorted, matching
+    /// `mcp_statuses`).
+    pub fn mcp_server_ids(&self) -> Vec<String> {
+        self.mcp_statuses
+            .iter()
+            .map(|s| s.id().to_string())
+            .collect()
+    }
+
+    /// The currently selected server id in the management view, if any.
+    pub fn mcp_selected_id(&self) -> Option<String> {
+        let idx = self.mcp_server_state.selected()?;
+        self.mcp_server_ids().get(idx).cloned()
     }
 
     /// Cancels the in-flight stream for the currently viewed conversation, if
@@ -1488,5 +1588,140 @@ impl<'a> App<'a> {
             self.vertical_scroll = 0;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcp::McpServerStatus;
+
+    /// Build an `App` with seeded MCP statuses and enabled intent (no live
+    /// connections — we only test the intent/status bookkeeping, which is the
+    /// pure logic that doesn't need a running service).
+    fn app_with_statuses(statuses: Vec<McpServerStatus>, enabled: &[&str]) -> App<'static> {
+        let mut app = App::default();
+        app.mcp_statuses = statuses;
+        for id in enabled {
+            app.mcp_enabled.insert(id.to_string());
+        }
+        app
+    }
+
+    #[test]
+    fn enable_adds_to_intent_and_sets_connecting() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Disabled {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &[],
+        );
+
+        assert!(!app.mcp_is_enabled("kagi"));
+        app.mcp_enable("kagi");
+        assert!(app.mcp_is_enabled("kagi"));
+        assert!(matches!(
+            app.mcp_statuses[0],
+            McpServerStatus::Connecting { .. }
+        ));
+    }
+
+    #[test]
+    fn enable_is_idempotent() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Connecting {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &["kagi"],
+        );
+        // Already enabled — calling again is a no-op.
+        app.mcp_enable("kagi");
+        assert_eq!(app.mcp_enabled.len(), 1);
+    }
+
+    #[test]
+    fn disable_removes_intent_and_sets_disabled() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Connecting {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &["kagi"],
+        );
+
+        assert!(app.mcp_is_enabled("kagi"));
+        app.mcp_disable("kagi");
+        assert!(!app.mcp_is_enabled("kagi"));
+        assert!(matches!(
+            app.mcp_statuses[0],
+            McpServerStatus::Disabled { .. }
+        ));
+        // No live connection was present, so bridges stay empty.
+        assert!(app.mcp_bridges.is_empty());
+    }
+
+    #[test]
+    fn disable_is_noop_when_already_disabled() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Disabled {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &[],
+        );
+        app.mcp_disable("kagi");
+        assert!(!app.mcp_is_enabled("kagi"));
+        assert!(matches!(
+            app.mcp_statuses[0],
+            McpServerStatus::Disabled { .. }
+        ));
+    }
+
+    #[test]
+    fn status_counts_exclude_disabled() {
+        let app = app_with_statuses(
+            vec![
+                McpServerStatus::Ready {
+                    id: "fs".into(),
+                    display_name: "FS".into(),
+                    tool_count: 5,
+                },
+                McpServerStatus::Disabled {
+                    id: "kagi".into(),
+                    display_name: "Kagi".into(),
+                },
+                McpServerStatus::Connecting {
+                    id: "weather".into(),
+                    display_name: "Weather".into(),
+                },
+            ],
+            &["fs", "weather"],
+        );
+        let (ready, tools, connecting, failed) = app.mcp_status_counts();
+        assert_eq!(ready, 1);
+        assert_eq!(tools, 5);
+        assert_eq!(connecting, 1);
+        assert_eq!(failed, 0);
+    }
+
+    #[test]
+    fn server_ids_preserve_status_order() {
+        let app = app_with_statuses(
+            vec![
+                McpServerStatus::Disabled {
+                    id: "alpha".into(),
+                    display_name: "Alpha".into(),
+                },
+                McpServerStatus::Ready {
+                    id: "beta".into(),
+                    display_name: "Beta".into(),
+                    tool_count: 2,
+                },
+            ],
+            &["beta"],
+        );
+        assert_eq!(app.mcp_server_ids(), vec!["alpha", "beta"]);
     }
 }

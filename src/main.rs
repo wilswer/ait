@@ -115,8 +115,11 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
         }
         // MCP outcomes are consumed directly in the main `tokio::select!`
         // (they own a `McpConnection` that can't go through the action
-        // channel). These arms should never fire; if they do, ignore them.
-        Action::McpServerReady { .. } | Action::McpServerFailed { .. } => {}
+        // channel). `McpEnableRequested` is handled in the main loop where it
+        // has access to the config. These arms should never fire.
+        Action::McpServerReady { .. }
+        | Action::McpServerFailed { .. }
+        | Action::McpEnableRequested { .. } => {}
     }
     Ok(())
 }
@@ -178,20 +181,26 @@ Context:
     // Seed MCP status (one `Connecting` entry per enabled server) so the
     // footer shows "connecting" immediately, before any server resolves.
     app.mcp_statuses = ait::mcp::initial_statuses(&config.mcp);
+    // Seed user intent from config: every `enabled = true` server is on.
+    for (id, cfg) in &config.mcp.servers {
+        if cfg.enabled {
+            app.mcp_enabled.insert(id.clone());
+        }
+    }
 
     // Connect to MCP servers declared (and enabled) in the config. This runs
     // in the background so a slow/hanging server never blocks the TUI; each
-    // server's outcome (ready/failed) is delivered to the main loop as a
-    // dedicated action, updating the footer and the tool bridge list.
+    // server's outcome (ready/failed) is delivered to the main loop, updating
+    // the footer and the tool bridge list. A clone of the config is kept for
+    // on-demand reconnects when the user re-enables a server.
     let mcp_config = config.mcp.clone();
     let (mcp_tx, mut mcp_rx) =
         mpsc::channel::<ait::mcp::McpServerOutcome>(16);
+    let mcp_enable_tx = mcp_tx.clone();
+    let mcp_config_for_connect = mcp_config.clone();
     task::spawn(async move {
-        ait::mcp::connect_all_streaming(&mcp_config, mcp_tx).await;
+        ait::mcp::connect_all_streaming(&mcp_config_for_connect, mcp_tx).await;
     });
-    // Connections live here so their `RunningService`s stay alive for the
-    // session; only the cheap `McpToolBridge` clones flow into `App`.
-    let mut mcp_keepalive: Vec<ait::mcp::McpConnection> = Vec::new();
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
@@ -227,10 +236,49 @@ Context:
 
             // --- Async actions from spawned tasks ---
             Some(action) = action_rx.recv() => {
+                // `McpEnableRequested` needs the config + mcp_tx, which live in
+                // this scope, so handle it here before `handle_action`.
+                if let Action::McpEnableRequested { ref id } = action {
+                    let Some(server_cfg) = mcp_config.servers.get(id).cloned() else {
+                        tracing::warn!(mcp.server = %id, "McpEnableRequested for unknown server id");
+                        continue;
+                    };
+                    let mcp_tx = mcp_enable_tx.clone();
+                    let id = id.clone();
+                    task::spawn(async move {
+                        let outcome = match ait::mcp::connect_one(id.clone(), server_cfg).await {
+                            Ok(conn) => ait::mcp::McpServerOutcome::Ready(Box::new(conn)),
+                            Err(e) => {
+                                tracing::warn!(mcp.server = %id, error = %e, "failed to connect MCP server");
+                                ait::mcp::McpServerOutcome::Failed { id, error: e.to_string() }
+                            }
+                        };
+                        let _ = mcp_tx.send(outcome).await;
+                    });
+                    continue;
+                }
                 handle_action(action, &mut app).await?;
 
                 // Drain any other actions already queued up.
                 while let Ok(action) = action_rx.try_recv() {
+                    if let Action::McpEnableRequested { ref id } = action {
+                        let Some(server_cfg) = mcp_config.servers.get(id).cloned() else {
+                            continue;
+                        };
+                        let mcp_tx = mcp_enable_tx.clone();
+                        let id = id.clone();
+                        task::spawn(async move {
+                            let outcome = match ait::mcp::connect_one(id.clone(), server_cfg).await {
+                                Ok(conn) => ait::mcp::McpServerOutcome::Ready(Box::new(conn)),
+                                Err(e) => {
+                                    tracing::warn!(mcp.server = %id, error = %e, "failed to connect MCP server");
+                                    ait::mcp::McpServerOutcome::Failed { id, error: e.to_string() }
+                                }
+                            };
+                            let _ = mcp_tx.send(outcome).await;
+                        });
+                        continue;
+                    }
                     handle_action(action, &mut app).await?;
                 }
             }
@@ -242,13 +290,19 @@ Context:
                     McpServerOutcome::Ready(conn) => {
                         let conn = *conn;
                         let id = conn.id.clone();
-                        let display_name = conn.display_name.clone();
-                        let bridge = conn.bridge.clone();
+                        // Only accept the connection if the user still wants
+                        // this server on (they may have disabled it while it
+                        // was connecting).
+                        if !app.mcp_is_enabled(&id) {
+                            tracing::info!(
+                                mcp.server = %id,
+                                "dropping connection for disabled server"
+                            );
+                            // Dropping `conn` cancels the service.
+                            continue;
+                        }
                         let tool_count = conn.tool_count().await;
-                        app.mcp_server_ready(id, display_name, tool_count, bridge);
-                        // Keep the connection (and its `RunningService`) alive
-                        // for the whole session.
-                        mcp_keepalive.push(conn);
+                        app.mcp_server_ready(conn, tool_count);
                     }
                     McpServerOutcome::Failed { id, error } => {
                         // Look up the display name we seeded earlier.

@@ -44,6 +44,9 @@ pub enum McpServerOutcome {
 /// config) so the footer can render counts without touching async state.
 #[derive(Debug, Clone)]
 pub enum McpServerStatus {
+    /// The user has disabled this server for the session (toggled off in the
+    /// server management view). Not connected.
+    Disabled { id: String, display_name: String },
     /// Config says `enabled = true` but the connection hasn't resolved yet.
     Connecting { id: String, display_name: String },
     /// Connected; exposes `tool_count` tools.
@@ -56,7 +59,8 @@ impl McpServerStatus {
     /// Stable server id.
     pub fn id(&self) -> &str {
         match self {
-            Self::Connecting { id, .. }
+            Self::Disabled { id, .. }
+            | Self::Connecting { id, .. }
             | Self::Ready { id, .. }
             | Self::Failed { id, .. } => id,
         }
@@ -65,7 +69,8 @@ impl McpServerStatus {
     /// Human-readable display name (falls back to the id).
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Connecting { display_name, .. }
+            Self::Disabled { display_name, .. }
+            | Self::Connecting { display_name, .. }
             | Self::Ready { display_name, .. }
             | Self::Failed { display_name, .. } => display_name,
         }
@@ -118,18 +123,27 @@ pub async fn connect_all(config: &McpConfig) -> Vec<McpConnection> {
     connections
 }
 
-/// Build the initial per-server status list from a config: one
-/// [`McpServerStatus::Connecting`] entry per `enabled` server. Disabled
-/// servers are omitted entirely. Used to seed `App` before any connection
-/// has resolved.
+/// Build the per-server status list from a config: one entry per server
+/// (enabled or disabled). `enabled = true` servers start as `Connecting`;
+/// `enabled = false` servers start as `Disabled` (so they still appear in
+/// the management view). Used to seed `App` before any connection resolves.
 pub fn initial_statuses(config: &McpConfig) -> Vec<McpServerStatus> {
     config
         .servers
         .iter()
-        .filter(|(_, cfg)| cfg.enabled)
-        .map(|(id, cfg)| McpServerStatus::Connecting {
-            id: id.clone(),
-            display_name: cfg.display_name(id).to_string(),
+        .map(|(id, cfg)| {
+            let display_name = cfg.display_name(id).to_string();
+            if cfg.enabled {
+                McpServerStatus::Connecting {
+                    id: id.clone(),
+                    display_name,
+                }
+            } else {
+                McpServerStatus::Disabled {
+                    id: id.clone(),
+                    display_name,
+                }
+            }
         })
         .collect()
 }
