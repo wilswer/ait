@@ -348,6 +348,17 @@ Context:
             app.needs_recache = false;
         }
 
+        // Refresh the streaming format cache for the viewed conversation (if
+        // it is actively streaming). Throttled internally to avoid
+        // re-parsing on every single token.
+        // If the cache was updated and the user is following the stream,
+        // re-scroll to the bottom so the view tracks the new content.
+        if app.refresh_streaming_format() && app.needs_stream_scroll {
+            app.scroll_to_bottom()
+                .context("Could not scroll to bottom after streaming format refresh")?;
+            app.needs_stream_scroll = false;
+        }
+
         // Launch streaming tasks for any conversations that have been
         // submitted but not yet spawned. Scanning every iteration is cheap
         // (the map is small and bounded by `MAX_CONCURRENT_STREAMS`).

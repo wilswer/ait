@@ -1061,7 +1061,36 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
         .end_symbol(Some("↓"));
     // Width available for a rendered line inside the bordered chat block.
     let line_width = messages_area.width.saturating_sub(2) as usize;
-    let mut messages = if !app.is_view_streaming() && app.do_highlight {
+
+    // During streaming with highlighting enabled, use the pre-formatted
+    // cached lines for all completed messages, plus the incrementally-
+    // formatted lines from the streaming format cache for the streaming
+    // assistant message.
+    let mut messages = if app.is_view_streaming() {
+        if app.do_highlight {
+            // cached_lines contains all completed messages (user + prior
+            // assistant). The streaming assistant message is NOT in
+            // cached_lines — it is appended from the format cache.
+            let mut lines = app.cached_lines.clone();
+            // Append the incrementally-formatted streaming message.
+            if let Some(id) = app.conversation_id
+                && let Some(state) = app.streams.get(&id)
+            {
+                if !state.format_cache.formatted_lines.is_empty() {
+                    lines.extend(state.format_cache.formatted_lines.clone());
+                } else {
+                    // Fallback: render the last message as plain text
+                    // until the first format pass completes.
+                    if let Some(last) = app.messages.last() {
+                        lines.extend(messages_to_lines(std::slice::from_ref(last), line_width));
+                    }
+                }
+            }
+            lines
+        } else {
+            messages_to_lines(&app.messages, line_width)
+        }
+    } else if app.do_highlight {
         app.cached_lines.clone()
     } else {
         messages_to_lines(&app.messages, line_width)

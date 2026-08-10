@@ -100,6 +100,12 @@ pub fn handle_key_events(
             {
                 app.next_theme();
                 app.needs_recache = true;
+                // Invalidate the streaming format cache so it picks up the new theme.
+                if let Some(id) = app.conversation_id
+                    && let Some(state) = app.streams.get_mut(&id)
+                {
+                    state.format_cache.dirty = true;
+                }
                 app.last_recache = Instant::now();
             }
             KeyCode::Char('T')
@@ -107,6 +113,12 @@ pub fn handle_key_events(
             {
                 app.previous_theme();
                 app.needs_recache = true;
+                // Invalidate the streaming format cache so it picks up the new theme.
+                if let Some(id) = app.conversation_id
+                    && let Some(state) = app.streams.get_mut(&id)
+                {
+                    state.format_cache.dirty = true;
+                }
                 app.last_recache = Instant::now();
             }
             _ => {}

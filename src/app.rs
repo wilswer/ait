@@ -42,6 +42,10 @@ use crate::{models::ModelList, snippets::SnippetList};
 
 pub const RECACHE_COOLDOWN: u64 = 250;
 
+/// Minimum interval between streaming format refresh passes, in milliseconds.
+/// Prevents re-parsing the entire streaming message on every single token.
+pub const STREAMING_FORMAT_THROTTLE: u64 = 50;
+
 /// Maximum number of conversations that may have an in-flight LLM stream at
 /// once. Bounded to limit cost, memory, and provider rate limits.
 pub const MAX_CONCURRENT_STREAMS: usize = 3;
@@ -54,6 +58,35 @@ fn system_prompt_for_model(model: &ModelSpec, base: &str) -> Option<String> {
         ModelSpec::Name(name) if name.starts_with("gpt") => None,
         ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::OpenAI => None,
         _ => Some(base.to_string()),
+    }
+}
+
+/// Cached formatted output for the streaming assistant message.
+/// Avoids re-processing already-formatted content on every chunk by storing
+/// the result of the last [`style_message`] pass and only re-formatting when
+/// new content has arrived (and the throttle interval has elapsed).
+#[derive(Debug, Clone)]
+pub struct StreamingFormatCache {
+    /// Already-formatted (syntax-highlighted, word-wrapped) lines for the
+    /// streaming assistant message.
+    pub formatted_lines: Vec<Line<'static>>,
+    /// The partial text that was formatted to produce `formatted_lines`.
+    pub last_text: String,
+    /// `true` when new content has arrived since the last formatting pass.
+    pub dirty: bool,
+    /// Timestamp of the last formatting pass (for throttling).
+    pub last_format_time: Instant,
+}
+
+impl Default for StreamingFormatCache {
+    fn default() -> Self {
+        Self {
+            formatted_lines: Vec::new(),
+            last_text: String::new(),
+            dirty: false,
+            // Set to the past so the first format pass is never throttled.
+            last_format_time: Instant::now() - Duration::from_secs(1),
+        }
     }
 }
 
@@ -83,6 +116,8 @@ pub struct StreamState {
     pub thinking_effort: ThinkingEffort,
     /// Resolved system prompt for this request.
     pub system_prompt: Option<String>,
+    /// Cached formatted lines for the streaming assistant message.
+    pub format_cache: StreamingFormatCache,
 }
 
 /// Arguments needed to spawn a streaming task, extracted from a
@@ -516,6 +551,11 @@ pub struct App<'a> {
     pub mcp_enabled: std::collections::HashSet<String>,
     /// List selection state for the server management view.
     pub mcp_server_state: ratatui::widgets::ListState,
+    /// Set when a streaming chunk arrives while the user is following the
+    /// stream (at the bottom). The actual `scroll_to_bottom()` is deferred
+    /// until after `refresh_streaming_format()` has updated the format cache,
+    /// so the scroll target reflects the current formatted line count.
+    pub needs_stream_scroll: bool,
 }
 
 pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
@@ -585,6 +625,7 @@ impl Default for App<'_> {
             mcp_connections: std::collections::HashMap::new(),
             mcp_enabled: std::collections::HashSet::new(),
             mcp_server_state: ratatui::widgets::ListState::default(),
+            needs_stream_scroll: false,
         }
     }
 }
@@ -899,6 +940,69 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Refresh the formatted-lines cache for the currently-viewed streaming
+    /// conversation. Throttled to avoid re-parsing the entire streaming
+    /// message on every single token.
+    ///
+    /// This is a no-op when the viewed conversation is not streaming, when
+    /// no new content has arrived since the last pass, or when the throttle
+    /// interval has not yet elapsed.
+    pub fn refresh_streaming_format(&mut self) -> bool {
+        let conv_id = match self.conversation_id {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Check dirty flag and throttle without holding a mutable borrow.
+        let needs_refresh = {
+            let Some(state) = self.streams.get(&conv_id) else {
+                return false;
+            };
+            if !state.format_cache.dirty {
+                return false;
+            }
+            state.format_cache.last_format_time.elapsed()
+                >= Duration::from_millis(STREAMING_FORMAT_THROTTLE)
+        };
+
+        if !needs_refresh {
+            return false;
+        }
+
+        // Gather formatting inputs from the view (immutable borrows).
+        let message = match self.messages.last() {
+            Some(Message::Assistant(text, model, provider)) => {
+                Message::Assistant(text.clone(), model.clone(), provider.clone())
+            }
+            _ => return false,
+        };
+        let line_width = match self.size {
+            Some(TerminalSize { width, .. }) => width.saturating_sub(4) as usize,
+            None => return false,
+        };
+
+        // Format the streaming message (borrows theme + syntax_set immutably).
+        let formatted = style_message(
+            message,
+            line_width,
+            self.theme.clone(),
+            &self.syntax_set,
+        );
+
+        // Store the result in the stream state (mutable borrow).
+        let updated = if let Some(state) = self.streams.get_mut(&conv_id) {
+            state.format_cache.formatted_lines = formatted;
+            state.format_cache.last_text = state.partial.clone();
+            state.format_cache.dirty = false;
+            state.format_cache.last_format_time = Instant::now();
+            true
+        } else {
+            false
+        };
+
+        updated
+    }
+
     fn write_chat_log(&self) -> AppResult<()> {
         let mut chat_log = String::new();
         for message in self.messages.iter() {
@@ -958,7 +1062,25 @@ impl<'a> App<'a> {
         // Bubble lines are pre-wrapped to fit the chat block, and the chat
         // paragraph is rendered without wrapping, so the line count is simply
         // the number of generated lines.
-        let total_lines = if !self.is_view_streaming() && self.do_highlight {
+        let total_lines = if self.is_view_streaming() {
+            if self.do_highlight {
+                // cached_lines for completed messages + streaming format cache
+                let stream_lines = self.conversation_id
+                    .and_then(|id| self.streams.get(&id))
+                    .map(|s| s.format_cache.formatted_lines.len())
+                    .unwrap_or(0);
+                let cached = self.cached_lines.len();
+                // If the format cache is empty (first pass not yet done),
+                // fall back to plain-text line count for the last message.
+                if stream_lines > 0 {
+                    cached + stream_lines
+                } else {
+                    messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
+                }
+            } else {
+                messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
+            }
+        } else if self.do_highlight {
             self.cached_lines.len()
         } else {
             messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
@@ -1112,6 +1234,7 @@ impl<'a> App<'a> {
                 selected_model: self.selected_model.clone(),
                 thinking_effort: self.thinking_effort.clone(),
                 system_prompt: system_prompt_for_model(&self.selected_model, self.system_prompt),
+                format_cache: StreamingFormatCache::default(),
             },
         );
 
@@ -1223,6 +1346,7 @@ impl<'a> App<'a> {
                 state.is_waiting = false;
                 state.is_streaming = true;
                 state.partial = captured_content.to_string();
+                state.format_cache.dirty = true;
             }
         } else {
             return Ok(());
@@ -1260,8 +1384,11 @@ impl<'a> App<'a> {
                 *last = captured_content.to_string();
             }
             if do_scroll {
-                self.scroll_to_bottom()
-                    .context("Could not set max scroll in incomplete message.")?;
+                // Defer the actual scroll-to-bottom until after
+                // refresh_streaming_format() has updated the format cache,
+                // so the scroll target reflects the current formatted line
+                // count.
+                self.needs_stream_scroll = true;
             }
         }
         Ok(())
