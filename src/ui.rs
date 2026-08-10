@@ -17,6 +17,7 @@ use ratatui::{
     },
 };
 use syntect::highlighting::Theme;
+use syntect::parsing::SyntaxSet;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
@@ -691,7 +692,12 @@ enum TableAlignment {
     Right,
 }
 
-fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) -> Vec<Line<'a>> {
+fn process_code_blocks<'a>(
+    text: impl Into<String>,
+    width: usize,
+    theme: Theme,
+    syntax_set: &SyntaxSet,
+) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
     let text = text.into();
     let style = Style::default();
@@ -732,6 +738,7 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                             translate_language_name_to_syntect_name(Some(&language)),
                             &theme,
                             style,
+                            syntax_set,
                         )
                     } else {
                         let wrapped = textwrap::wrap(&code, width);
@@ -971,7 +978,12 @@ fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -
 }
 
 /// Render a single message as a styled (syntax-highlighted) chat bubble.
-pub fn style_message<'a>(message: Message, line_width: usize, theme: Theme) -> Vec<Line<'a>> {
+pub fn style_message<'a>(
+    message: Message,
+    line_width: usize,
+    theme: Theme,
+    syntax_set: &SyntaxSet,
+) -> Vec<Line<'a>> {
     let content_width = bubble_max_content_width(line_width);
     let (skin, text) = match &message {
         Message::User(_) => (user_skin(), message.to_string()),
@@ -984,7 +996,7 @@ pub fn style_message<'a>(message: Message, line_width: usize, theme: Theme) -> V
             (skin, t.clone())
         }
     };
-    let body = process_code_blocks(text, content_width, theme);
+    let body = process_code_blocks(text, content_width, theme, syntax_set);
     let mut lines = frame_bubble(body, line_width, &skin);
     lines.push(Line::from(""));
     lines
@@ -1369,6 +1381,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         lang,
                         &app.theme,
                         Style::default(),
+                        &app.syntax_set,
                     ))
                 } else {
                     Text::from(snippet.text.as_str()).magenta()

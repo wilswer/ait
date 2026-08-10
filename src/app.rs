@@ -474,6 +474,8 @@ pub struct App<'a> {
     pub theme_index: usize,
     /// Highlighting theme
     pub theme: Theme,
+    /// Cached syntax set for code highlighting (loaded once, reused).
+    pub syntax_set: SyntaxSet,
     /// Terminal size
     pub size: Option<TerminalSize>,
     /// Cached highlighted lines
@@ -557,6 +559,7 @@ impl Default for App<'_> {
             selection: Selection::default(),
             theme_index: 0,
             theme: load_theme(0),
+            syntax_set: SyntaxSet::load_defaults_nonewlines(),
             size: None,
             cached_lines: Vec::new(),
             needs_recache: false,
@@ -840,6 +843,7 @@ impl<'a> App<'a> {
                 message,
                 width.saturating_sub(4) as usize,
                 self.theme.clone(),
+                &self.syntax_set,
             ));
         }
     }
@@ -889,6 +893,7 @@ impl<'a> App<'a> {
                     message,
                     width.saturating_sub(4) as usize,
                     self.theme.clone(),
+                    &self.syntax_set,
                 ));
             }
         }
