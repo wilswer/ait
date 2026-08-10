@@ -421,7 +421,12 @@ pub async fn run_assistant_stream(
 
                                         // Append a truncated result line to the
                                         // thinking trace, then refresh the UI.
-                                        helper.push_tool_note(&format_tool_result_line(&content));
+                                        // `edit_file` gets a larger budget so a
+                                        // small diff is fully visible.
+                                        helper.push_tool_note(&format_tool_result_line(
+                                            &content,
+                                            result_char_budget(&fn_name),
+                                        ));
                                         let _ = action_tx
                                             .send(Action::StreamPartial {
                                                 conversation_id,
@@ -625,9 +630,20 @@ fn log_usage(end: &StreamEnd) {
     }
 }
 
-/// Format a tool-call announcement for the thinking trace, e.g.
-/// `> calling `get_weather` with arguments location="stockholm", unit="celsius"`.
+/// Format a tool-call announcement for the thinking trace.
+///
+/// Tries a filesystem-specific presentation first (e.g.
+/// `> reading `src/main.rs``), falling back to a generic
+/// `> calling `name` with arguments ...` line for everything else.
 fn format_tool_call_line(name: &str, args: &Value) -> String {
+    if let Some(fs_line) = format_filesystem_call_line(name, args) {
+        return fs_line;
+    }
+    format_generic_call_line(name, args)
+}
+
+/// Generic fallback: `> calling `name` with arguments k="v", n=123`.
+fn format_generic_call_line(name: &str, args: &Value) -> String {
     let args_str = match args {
         Value::Null => String::new(),
         Value::Object(map) => {
@@ -652,22 +668,121 @@ fn format_tool_call_line(name: &str, args: &Value) -> String {
     }
 }
 
+/// Default char budget for a result line in the thinking trace.
+const DEFAULT_RESULT_BUDGET: usize = 300;
+/// Larger budget for `edit_file` so a small diff is fully visible.
+const DIFF_RESULT_BUDGET: usize = 600;
+
+/// Char budget for the result line of a given tool. `edit_file` gets a larger
+/// budget so git-style diffs are not truncated as aggressively.
+fn result_char_budget(name: &str) -> usize {
+    match name {
+        "edit_file" => DIFF_RESULT_BUDGET,
+        _ => DEFAULT_RESULT_BUDGET,
+    }
+}
+
 /// Format a (truncated) tool-result line for the thinking trace, e.g.
-/// `< 18°C, partly cloudy`. Long results are truncated to a char budget so
-/// the bubble stays readable; the full result is still sent to the model.
-fn format_tool_result_line(content: &str) -> String {
-    const MAX_CHARS: usize = 300;
+/// `< 18C, partly cloudy`. Long results are truncated to `max_chars` so the
+/// bubble stays readable; the full result is still sent to the model.
+fn format_tool_result_line(content: &str, max_chars: usize) -> String {
     let trimmed = content.trim();
     let mut out = String::from("< ");
     let char_count = trimmed.chars().count();
-    if char_count <= MAX_CHARS {
+    if char_count <= max_chars {
         out.push_str(trimmed);
     } else {
-        out.extend(trimmed.chars().take(MAX_CHARS));
+        out.extend(trimmed.chars().take(max_chars));
         out.push('…');
     }
     out
 }
+
+// region:    --- Filesystem special cases ---
+
+/// Make a path string relative to the current working directory when it is
+/// cleanly inside it. Absolute paths outside the cwd are left as-is, and
+/// already-relative paths are returned unchanged.
+fn relative_path_display(path: &str) -> String {
+    use std::path::Path;
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return path.to_string();
+    }
+    let Ok(cwd) = std::env::current_dir() else {
+        return path.to_string();
+    };
+    if let Some(rel) = pathdiff::diff_paths(p, &cwd) {
+        let rel_str = rel.to_string_lossy().into_owned();
+        // Only use the relative form if it does not escape the cwd.
+        if !rel_str.starts_with("..") {
+            return rel_str;
+        }
+    }
+    path.to_string()
+}
+
+/// Extract a string argument from a JSON value by key.
+fn arg_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+    args.get(key).and_then(|v| v.as_str())
+}
+
+/// Filesystem-specific call-line formatting for
+/// `@modelcontextprotocol/server-filesystem`. Returns `None` for unrecognized
+/// tool names so the caller falls back to the generic formatter.
+fn format_filesystem_call_line(name: &str, args: &Value) -> Option<String> {
+    let line = match name {
+        "read_file" | "read_text_file" | "read_media_file" => {
+            let p = arg_str(args, "path").map(relative_path_display)?;
+            format!("> reading `{p}`")
+        }
+        "read_multiple_files" => {
+            let n = args.get("paths").and_then(|v| v.as_array()).map(|a| a.len())?;
+            format!("> reading {n} files")
+        }
+        "write_file" => {
+            let p = arg_str(args, "path").map(relative_path_display)?;
+            format!("> writing `{p}`")
+        }
+        "edit_file" => {
+            let p = arg_str(args, "path").map(relative_path_display)?;
+            format!("> editing `{p}`")
+        }
+        "move_file" => {
+            let src = arg_str(args, "source").map(relative_path_display);
+            let dst = arg_str(args, "destination").map(relative_path_display);
+            let s = src?;
+            let d = dst?;
+            format!("> moving `{s}` to `{d}`")
+        }
+        "create_directory" => {
+            let p = arg_str(args, "path").map(relative_path_display)?;
+            format!("> creating directory `{p}`")
+        }
+        "list_directory" | "list_directory_with_sizes" | "directory_tree" => {
+            let p = arg_str(args, "path").map(relative_path_display)?;
+            format!("> listing `{p}`")
+        }
+        "search_files" => {
+            let path = arg_str(args, "path").map(relative_path_display);
+            let pattern = arg_str(args, "pattern");
+            let p = path?;
+            match pattern {
+                Some(pat) => format!("> searching `{pat}` in `{p}`"),
+                None => format!("> searching in `{p}`"),
+            }
+        }
+        "get_file_info" => {
+            let p = arg_str(args, "path").map(relative_path_display)?;
+            format!("> info `{p}`")
+        }
+        "list_allowed_directories" => "> allowed directories".to_string(),
+        _ => return None,
+    };
+    Some(line)
+}
+
+// endregion:    --- Filesystem special cases ---
 
 // endregion:    --- MCP tool-calling loop ---
 
@@ -709,14 +824,14 @@ mod tests {
 
     #[test]
     fn format_tool_result_short() {
-        let line = format_tool_result_line("18°C, partly cloudy");
+        let line = format_tool_result_line("18°C, partly cloudy", 300);
         assert_eq!(line, "< 18°C, partly cloudy");
     }
 
     #[test]
     fn format_tool_result_truncates_long() {
         let long = "x".repeat(500);
-        let line = format_tool_result_line(&long);
+        let line = format_tool_result_line(&long, 300);
         assert!(line.starts_with("< "));
         assert!(line.ends_with('…'));
         // 300 chars of content + "< " (2) + "…" (1)
@@ -725,14 +840,14 @@ mod tests {
 
     #[test]
     fn format_tool_result_trims_whitespace() {
-        let line = format_tool_result_line("  \n  hello  \n");
+        let line = format_tool_result_line("  \n  hello  \n", 300);
         assert_eq!(line, "< hello");
     }
 
     #[test]
     fn format_tool_result_respects_unicode_boundary() {
         let s = "é".repeat(350); // each é is 2 bytes but 1 char
-        let line = format_tool_result_line(&s);
+        let line = format_tool_result_line(&s, 300);
         // Should not panic on char boundary; truncated to 300 chars + ellipsis.
         assert_eq!(line.chars().count(), 300 + 3);
     }
@@ -815,6 +930,136 @@ mod tests {
         h.push_tool_note("> calling `echo`");
         // The tool note should be on its own line, after the reasoning.
         assert_eq!(h.current().thinking, "some reasoning\n> calling `echo`\n");
+    }
+
+
+    // --- Filesystem special cases ---
+
+    #[test]
+    fn fs_read_text_file() {
+        let line = format_tool_call_line(
+            "read_text_file",
+            &json!({ "path": "/tmp/src/main.rs" }),
+        );
+        assert!(line.starts_with("> reading `"));
+    }
+
+    #[test]
+    fn fs_read_file_deprecated() {
+        let line = format_tool_call_line("read_file", &json!({ "path": "src/main.rs" }));
+        assert_eq!(line, "> reading `src/main.rs`");
+    }
+
+    #[test]
+    fn fs_read_multiple_files() {
+        let line = format_tool_call_line(
+            "read_multiple_files",
+            &json!({ "paths": ["/tmp/a.rs", "/tmp/b.rs", "/tmp/c.rs"] }),
+        );
+        assert_eq!(line, "> reading 3 files");
+    }
+
+    #[test]
+    fn fs_write_file() {
+        let line = format_tool_call_line(
+            "write_file",
+            &json!({ "path": "src/new.rs", "content": "fn main() {}" }),
+        );
+        assert_eq!(line, "> writing `src/new.rs`");
+    }
+
+    #[test]
+    fn fs_edit_file() {
+        let line = format_tool_call_line(
+            "edit_file",
+            &json!({ "path": "src/main.rs", "edits": [{ "oldText": "a", "newText": "b" }] }),
+        );
+        assert_eq!(line, "> editing `src/main.rs`");
+    }
+
+    #[test]
+    fn fs_move_file() {
+        let line = format_tool_call_line(
+            "move_file",
+            &json!({ "source": "src/old.rs", "destination": "src/new.rs" }),
+        );
+        assert_eq!(line, "> moving `src/old.rs` to `src/new.rs`");
+    }
+
+    #[test]
+    fn fs_create_directory() {
+        let line = format_tool_call_line(
+            "create_directory",
+            &json!({ "path": "src/new_dir" }),
+        );
+        assert_eq!(line, "> creating directory `src/new_dir`");
+    }
+
+    #[test]
+    fn fs_list_directory() {
+        let line = format_tool_call_line("list_directory", &json!({ "path": "src" }));
+        assert_eq!(line, "> listing `src`");
+    }
+
+    #[test]
+    fn fs_search_files_with_pattern() {
+        let line = format_tool_call_line(
+            "search_files",
+            &json!({ "path": "src", "pattern": "*.rs" }),
+        );
+        assert_eq!(line, "> searching `*.rs` in `src`");
+    }
+
+    #[test]
+    fn fs_search_files_no_pattern() {
+        let line = format_tool_call_line("search_files", &json!({ "path": "src" }));
+        assert_eq!(line, "> searching in `src`");
+    }
+
+    #[test]
+    fn fs_get_file_info() {
+        let line = format_tool_call_line("get_file_info", &json!({ "path": "src/main.rs" }));
+        assert_eq!(line, "> info `src/main.rs`");
+    }
+
+    #[test]
+    fn fs_list_allowed_directories() {
+        let line = format_tool_call_line("list_allowed_directories", &json!({}));
+        assert_eq!(line, "> allowed directories");
+    }
+
+    #[test]
+    fn fs_unknown_tool_falls_back_to_generic() {
+        let line = format_tool_call_line("some_custom_tool", &json!({ "path": "src/main.rs" }));
+        assert!(line.starts_with("> calling `some_custom_tool`"));
+    }
+
+    #[test]
+    fn fs_missing_path_arg_falls_back() {
+        let line = format_tool_call_line("read_text_file", &json!({}));
+        assert!(line.starts_with("> calling `read_text_file`"));
+    }
+
+    #[test]
+    fn result_budget_edit_file_is_larger() {
+        assert_eq!(result_char_budget("edit_file"), 600);
+        assert_eq!(result_char_budget("read_file"), 300);
+        assert_eq!(result_char_budget("write_file"), 300);
+    }
+
+    #[test]
+    fn format_result_with_custom_budget() {
+        let s = "x".repeat(600);
+        let line = format_tool_result_line(&s, 600);
+        assert!(!line.ends_with("\u{2026}"));
+        let line2 = format_tool_result_line(&s, 300);
+        assert!(line2.ends_with("\u{2026}"));
+    }
+
+    #[test]
+    fn relative_path_keeps_relative_as_is() {
+        assert_eq!(relative_path_display("src/main.rs"), "src/main.rs");
+        assert_eq!(relative_path_display("./src/main.rs"), "./src/main.rs");
     }
 
 }

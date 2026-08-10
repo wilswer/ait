@@ -195,16 +195,40 @@ pub fn tool_call_to_request(tool_call: &ToolCall) -> Result<CallToolRequestParam
 /// 3. Short placeholders for any non-text blocks (images/audio/resources can't
 ///    be represented in a `String`).
 pub fn call_tool_result_to_content(result: &CallToolResult) -> String {
-    // 1. Prefer structured content.
-    if let Some(structured) = &result.structured_content {
-        return serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string());
+    // 1. Prefer text content blocks — they have real newlines (not
+    //    JSON-escaped \n). This is the human-readable output MCP servers
+    //    intend for display (e.g. a git-style diff from `edit_file`).
+    let text_parts: Vec<&str> = result
+        .content
+        .iter()
+        .filter_map(|block| block.as_text().map(|t| t.text.as_str()))
+        .collect();
+    if !text_parts.is_empty() {
+        let joined = text_parts.join("\n");
+        // Some servers (e.g. using `CallToolResult::structured()`) put JSON
+        // as the text content. If it looks like JSON with a "content" field
+        // that's a string, extract that string (it has the real text).
+        return extract_text_from_json_if_present(&joined);
     }
 
-    // 2./3. Walk the content blocks.
+    // 2. Fall back to structured content (pretty-printed JSON).
+    if let Some(structured) = &result.structured_content {
+        // Try to extract a "content" string field — many servers wrap the
+        // displayable text inside `{"content": "..."}`.
+        if let Some(text) = structured
+            .get("content")
+            .and_then(|v| v.as_str())
+        {
+            return text.to_string();
+        }
+        return serde_json::to_string_pretty(structured)
+            .unwrap_or_else(|_| structured.to_string());
+    }
+
+    // 3. Walk non-text content blocks for anything useful.
     let mut parts: Vec<String> = Vec::new();
     for block in &result.content {
         match block {
-            ContentBlock::Text(text) => parts.push(text.text.clone()),
             ContentBlock::Image(image) => {
                 parts.push(format!("[{} omitted]", image.mime_type));
             }
@@ -212,7 +236,6 @@ pub fn call_tool_result_to_content(result: &CallToolResult) -> String {
                 parts.push(format!("[{} omitted]", audio.mime_type));
             }
             ContentBlock::Resource(resource) => {
-                // Embedded text resources are still useful to surface.
                 let text = resource.get_text();
                 if text.is_empty() {
                     parts.push("[embedded binary resource omitted]".to_string());
@@ -229,6 +252,22 @@ pub fn call_tool_result_to_content(result: &CallToolResult) -> String {
     }
 
     parts.join("\n")
+}
+
+/// If `s` looks like a JSON object with a "content" field that's a string,
+/// extract and return that string (it contains the real displayable text with
+/// actual newlines). Otherwise return `s` unchanged.
+fn extract_text_from_json_if_present(s: &str) -> String {
+    let trimmed = s.trim();
+    if !trimmed.starts_with('{') {
+        return s.to_string();
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && let Some(content) = value.get("content").and_then(|v| v.as_str())
+    {
+        return content.to_string();
+    }
+    s.to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +365,25 @@ mod tests {
     }
 
     #[test]
-    fn structured_content_is_preferred() {
-        let result = CallToolResult::structured(json!({
+    fn structured_content_with_content_field_extracted() {
+        // Many servers (e.g. filesystem edit_file) wrap the displayable text
+        // inside `{"content": "..."}`. We should extract it, not pretty-print
+        // the JSON.
+        let mut result = CallToolResult::default();
+        result.content = vec![];
+        result.structured_content = Some(json!({
+            "content": "```diff\n- old line\n+ new line\n```"
+        }));
+
+        let content = call_tool_result_to_content(&result);
+        assert_eq!(content, "```diff\n- old line\n+ new line\n```");
+    }
+
+    #[test]
+    fn structured_content_without_content_field_pretty_printed() {
+        let mut result = CallToolResult::default();
+        result.content = vec![];
+        result.structured_content = Some(json!({
             "temperature": 22.5,
             "humidity": 65,
         }));
@@ -335,6 +391,32 @@ mod tests {
         let content = call_tool_result_to_content(&result);
         assert!(content.contains("temperature"));
         assert!(content.contains("22.5"));
+    }
+
+    #[test]
+    fn text_blocks_preferred_over_structured_content() {
+        // Text blocks have real newlines; structured_content has escaped ones.
+        // We should prefer text blocks.
+        let mut result = CallToolResult::default();
+        result.content = vec![ContentBlock::text("real diff with\nnewlines")];
+        result.structured_content = Some(json!({
+            "content": "escaped\\ndiff"
+        }));
+
+        let content = call_tool_result_to_content(&result);
+        assert_eq!(content, "real diff with\nnewlines");
+    }
+
+    #[test]
+    fn text_block_with_json_content_field_extracted() {
+        // Some servers put JSON as the text content block. If it has a
+        // "content" string field, extract it.
+        let result = CallToolResult::success(vec![ContentBlock::text(
+            r#"{"content": "```diff\n- removed\n+ added\n```"}"#
+        )]);
+
+        let content = call_tool_result_to_content(&result);
+        assert_eq!(content, "```diff\n- removed\n+ added\n```");
     }
 
     #[test]
