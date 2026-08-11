@@ -268,6 +268,19 @@ fn is_separator(s: &str) -> bool {
 
 /// Render a markdown text segment into styled [`Line`]s, with word-wrapping.
 fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    // Normalize tabs to 4 spaces.  `unicode-width` counts `\t` as 1 column,
+    // but terminals expand it to the next tab stop (up to 8 columns).  This
+    // mismatch breaks chat-bubble width calculations: `fit_spans` clips based
+    // on `unicode-width`'s count, yet the terminal renders the tab wider,
+    // pushing the right border off and eating padding.
+    let text_owned: String;
+    let text: &str = if text.contains('\t') {
+        text_owned = text.replace('\t', "    ");
+        &text_owned
+    } else {
+        text
+    };
+
     let mut lines: Vec<Line<'static>> = Vec::new();
     let raw_lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
@@ -442,10 +455,10 @@ pub fn strip_inline_markdown(text: &str) -> String {
 }
 
 /// Word-wrap a sequence of styled spans into multiple lines, preserving the
-/// style of every (sub)span. Splits on whitespace; a single long word may
-/// exceed `width`.
+/// style of every (sub)span. Splits on whitespace; a single long word that
+/// exceeds `width` is broken at the character level so no line ever overflows.
 fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
-    use unicode_width::UnicodeWidthStr;
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
     if width == 0 {
         return vec![Line::from(spans.to_vec())];
@@ -504,8 +517,42 @@ fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
                 continue;
             }
         }
-        cur_w += w;
-        cur.push(Span::styled(tok.text.into_owned(), tok.style));
+        // If a single token is wider than the available space on the
+        // current line, break it at the character level so no line ever
+        // exceeds `width`.  Without this, a long unbreakable token (e.g.
+        // a URL, a file path, or GFF3 data) overflows the bubble and breaks
+        // the right-border padding.
+        let avail = width - cur_w;
+        if w > avail {
+            let style = tok.style;
+            let mut chars = tok.text.as_ref().chars().peekable();
+            while chars.peek().is_some() {
+                let avail = width - cur_w;
+                let mut chunk = String::new();
+                let mut chunk_w = 0usize;
+                while let Some(&ch) = chars.peek() {
+                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                    if chunk_w + cw > avail && !chunk.is_empty() {
+                        break;
+                    }
+                    chunk.push(ch);
+                    chunk_w += cw;
+                    chars.next();
+                }
+                cur.push(Span::styled(chunk, style));
+                cur_w += chunk_w;
+                if cur_w >= width {
+                    if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
+                        cur.pop();
+                    }
+                    out.push(Line::from(std::mem::take(&mut cur)));
+                    cur_w = 0;
+                }
+            }
+        } else {
+            cur_w += w;
+            cur.push(Span::styled(tok.text.into_owned(), tok.style));
+        }
     }
     if !cur.is_empty() {
         if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
@@ -2327,6 +2374,71 @@ mod tests {
                 "│ English  │ 10    │",
             ]
         );
+    }
+
+    // --- wrap_spans tests ---
+
+    #[test]
+    fn wrap_spans_long_word_is_broken() {
+        // A single unbreakable token wider than `width` should be broken at
+        // the character level, not allowed to overflow.
+        let spans = vec![Span::raw("abcdefghij")]; // 10 chars
+        let lines = wrap_spans(&spans, 4);
+        for line in &lines {
+            assert!(
+                line.width() <= 4,
+                "line width {} exceeds 4: {:?}",
+                line.width(),
+                line_to_string(line)
+            );
+        }
+        // All characters should be preserved across the broken lines.
+        let combined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(combined, "abcdefghij");
+    }
+
+    #[test]
+    fn wrap_spans_long_word_after_normal_text() {
+        // Normal text followed by a very long word.
+        let spans = vec![Span::raw("hi "), Span::raw("xxxxxxxxxx")];
+        let lines = wrap_spans(&spans, 5);
+        for line in &lines {
+            assert!(
+                line.width() <= 5,
+                "line width {} exceeds 5: {:?}",
+                line.width(),
+                line_to_string(line)
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_spans_normal_text_unaffected() {
+        let spans = vec![Span::raw("hello world foo bar")];
+        let lines = wrap_spans(&spans, 10);
+        for line in &lines {
+            assert!(line.width() <= 10);
+        }
+    }
+
+    // --- render_markdown_lines tab normalization ---
+
+    #[test]
+    fn render_markdown_lines_normalizes_tabs() {
+        // Tabs in text should be replaced with spaces so that width
+        // calculations match terminal rendering.
+        let text = "field1\tfield2\tfield3";
+        let lines = render_markdown_lines(text, 80, Style::default());
+        let rendered: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(!rendered.contains('\t'), "tab character survived rendering");
     }
 
     #[test]
