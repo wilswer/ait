@@ -11,13 +11,16 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    ait::logger::init_logging();
+    let _ = ait::logger::init_logging()?;
 
     let cfg = McpServerConfig {
         name: Some("Everything (test)".into()),
         enabled: true,
         command: Some("npx".into()),
-        args: vec!["-y".into(), "@modelcontextprotocol/server-everything".into()],
+        args: vec![
+            "-y".into(),
+            "@modelcontextprotocol/server-everything".into(),
+        ],
         env: Default::default(),
         url: None,
         api_key: None,

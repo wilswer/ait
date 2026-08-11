@@ -669,13 +669,13 @@ fn format_generic_call_line(name: &str, args: &Value) -> String {
 }
 
 /// Default char budget for a result line in the thinking trace.
-const DEFAULT_RESULT_BUDGET: usize = 300;
+const DEFAULT_RESULT_BUDGET: Option<usize> = Some(300);
 /// Larger budget for `edit_file` so a small diff is fully visible.
-const DIFF_RESULT_BUDGET: usize = 600;
+const DIFF_RESULT_BUDGET: Option<usize> = None;
 
 /// Char budget for the result line of a given tool. `edit_file` gets a larger
 /// budget so git-style diffs are not truncated as aggressively.
-fn result_char_budget(name: &str) -> usize {
+fn result_char_budget(name: &str) -> Option<usize> {
     match name {
         "edit_file" => DIFF_RESULT_BUDGET,
         _ => DEFAULT_RESULT_BUDGET,
@@ -685,15 +685,17 @@ fn result_char_budget(name: &str) -> usize {
 /// Format a (truncated) tool-result line for the thinking trace, e.g.
 /// `< 18C, partly cloudy`. Long results are truncated to `max_chars` so the
 /// bubble stays readable; the full result is still sent to the model.
-fn format_tool_result_line(content: &str, max_chars: usize) -> String {
+fn format_tool_result_line(content: &str, max_chars: Option<usize>) -> String {
     let trimmed = content.trim();
     let mut out = String::from("< ");
     let char_count = trimmed.chars().count();
-    if char_count <= max_chars {
-        out.push_str(trimmed);
-    } else {
-        out.extend(trimmed.chars().take(max_chars));
+    if let Some(max_char_count) = max_chars
+        && char_count > max_char_count
+    {
+        out.extend(trimmed.chars().take(max_char_count));
         out.push('…');
+    } else {
+        out.push_str(trimmed);
     }
     out
 }
@@ -737,7 +739,10 @@ fn format_filesystem_call_line(name: &str, args: &Value) -> Option<String> {
             format!("> reading `{p}`")
         }
         "read_multiple_files" => {
-            let n = args.get("paths").and_then(|v| v.as_array()).map(|a| a.len())?;
+            let n = args
+                .get("paths")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())?;
             format!("> reading {n} files")
         }
         "write_file" => {
@@ -824,14 +829,14 @@ mod tests {
 
     #[test]
     fn format_tool_result_short() {
-        let line = format_tool_result_line("18°C, partly cloudy", 300);
+        let line = format_tool_result_line("18°C, partly cloudy", Some(300));
         assert_eq!(line, "< 18°C, partly cloudy");
     }
 
     #[test]
     fn format_tool_result_truncates_long() {
         let long = "x".repeat(500);
-        let line = format_tool_result_line(&long, 300);
+        let line = format_tool_result_line(&long, Some(300));
         assert!(line.starts_with("< "));
         assert!(line.ends_with('…'));
         // 300 chars of content + "< " (2) + "…" (1)
@@ -840,14 +845,14 @@ mod tests {
 
     #[test]
     fn format_tool_result_trims_whitespace() {
-        let line = format_tool_result_line("  \n  hello  \n", 300);
+        let line = format_tool_result_line("  \n  hello  \n", Some(300));
         assert_eq!(line, "< hello");
     }
 
     #[test]
     fn format_tool_result_respects_unicode_boundary() {
         let s = "é".repeat(350); // each é is 2 bytes but 1 char
-        let line = format_tool_result_line(&s, 300);
+        let line = format_tool_result_line(&s, Some(300));
         // Should not panic on char boundary; truncated to 300 chars + ellipsis.
         assert_eq!(line.chars().count(), 300 + 3);
     }
@@ -866,7 +871,10 @@ mod tests {
         let mut h = StreamHelper::new();
         h.push_reasoning("Let me think...");
         h.push_text("The answer is 42.");
-        assert_eq!(h.combined(), "<think>\nLet me think...\n</think>\nThe answer is 42.");
+        assert_eq!(
+            h.combined(),
+            "<think>\nLet me think...\n</think>\nThe answer is 42."
+        );
     }
 
     #[test]
@@ -932,15 +940,11 @@ mod tests {
         assert_eq!(h.current().thinking, "some reasoning\n> calling `echo`\n");
     }
 
-
     // --- Filesystem special cases ---
 
     #[test]
     fn fs_read_text_file() {
-        let line = format_tool_call_line(
-            "read_text_file",
-            &json!({ "path": "/tmp/src/main.rs" }),
-        );
+        let line = format_tool_call_line("read_text_file", &json!({ "path": "/tmp/src/main.rs" }));
         assert!(line.starts_with("> reading `"));
     }
 
@@ -988,10 +992,7 @@ mod tests {
 
     #[test]
     fn fs_create_directory() {
-        let line = format_tool_call_line(
-            "create_directory",
-            &json!({ "path": "src/new_dir" }),
-        );
+        let line = format_tool_call_line("create_directory", &json!({ "path": "src/new_dir" }));
         assert_eq!(line, "> creating directory `src/new_dir`");
     }
 
@@ -1003,10 +1004,8 @@ mod tests {
 
     #[test]
     fn fs_search_files_with_pattern() {
-        let line = format_tool_call_line(
-            "search_files",
-            &json!({ "path": "src", "pattern": "*.rs" }),
-        );
+        let line =
+            format_tool_call_line("search_files", &json!({ "path": "src", "pattern": "*.rs" }));
         assert_eq!(line, "> searching `*.rs` in `src`");
     }
 
@@ -1042,17 +1041,17 @@ mod tests {
 
     #[test]
     fn result_budget_edit_file_is_larger() {
-        assert_eq!(result_char_budget("edit_file"), 600);
-        assert_eq!(result_char_budget("read_file"), 300);
-        assert_eq!(result_char_budget("write_file"), 300);
+        assert_eq!(result_char_budget("edit_file"), None);
+        assert_eq!(result_char_budget("read_file"), Some(300));
+        assert_eq!(result_char_budget("write_file"), Some(300));
     }
 
     #[test]
     fn format_result_with_custom_budget() {
         let s = "x".repeat(600);
-        let line = format_tool_result_line(&s, 600);
+        let line = format_tool_result_line(&s, Some(600));
         assert!(!line.ends_with("\u{2026}"));
-        let line2 = format_tool_result_line(&s, 300);
+        let line2 = format_tool_result_line(&s, Some(300));
         assert!(line2.ends_with("\u{2026}"));
     }
 
@@ -1061,5 +1060,4 @@ mod tests {
         assert_eq!(relative_path_display("src/main.rs"), "src/main.rs");
         assert_eq!(relative_path_display("./src/main.rs"), "./src/main.rs");
     }
-
 }
