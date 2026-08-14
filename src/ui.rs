@@ -1034,7 +1034,7 @@ pub fn style_message<'a>(
     let content_width = bubble_max_content_width(line_width);
     let (skin, text) = match &message {
         Message::User(_) => (user_skin(), message.to_string()),
-        Message::Assistant(t, model, provider) => {
+        Message::Assistant(t, model, provider, _) => {
             if t.is_empty() {
                 return Vec::new();
             }
@@ -1083,7 +1083,7 @@ pub fn messages_to_lines<'a>(messages: &[Message], line_width: usize) -> Vec<Lin
     for message in messages {
         let (skin, text) = match message {
             Message::User(_) => (user_skin(), message.to_string()),
-            Message::Assistant(m, model, provider) => {
+            Message::Assistant(m, model, provider, _) => {
                 if m.is_empty() {
                     continue;
                 }
@@ -2015,7 +2015,7 @@ fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) 
                     m.to_string(),
                     Style::default().yellow(),
                 ),
-                Message::Assistant(t, model, provider) => {
+                Message::Assistant(t, model, provider, _) => {
                     let model = model.as_deref().unwrap_or("unknown");
                     let provider = provider.as_deref().unwrap_or("unknown");
                     (

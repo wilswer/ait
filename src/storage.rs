@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use directories::ProjectDirs;
-use genai::chat::ContentPart;
+use genai::chat::{ChatMessage, ContentPart};
 use rusqlite::{Connection, params};
 
 use crate::app::{AppResult, Message};
@@ -120,6 +120,25 @@ pub fn migrate_db() -> AppResult<()> {
         .context("Failed to add provider column to Messages")?;
     }
 
+    // Add `raw_json` column to store serialized structured ChatMessages for
+    // cache-friendly history replay. Existing rows get NULL; legacy messages
+    // fall back to display-text replay with decorations stripped.
+    let raw_json_col_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('Messages') WHERE name = 'raw_json'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .context("Failed to check for raw_json column")?
+        > 0;
+    if !raw_json_col_exists {
+        conn.execute(
+            "ALTER TABLE Messages ADD COLUMN raw_json TEXT",
+            [],
+        )
+        .context("Failed to add raw_json column to Messages")?;
+    }
+
     Ok(())
 }
 
@@ -139,18 +158,21 @@ pub fn insert_message(conversation_id: i64, message: &Message) -> AppResult<()> 
     let db_path = get_db_path()?;
     let conn = Connection::open(db_path)?;
     // Insert the message into the Messages table
-    let (sender, message_text, model, provider) = match message {
-        Message::User(_) => ("human", &message.to_string(), None, None),
-        Message::Assistant(text, model, provider) => (
+    let (sender, message_text, model, provider, raw_json) = match message {
+        Message::User(_) => ("human", &message.to_string(), None, None, None),
+        Message::Assistant(text, model, provider, raw_messages) => (
             "assistant",
             text,
             model.as_deref(),
             provider.as_deref(),
+            raw_messages
+                .as_ref()
+                .map(|m| serde_json::to_string(m).unwrap_or_default()),
         ),
     };
     conn.execute(
-        "INSERT INTO Messages (conversation_id, sender, message_text, model, provider) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![conversation_id, sender, message_text, model, provider],
+        "INSERT INTO Messages (conversation_id, sender, message_text, model, provider, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![conversation_id, sender, message_text, model, provider, raw_json],
     )?;
     Ok(())
 }
@@ -161,7 +183,7 @@ pub fn delete_message(conversation_id: i64, message: &Message) -> AppResult<()> 
 
     let (sender, message_text) = match message {
         Message::User(_) => ("human", &message.to_string()),
-        Message::Assistant(text, _, _) => ("assistant", text),
+        Message::Assistant(text, _, _, _) => ("assistant", text),
     };
 
     conn.execute(
@@ -223,7 +245,7 @@ pub fn list_all_messages(conversation_id: i64) -> AppResult<Vec<Message>> {
     // Columns are named explicitly (rather than `SELECT *`) so the row index
     // mapping below is stable regardless of future column additions.
     let mut stmt = conn.prepare(
-        "SELECT sender, message_text, model, provider FROM Messages WHERE conversation_id = ?1",
+        "SELECT sender, message_text, model, provider, raw_json FROM Messages WHERE conversation_id = ?1",
     )?;
     let messages = stmt
         .query_map(params![conversation_id], |row| {
@@ -232,6 +254,7 @@ pub fn list_all_messages(conversation_id: i64) -> AppResult<Vec<Message>> {
                 message_text: row.get(1)?,
                 model: row.get(2)?,
                 provider: row.get(3)?,
+                raw_json: row.get(4)?,
             })
         })
         .context("Failed to query messages table")?
@@ -267,18 +290,27 @@ struct DBMessage {
     message_text: String,
     model: Option<String>,
     provider: Option<String>,
+    raw_json: Option<String>,
 }
 
 impl From<DBMessage> for Message {
     fn from(db_message: DBMessage) -> Self {
+        // Deserialize the structured ChatMessages if present. On failure
+        // (corrupt JSON, schema drift), fall back to None so the legacy
+        // display-text path is used.
+        let raw_messages = db_message
+            .raw_json
+            .as_ref()
+            .and_then(|json| serde_json::from_str::<Vec<ChatMessage>>(json).ok());
         match db_message.sender.as_str() {
             "human" => Message::User(vec![ContentPart::from_text(db_message.message_text)]),
             "assistant" => Message::Assistant(
                 db_message.message_text,
                 db_message.model,
                 db_message.provider,
+                raw_messages,
             ),
-            _ => Message::Assistant("Error".to_string(), None, None),
+            _ => Message::Assistant("Error".to_string(), None, None, None),
         }
     }
 }

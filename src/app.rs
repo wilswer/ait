@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use arboard::Clipboard;
 use genai::ModelSpec;
 use genai::adapter::AdapterKind;
-use genai::chat::ContentPart;
+use genai::chat::{ChatMessage, ContentPart};
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
 use tokio::sync::mpsc;
@@ -144,10 +144,14 @@ pub enum Action {
     StreamComplete {
         conversation_id: i64,
         content: String,
+        /// Structured messages for this assistant turn, for cache-friendly
+        /// history replay on subsequent requests.
+        raw_messages: Option<Vec<ChatMessage>>,
     },
     StreamCancelled {
         conversation_id: i64,
         content: String,
+        raw_messages: Option<Vec<ChatMessage>>,
     },
     Error {
         conversation_id: Option<i64>,
@@ -329,7 +333,16 @@ pub enum UserContent {
 #[derive(Debug, Clone)]
 pub enum Message {
     User(Vec<ContentPart>),
-    Assistant(String, Option<String>, Option<String>),
+    Assistant(
+        String,
+        Option<String>,
+        Option<String>,
+        /// The exact `ChatMessage`s sent to the provider during this assistant
+        /// turn (tool-use messages, tool responses, final text). When present,
+        /// these are replayed instead of the display text to keep the prefix
+        /// byte-identical for provider prompt caching.
+        Option<Vec<ChatMessage>>,
+    ),
 }
 
 #[derive(Debug, Clone)]
@@ -376,7 +389,7 @@ impl Display for Message {
                 }
                 Ok(())
             }
-            Message::Assistant(text, _, _) => write!(f, "{}", text),
+            Message::Assistant(text, _, _, _) => write!(f, "{}", text),
         }
     }
 }
@@ -971,8 +984,8 @@ impl<'a> App<'a> {
 
         // Gather formatting inputs from the view (immutable borrows).
         let message = match self.messages.last() {
-            Some(Message::Assistant(text, model, provider)) => {
-                Message::Assistant(text.clone(), model.clone(), provider.clone())
+            Some(Message::Assistant(text, model, provider, raw)) => {
+                Message::Assistant(text.clone(), model.clone(), provider.clone(), raw.clone())
             }
             _ => return false,
         };
@@ -1010,7 +1023,7 @@ impl<'a> App<'a> {
                 Message::User(_) => {
                     chat_log.push_str(&format!("User: {}\n", message));
                 }
-                Message::Assistant(message, model, provider) => {
+                Message::Assistant(message, model, provider, _) => {
                     let model = model.as_deref().unwrap_or("unknown");
                     let provider = provider.as_deref().unwrap_or("unknown");
                     chat_log.push_str(&format!("Assistant ({model} -- {provider}): {message}\n"));
@@ -1273,9 +1286,9 @@ impl<'a> App<'a> {
         // carries no model info, so we attach it here before persisting /
         // updating the view.
         let message = match message {
-            Message::Assistant(text, model, provider) => {
+            Message::Assistant(text, model, provider, raw) => {
                 let (m, p) = model_provider_from_spec(&stream_state.selected_model);
-                Message::Assistant(text, model.or(m), provider.or(p))
+                Message::Assistant(text, model.or(m), provider.or(p), raw)
             }
             other => other,
         };
@@ -1378,9 +1391,9 @@ impl<'a> App<'a> {
                     None => (None, None),
                 };
                 self.messages
-                    .push(Message::Assistant(String::new(), model, provider));
+                    .push(Message::Assistant(String::new(), model, provider, None));
             }
-            if let Some(Message::Assistant(last, _, _)) = self.messages.last_mut() {
+            if let Some(Message::Assistant(last, _, _, _)) = self.messages.last_mut() {
                 *last = captured_content.to_string();
             }
             if do_scroll {
@@ -1404,7 +1417,7 @@ impl<'a> App<'a> {
     #[cfg(not(target_os = "linux"))]
     pub fn yank_latest_assistant_message(&mut self) {
         let mut assistant_messages = self.messages.iter().filter_map(|m| match m {
-            Message::Assistant(message, _, _) => Some(message),
+            Message::Assistant(message, _, _, _) => Some(message),
             _ => None,
         });
         if let Some(message) = assistant_messages.next_back() {
@@ -1560,7 +1573,7 @@ impl<'a> App<'a> {
     /// model selector reflects the model used for the most recent message.
     fn sync_model_from_messages(&mut self) {
         for msg in self.messages.iter().rev() {
-            if let Message::Assistant(_, Some(model), Some(provider)) = msg {
+            if let Message::Assistant(_, Some(model), Some(provider), _) = msg {
                 for (idx, item) in self.model_list.items.iter_mut().enumerate() {
                     if item.name == *model && item.provider == *provider {
                         item.selected = true;
@@ -1735,7 +1748,7 @@ impl<'a> App<'a> {
             {
                 let (model, provider) = model_provider_from_spec(&state.selected_model);
                 self.messages
-                    .push(Message::Assistant(state.partial.clone(), model, provider));
+                    .push(Message::Assistant(state.partial.clone(), model, provider, None));
             }
 
             // Automatically select the model that produced the latest
@@ -1889,9 +1902,9 @@ mod tests {
         // Messages from a conversation that used different models.
         app.messages = vec![
             Message::User(vec![]),
-            Message::Assistant("hello".into(), Some("gpt-4o".into()), Some("OpenAI".into())),
+            Message::Assistant("hello".into(), Some("gpt-4o".into()), Some("OpenAI".into()), None),
             Message::User(vec![]),
-            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into())),
+            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into()), None),
         ];
 
         app.sync_model_from_messages();
@@ -1929,7 +1942,7 @@ mod tests {
 
         // Last assistant response used a model that's not in the list.
         app.messages = vec![
-            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into())),
+            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into()), None),
         ];
 
         app.sync_model_from_messages();

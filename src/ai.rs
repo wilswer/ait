@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use futures::StreamExt;
 use genai::adapter::AdapterKind;
 use genai::chat::{
-    CacheControl, ChatMessage, ChatOptions, ChatRequest, ChatStream, ChatStreamEvent,
-    ReasoningEffort, StreamChunk, StreamEnd, Tool, ToolCall, ToolResponse,
+    CacheControl, ChatMessage, ChatOptions, ChatRequest, ChatRole, ChatStream,
+    ChatStreamEvent, ReasoningEffort, StreamChunk, StreamEnd, Tool, ToolCall, ToolResponse,
 };
 use genai::resolver::{AuthData, Endpoint, ProviderConfig, ServiceTargetResolver};
 use genai::{ClientBuilder, ClientConfig, ModelIden, ModelSpec, ServiceTarget};
@@ -123,7 +123,7 @@ pub async fn assistant_response(
         .iter()
         .map(|m| match m {
             Message::User(m) => ChatMessage::user(m.clone()),
-            Message::Assistant(m, _, _) => ChatMessage::assistant(m.clone()),
+            Message::Assistant(m, _, _, _) => ChatMessage::assistant(m.clone()),
         })
         .collect::<Vec<ChatMessage>>();
     let mut chat_req = if let Some(system_prompt) = system_prompt {
@@ -139,9 +139,9 @@ pub async fn assistant_response(
     match client.exec_chat(model, chat_req, None).await {
         Ok(res) => {
             let chat_res = if let Some(m) = res.into_first_text() {
-                Message::Assistant(m, None, None)
+                Message::Assistant(m, None, None, None)
             } else {
-                Message::Assistant("NO RESPONSE".to_string(), None, None)
+                Message::Assistant("NO RESPONSE".to_string(), None, None, None)
             };
             Ok(chat_res)
         }
@@ -160,7 +160,7 @@ pub async fn assistant_response_streaming(
         .iter()
         .map(|m| match m {
             Message::User(m) => ChatMessage::user(m.clone()),
-            Message::Assistant(m, _, _) => ChatMessage::assistant(m.clone()),
+            Message::Assistant(m, _, _, _) => ChatMessage::assistant(m.clone()),
         })
         .collect::<Vec<ChatMessage>>();
     let mut chat_req = if let Some(system_prompt) = system_prompt {
@@ -266,6 +266,131 @@ fn build_round_request(
     req
 }
 
+/// Strip display-only decorations (the `<think>` ... `</think>` thinking blocks and
+/// tool-call/result lines) from a legacy assistant display string so it can
+/// be sent to the provider as a clean `ChatMessage::assistant(text)` without
+/// polluting the input with UI-only annotations.
+///
+/// This is only used as a fallback for messages persisted before structured
+/// history was available. New messages carry `raw_messages` instead.
+///
+/// The format produced by [`StreamHelper::combined`] looks like:
+///
+/// ```text
+/// <think>
+/// reasoning + tool notes
+/// </think>
+/// assistant text
+/// ```
+///
+/// This function removes everything between `<think>` and `</think>` (inclusive
+/// of the tags) and any stray `> `/`< ` tool-note lines, keeping only the
+/// assistant text portions.
+fn strip_display_decorations(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_thinking = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("<think>") {
+            in_thinking = true;
+            continue;
+        }
+        if trimmed.starts_with("</think>") {
+            in_thinking = false;
+            continue;
+        }
+        if in_thinking {
+            continue;
+        }
+        // Defensive: skip any leftover tool-call/result annotations.
+        if trimmed.starts_with("> ") || trimmed.starts_with("< ") {
+            continue;
+        }
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(line);
+    }
+    result.trim().to_string()
+}
+
+/// Build the final assistant [`ChatMessage`] from a [`StreamEnd`], preserving
+/// thought signatures and reasoning content for cache-friendly replay on
+/// subsequent turns.
+///
+/// Returns `None` when there is no captured content (e.g. the stream ended
+/// without producing any text). In that case the caller should **not** push
+/// anything into `raw_messages` — the display text path will be used for
+/// legacy replay instead, which is better than sending an empty content
+/// block (which some providers reject on replay).
+fn build_final_assistant_message(end: &StreamEnd) -> Option<ChatMessage> {
+    let content = end.captured_content.as_ref()?;
+    if content.is_empty() {
+        return None;
+    }
+    Some(
+        ChatMessage {
+            role: ChatRole::Assistant,
+            content: content.clone(),
+            options: None,
+        }
+        .with_reasoning_content(end.captured_reasoning_content.clone()),
+    )
+}
+
+/// Finalize the `raw_messages` accumulator for persistence.
+///
+/// Returns `None` when `raw_messages` is empty or contains only tool-use
+/// and tool-response messages without a closing assistant text message.
+/// This happens on cancellation before the final text was captured, or
+/// when the stream ended without an explicit `End` event. In these cases
+/// the legacy display-text fallback (with decorations stripped) is safer
+/// than persisting an incomplete structured turn that would be replayed as
+/// a dangling tool-use without a result, or an empty assistant message that
+/// some providers reject.
+///
+/// When `raw_messages` already contains a proper final assistant message
+/// (pushed by `build_final_assistant_message`), it is returned as-is.
+///
+/// When `raw_messages` is non-empty but ends with a tool-response (i.e. the
+/// round was interrupted after tool execution but before the next round
+/// produced text), we synthesize a final assistant message from the
+/// `StreamHelper`'s accumulated text so the turn is replayable.
+fn finalize_raw_messages(
+    raw_messages: &[ChatMessage],
+    helper: &StreamHelper,
+) -> Option<Vec<ChatMessage>> {
+    if raw_messages.is_empty() {
+        return None;
+    }
+
+    // Check if the last message is an assistant text message (the normal
+    // success path — `build_final_assistant_message` already pushed it).
+    if raw_messages
+        .last()
+        .is_some_and(|m| m.role == ChatRole::Assistant)
+    {
+        return Some(raw_messages.to_vec());
+    }
+
+    // The last message is a tool-response or something else — the assistant
+    // turn was interrupted mid-loop. Try to synthesize a final assistant
+    // message from the display helper's accumulated text so the structured
+    // history is still replayable.
+    let display_text = helper.combined();
+    let clean = strip_display_decorations(&display_text);
+    if clean.is_empty() {
+        // No text at all — don't persist structured messages; the display
+        // text (which may contain thinking blocks) will be used via the
+        // legacy fallback.
+        return None;
+    }
+
+    let mut result = raw_messages.to_vec();
+    result.push(ChatMessage::assistant(clean));
+    Some(result)
+}
+
 /// Resolve the union of tools across all connected MCP servers.
 ///
 /// Returns the genai tool list to send to the model, plus a map from tool name
@@ -325,14 +450,23 @@ pub async fn run_assistant_stream(
 ) -> AppResult<()> {
     // Genai chat messages for the conversation history. This grows across
     // tool-calling rounds as we append assistant tool-use turns and tool
-    // responses.
-    let mut chat_messages: Vec<ChatMessage> = messages
-        .iter()
-        .map(|m| match m {
-            Message::User(m) => ChatMessage::user(m.clone()),
-            Message::Assistant(m, _, _) => ChatMessage::assistant(m.clone()),
-        })
-        .collect();
+    // responses. When `raw_messages` is available (structured history), we
+    // replay the exact ChatMessages the provider saw; otherwise we fall back
+    // to the display text with decorations stripped.
+    let mut chat_messages: Vec<ChatMessage> = Vec::new();
+    for m in messages {
+        match m {
+            Message::User(m) => chat_messages.push(ChatMessage::user(m.clone())),
+            Message::Assistant(_, _, _, Some(raw)) => {
+                chat_messages.extend(raw.iter().cloned())
+            }
+            // Legacy: strip display decorations and build a plain assistant
+            // message so ` thinking` blocks and tool notes don't pollute the input.
+            Message::Assistant(text, _, _, None) => {
+                chat_messages.push(ChatMessage::assistant(strip_display_decorations(text)))
+            }
+        }
+    }
 
     let clientbuilder = match &model {
         ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::Ollama => {
@@ -361,6 +495,10 @@ pub async fn run_assistant_stream(
     let (mut tools, tool_map) = resolve_tools(&mcp_bridges).await;
     tools.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
 
+    // Structured messages collected during this assistant turn for
+    // cache-friendly history replay on subsequent turns.
+    let mut raw_messages: Vec<ChatMessage> = Vec::new();
+
     for _round in 0..MAX_TOOL_ROUNDS {
         // Build this round's request from the (possibly extended) history,
         // with the stable tool set.
@@ -388,6 +526,7 @@ pub async fn run_assistant_stream(
                         .send(Action::StreamCancelled {
                             conversation_id,
                             content: helper.combined(),
+                            raw_messages: finalize_raw_messages(&raw_messages, &helper),
                         })
                         .await;
                     return Ok(());
@@ -428,7 +567,8 @@ pub async fn run_assistant_stream(
                                     // Append the assistant tool-use turn (thought
                                     // signatures included, ordered before calls).
                                     if let Some(msg) = end.into_assistant_message_for_tool_use() {
-                                        chat_messages.push(msg);
+                                        chat_messages.push(msg.clone());
+                                        raw_messages.push(msg);
                                     }
                                     // Execute each tool call against its owning server.
                                     for tc in &tool_calls {
@@ -478,7 +618,9 @@ pub async fn run_assistant_stream(
                                             .await;
 
                                         let resp = ToolResponse::from_tool_call(tc, content);
-                                        chat_messages.push(ChatMessage::from(resp));
+                                        let resp_msg = ChatMessage::from(resp);
+                                        chat_messages.push(resp_msg.clone());
+                                        raw_messages.push(resp_msg);
                                     }
                                     // Separate this round's text/notes from the
                                     // next round's so they don't concatenate.
@@ -494,10 +636,21 @@ pub async fn run_assistant_stream(
                                 }
 
                                 // No (executable) tool calls: this is the final turn.
+                                // Build the final assistant message from the
+                                // captured content (includes thought signatures,
+                                // text, etc.) for cache-friendly replay.
+                                // If there's no captured content, skip pushing
+                                // to raw_messages so the legacy display-text
+                                // fallback is used instead (avoids sending
+                                // empty content blocks some providers reject).
+                                if let Some(final_msg) = build_final_assistant_message(&end) {
+                                    raw_messages.push(final_msg);
+                                }
                                 let _ = action_tx
                                     .send(Action::StreamComplete {
                                         conversation_id,
                                         content: helper.combined(),
+                                        raw_messages: finalize_raw_messages(&raw_messages, &helper),
                                     })
                                     .await;
                                 return Ok(());
@@ -519,6 +672,7 @@ pub async fn run_assistant_stream(
                                 .send(Action::StreamComplete {
                                     conversation_id,
                                     content: helper.combined(),
+                                    raw_messages: finalize_raw_messages(&raw_messages, &helper),
                                 })
                                 .await;
                             return Ok(());
@@ -538,6 +692,7 @@ pub async fn run_assistant_stream(
         .send(Action::StreamComplete {
             conversation_id,
             content: helper.combined(),
+            raw_messages: finalize_raw_messages(&raw_messages, &helper),
         })
         .await;
     Ok(())
@@ -1096,6 +1251,87 @@ mod tests {
         assert!(!line.ends_with("\u{2026}"));
         let line2 = format_tool_result_line(&s, Some(300));
         assert!(line2.ends_with("\u{2026}"));
+    }
+
+    #[test]
+    fn strip_decorations_simple_text_unchanged() {
+        assert_eq!(strip_display_decorations("Hello."), "Hello.");
+    }
+
+    #[test]
+    fn strip_decorations_removes_thinking_block() {
+        let combined = "<think>\nLet me think carefully.\n</think>\nThe answer is 42.";
+        assert_eq!(strip_display_decorations(combined), "The answer is 42.");
+    }
+
+    #[test]
+    fn strip_decorations_removes_tool_notes() {
+        let combined = concat!(
+            "<think>\n",
+            "let me check the weather.\n",
+            "> calling `get_weather`\n",
+            "< 18C\n",
+            "</think>\n",
+            "It is 18C outside.",
+        );
+        assert_eq!(strip_display_decorations(combined), "It is 18C outside.");
+    }
+
+    #[test]
+    fn strip_decorations_multi_round_keeps_text_only() {
+        let combined = concat!(
+            "<think>\n",
+            "reasoning round 1\n",
+            "> calling `search`\n",
+            "< result\n",
+            "</think>\n\n",
+            "<think>\n",
+            "reasoning round 2\n",
+            "</think>\n",
+            "final text with thinking and multi-round content.",
+        );
+        assert_eq!(
+            strip_display_decorations(combined),
+            "final text with thinking and multi-round content."
+        );
+    }
+
+    #[test]
+    fn strip_decorations_thinking_only_yields_empty() {
+        let combined = "<think>\nJust reasoning.\n</think>";
+        assert_eq!(strip_display_decorations(combined), "");
+    }
+
+    #[test]
+    fn strip_decorations_matches_combined_output() {
+        // Verify against the real StreamHelper::combined() output format.
+        let mut h = StreamHelper::new();
+        h.push_reasoning("Let me think...");
+        h.push_tool_note("> calling `get_weather`");
+        h.push_tool_note("< 18C");
+        h.end_round();
+        h.push_text("It is 18C outside.");
+        let combined = h.combined();
+        assert_eq!(strip_display_decorations(&combined), "It is 18C outside.");
+    }
+
+    #[test]
+    fn finalize_raw_messages_empty_uses_legacy_fallback() {
+        let helper = StreamHelper::new();
+        assert!(finalize_raw_messages(&[], &helper).is_none());
+    }
+
+    #[test]
+    fn finalize_raw_messages_adds_partial_text_after_tool_messages() {
+        let mut helper = StreamHelper::new();
+        helper.push_text("Partial final answer.");
+        let raw = vec![ChatMessage::from(ToolResponse::new(
+            "call-id".to_string(),
+            "tool result".to_string(),
+        ))];
+        let final_messages = finalize_raw_messages(&raw, &helper).expect("structured history");
+        assert_eq!(final_messages.len(), 2);
+        assert_eq!(final_messages[1].role, ChatRole::Assistant);
     }
 
     #[test]

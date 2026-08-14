@@ -63,18 +63,26 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
         Action::StreamComplete {
             conversation_id,
             content,
+            raw_messages,
         } => {
-            app.receive_message(conversation_id, Message::Assistant(content, None, None))
-                .await?;
+            app.receive_message(
+                conversation_id,
+                Message::Assistant(content, None, None, raw_messages),
+            )
+            .await?;
         }
         Action::StreamCancelled {
             conversation_id,
             content,
+            raw_messages,
         } => {
             // Persist whatever portion of the message was generated before
             // stopping.
-            app.receive_message(conversation_id, Message::Assistant(content, None, None))
-                .await?;
+            app.receive_message(
+                conversation_id,
+                Message::Assistant(content, None, None, raw_messages),
+            )
+            .await?;
         }
         Action::Error {
             conversation_id,
