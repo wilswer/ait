@@ -204,9 +204,18 @@ const MAX_TOOL_ROUNDS: usize = 12;
 
 /// Build the per-request [`ChatOptions`] with the streaming captures enabled
 /// (text, reasoning, usage, and tool calls) plus the given thinking effort.
-fn base_chat_opts(thinking_effort: ThinkingEffort) -> ChatOptions {
+///
+/// Cache-affecting options set here:
+/// - Request-level `CacheControl::Ephemeral` auto-applies a cache breakpoint
+///   to the static tools+system prefix (Anthropic).
+/// - A stable `prompt_cache_key` derived from the conversation id so OpenAI's
+///   automatic prefix cache stays on the same shard across requests/turns.
+///   genai ignores this on non-OpenAI adapters, so setting it unconditionally
+///   is safe.
+fn base_chat_opts(thinking_effort: ThinkingEffort, conversation_id: i64) -> ChatOptions {
     let base = ChatOptions::default()
         .with_cache_control(CacheControl::Ephemeral)
+        .with_prompt_cache_key(format!("ait-conv-{conversation_id}"))
         .with_capture_content(true)
         .with_capture_reasoning_content(true)
         .with_capture_usage(true)
@@ -220,6 +229,41 @@ fn base_chat_opts(thinking_effort: ThinkingEffort) -> ChatOptions {
         ThinkingEffort::XHigh => base.with_reasoning_effort(ReasoningEffort::XHigh),
         ThinkingEffort::Max => base.with_reasoning_effort(ReasoningEffort::Max),
     }
+}
+
+/// Build a round's [`ChatRequest`] from the current conversation history.
+///
+/// Places a **message-level** cache breakpoint on the last message so the
+/// growing conversation prefix is cached (Anthropic), complementing the
+/// request-level breakpoint on the static tools+system prefix. genai ignores
+/// message-level cache control on non-Anthropic adapters (OpenAI/Gemini cache
+/// prefixes transparently), so applying it unconditionally is safe.
+fn build_round_request(
+    system_prompt: &Option<String>,
+    chat_messages: &[ChatMessage],
+    tools: &[Tool],
+) -> ChatRequest {
+    let mut req = if let Some(sp) = system_prompt {
+        ChatRequest::new(vec![ChatMessage::system(sp.clone())])
+    } else {
+        ChatRequest::new(vec![])
+    };
+
+    let msg_count = chat_messages.len();
+    for (i, cm) in chat_messages.iter().enumerate() {
+        let mut cm = cm.clone();
+        // Mark the last message as the cache breakpoint so the full prefix up
+        // to (and including) it is reusable by the next turn/round.
+        if i == msg_count - 1 {
+            cm = cm.with_options(CacheControl::Ephemeral);
+        }
+        req = req.append_message(cm);
+    }
+
+    if !tools.is_empty() {
+        req = req.with_tools(tools.to_vec());
+    }
+    req
 }
 
 /// Resolve the union of tools across all connected MCP servers.
@@ -292,9 +336,12 @@ pub async fn run_assistant_stream(
 
     let clientbuilder = match &model {
         ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::Ollama => {
-            init_clientbuilder(ollama_host_url.as_deref(), base_chat_opts(thinking_effort))
+            init_clientbuilder(
+                ollama_host_url.as_deref(),
+                base_chat_opts(thinking_effort, conversation_id),
+            )
         }
-        _ => init_clientbuilder(None, base_chat_opts(thinking_effort)),
+        _ => init_clientbuilder(None, base_chat_opts(thinking_effort, conversation_id)),
     };
     let client = clientbuilder.build();
 
@@ -304,24 +351,20 @@ pub async fn run_assistant_stream(
 
     let mut helper = StreamHelper::new();
 
-    for _round in 0..MAX_TOOL_ROUNDS {
-        // Re-resolve the tool set each round so servers that finish connecting
-        // mid-conversation become available without re-sending the prompt.
-        let (tools, tool_map) = resolve_tools(&mcp_bridges).await;
-        let has_tools = !tools.is_empty();
+    // Resolve the tool set **once**, before the round loop, and sort it
+    // deterministically by name. Resolving per-round means a server
+    // connecting mid-conversation changes the tool list (and its order),
+    // which busts the provider's prefix cache on every Anthropic request.
+    // Keeping it stable across rounds and turns is the cache-friendly
+    // trade-off: servers that finish connecting mid-conversation are picked
+    // up on the next user turn.
+    let (mut tools, tool_map) = resolve_tools(&mcp_bridges).await;
+    tools.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
 
-        // Build this round's request from the (possibly extended) history.
-        let mut chat_req = if let Some(ref sp) = system_prompt {
-            ChatRequest::new(vec![ChatMessage::system(sp.clone())])
-        } else {
-            ChatRequest::new(vec![])
-        };
-        for cm in &chat_messages {
-            chat_req = chat_req.append_message(cm.clone());
-        }
-        if has_tools {
-            chat_req = chat_req.with_tools(tools.clone());
-        }
+    for _round in 0..MAX_TOOL_ROUNDS {
+        // Build this round's request from the (possibly extended) history,
+        // with the stable tool set.
+        let chat_req = build_round_request(&system_prompt, &chat_messages, &tools);
 
         let mut stream = match client.exec_chat_stream(model.clone(), chat_req, None).await {
             Ok(res) => res.stream,
