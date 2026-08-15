@@ -5,11 +5,16 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::app::ThinkingEffort;
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
     pub ollama_host: Option<String>,
     pub system_prompt: Option<String>,
     pub default_model: Option<ModelConfig>,
+    /// Default thinking effort used for new conversations.
+    #[serde(default, alias = "default_thinking_effort")]
+    pub default_thinking_level: Option<ThinkingEffort>,
     /// MCP (Model Context Protocol) server configuration.
     #[serde(default)]
     pub mcp: McpConfig,
@@ -108,12 +113,10 @@ impl McpServerConfig {
             (Some(_), None) => Ok(McpTransportKind::Stdio),
             (None, Some(_)) => Ok(McpTransportKind::Http),
             (Some(_), Some(_)) => Err(
-                "server config has both `command` (stdio) and `url` (http); pick one"
-                    .to_string(),
+                "server config has both `command` (stdio) and `url` (http); pick one".to_string(),
             ),
             (None, None) => Err(
-                "server config has neither `command` (stdio) nor `url` (http); set one"
-                    .to_string(),
+                "server config has neither `command` (stdio) nor `url` (http); set one".to_string(),
             ),
         }
     }
@@ -246,9 +249,9 @@ pub fn expand_env(input: &str) -> Result<String> {
                 Some(v) => v,
                 None => match default {
                     Some(d) => d.to_string(),
-                    None => bail!(
-                        "environment variable `{name}` is not set (referenced in `{input}`)"
-                    ),
+                    None => {
+                        bail!("environment variable `{name}` is not set (referenced in `{input}`)")
+                    }
                 },
             };
             out.push_str(&value);
@@ -321,7 +324,10 @@ headers = { "X-Custom" = "value" }
         assert!(weather.enabled);
         assert_eq!(weather.display_name("weather"), "weather");
         assert_eq!(weather.api_key.as_deref(), Some("secret"));
-        assert_eq!(weather.headers.get("X-Custom").map(|s| s.as_str()), Some("value"));
+        assert_eq!(
+            weather.headers.get("X-Custom").map(|s| s.as_str()),
+            Some("value")
+        );
     }
 
     #[test]
@@ -359,6 +365,18 @@ name = "Bad"
     }
 
     #[test]
+    fn parses_default_thinking_level() {
+        let config: Config = toml::from_str(r#"default_thinking_level = "high""#).unwrap();
+        assert_eq!(config.default_thinking_level, Some(ThinkingEffort::High));
+    }
+
+    #[test]
+    fn parses_legacy_default_thinking_effort_alias() {
+        let config: Config = toml::from_str(r#"default_thinking_effort = "low""#).unwrap();
+        assert_eq!(config.default_thinking_level, Some(ThinkingEffort::Low));
+    }
+
+    #[test]
     fn no_mcp_section_is_fine() {
         let toml = r#"system_prompt = "hi""#;
         let config: Config = toml::from_str(toml).unwrap();
@@ -382,7 +400,10 @@ name = "Bad"
     fn expand_braces() {
         set_env("AIT_TEST_KEY", "secret-value");
         assert_eq!(expand_env("${AIT_TEST_KEY}").unwrap(), "secret-value");
-        assert_eq!(expand_env("key=${AIT_TEST_KEY}").unwrap(), "key=secret-value");
+        assert_eq!(
+            expand_env("key=${AIT_TEST_KEY}").unwrap(),
+            "key=secret-value"
+        );
     }
 
     #[test]
@@ -425,7 +446,10 @@ name = "Bad"
         set_env("AIT_TEST_NOT_EXPANDED", "should-not-appear");
         assert_eq!(expand_env("$$").unwrap(), "$");
         assert_eq!(expand_env("price: $$5").unwrap(), "price: $5");
-        assert_eq!(expand_env("$${AIT_TEST_NOT_EXPANDED}").unwrap(), "${AIT_TEST_NOT_EXPANDED}");
+        assert_eq!(
+            expand_env("$${AIT_TEST_NOT_EXPANDED}").unwrap(),
+            "${AIT_TEST_NOT_EXPANDED}"
+        );
     }
 
     #[test]
@@ -496,6 +520,9 @@ name = "Bad"
         assert_eq!(cfg.env.get("K").map(|s| s.as_str()), Some("envval"));
         assert_eq!(cfg.url.as_deref(), Some("https://example.com/mcp"));
         assert_eq!(cfg.api_key.as_deref(), Some("apikey"));
-        assert_eq!(cfg.headers.get("X-Custom").map(|s| s.as_str()), Some("hdrval"));
+        assert_eq!(
+            cfg.headers.get("X-Custom").map(|s| s.as_str()),
+            Some("hdrval")
+        );
     }
 }

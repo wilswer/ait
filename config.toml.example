@@ -20,6 +20,12 @@ system_prompt = "You are a helpful, friendly assistant."
 # Default: {name = "gemini-3.1-pro-preview", provider = "Gemini"}
 default_model = {name = "gemini-3.1-pro-preview", provider = "Gemini"}
 
+# Default thinking level for new conversations.
+# Valid values: none, low, medium, high, xhigh, max.
+# Can be changed in-app from the thinking level selector.
+# Default: medium
+default_thinking_level = "medium"
+
 # ──────────────────────────────────────────────────────────────────────────
 # MCP (Model Context Protocol) servers
 # ──────────────────────────────────────────────────────────────────────────

@@ -399,7 +399,8 @@ pub type AppResult<T> = Result<T>;
 
 pub const THINKING_EFFORTS: [&str; 6] = ["None", "Low", "Medium", "High", "XHigh", "Max"];
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThinkingEffort {
     None,
     Low,
@@ -644,7 +645,11 @@ impl Default for App<'_> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(system_prompt: &'a str, default_model: ModelConfig) -> Self {
+    pub fn new(
+        system_prompt: &'a str,
+        default_model: ModelConfig,
+        default_thinking_effort: ThinkingEffort,
+    ) -> Self {
         let model_list = ModelList::from_iter(MODELS.map(|(provider, name)| {
             if name == default_model.name {
                 (provider, name, true)
@@ -659,6 +664,7 @@ impl<'a> App<'a> {
                 default_model.provider.as_str(),
             ),
             model_list,
+            thinking_effort: default_thinking_effort,
             ..Default::default()
         }
     }
