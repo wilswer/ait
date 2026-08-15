@@ -58,9 +58,7 @@ pub fn handle_key_events(
                 let _ = app.scroll_to_bottom();
             }
             KeyCode::Char('r') => {
-                if modifiers.contains(KeyModifiers::CONTROL)
-                    && !app.current_has_stream()
-                {
+                if modifiers.contains(KeyModifiers::CONTROL) && !app.current_has_stream() {
                     app.redo_last_message()?;
                     app.set_app_mode(AppMode::Editing);
                 } else if app.last_recache.elapsed() >= Duration::from_millis(RECACHE_COOLDOWN)

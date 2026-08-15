@@ -19,7 +19,9 @@
 //! text content.
 
 use genai::chat::{Tool, ToolCall, ToolName, ToolResponse};
-use rmcp::model::{CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Tool as McpTool};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Tool as McpTool,
+};
 use rmcp::service::{Peer, RoleClient, Service, ServiceError};
 use serde_json::Value;
 
@@ -215,14 +217,10 @@ pub fn call_tool_result_to_content(result: &CallToolResult) -> String {
     if let Some(structured) = &result.structured_content {
         // Try to extract a "content" string field — many servers wrap the
         // displayable text inside `{"content": "..."}`.
-        if let Some(text) = structured
-            .get("content")
-            .and_then(|v| v.as_str())
-        {
+        if let Some(text) = structured.get("content").and_then(|v| v.as_str()) {
             return text.to_string();
         }
-        return serde_json::to_string_pretty(structured)
-            .unwrap_or_else(|_| structured.to_string());
+        return serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string());
     }
 
     // 3. Walk non-text content blocks for anything useful.
@@ -305,11 +303,14 @@ mod tests {
             Some("Get the weather for a city.")
         );
         let schema = genai_tool.schema.expect("schema should be set");
-        assert_eq!(schema, json!({
-            "type": "object",
-            "properties": { "city": { "type": "string" } },
-            "required": ["city"],
-        }));
+        assert_eq!(
+            schema,
+            json!({
+                "type": "object",
+                "properties": { "city": { "type": "string" } },
+                "required": ["city"],
+            })
+        );
         // MCP has no notion of strict / config.
         assert!(genai_tool.strict.is_none());
         assert!(genai_tool.config.is_none());
@@ -412,7 +413,7 @@ mod tests {
         // Some servers put JSON as the text content block. If it has a
         // "content" string field, extract it.
         let result = CallToolResult::success(vec![ContentBlock::text(
-            r#"{"content": "```diff\n- removed\n+ added\n```"}"#
+            r#"{"content": "```diff\n- removed\n+ added\n```"}"#,
         )]);
 
         let content = call_tool_result_to_content(&result);

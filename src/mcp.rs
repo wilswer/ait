@@ -50,9 +50,17 @@ pub enum McpServerStatus {
     /// Config says `enabled = true` but the connection hasn't resolved yet.
     Connecting { id: String, display_name: String },
     /// Connected; exposes `tool_count` tools.
-    Ready { id: String, display_name: String, tool_count: usize },
+    Ready {
+        id: String,
+        display_name: String,
+        tool_count: usize,
+    },
     /// Connection attempt failed (`error` is a short, display-safe string).
-    Failed { id: String, display_name: String, error: String },
+    Failed {
+        id: String,
+        display_name: String,
+        error: String,
+    },
 }
 
 impl McpServerStatus {
@@ -174,7 +182,10 @@ pub async fn connect_all_streaming(
                 Ok(conn) => McpServerOutcome::Ready(Box::new(conn)),
                 Err(e) => {
                     warn!(mcp.server = %id, error = %e, "failed to connect MCP server");
-                    McpServerOutcome::Failed { id, error: e.to_string() }
+                    McpServerOutcome::Failed {
+                        id,
+                        error: e.to_string(),
+                    }
                 }
             }
         }));

@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio::task;
 
 use ait::ai::{get_models, run_assistant_stream};
-use ait::app::{Action, App, AppMode, AppResult, Message, Notification, SpawnArgs};
+use ait::app::{Action, App, AppMode, AppResult, Message, Notification, SpawnArgs, ThinkingEffort};
 use ait::cli::Cli;
 use ait::config::{Config, ModelConfig};
 use ait::event::{Event, EventHandler};
@@ -16,11 +16,7 @@ use ait::storage::{create_db, migrate_db};
 use ait::tui::Tui;
 
 /// Handle a single terminal event (key/mouse/tick/resize).
-fn handle_event(
-    event: Event,
-    app: &mut App,
-    action_tx: &mpsc::Sender<Action>,
-) -> AppResult<()> {
+fn handle_event(event: Event, app: &mut App, action_tx: &mpsc::Sender<Action>) -> AppResult<()> {
     match event {
         Event::Tick => app.tick(),
         Event::Key(key_event) => {
@@ -58,7 +54,8 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
             conversation_id,
             content,
         } => {
-            app.receive_incomplete_message(conversation_id, &content).await?;
+            app.receive_incomplete_message(conversation_id, &content)
+                .await?;
         }
         Action::StreamComplete {
             conversation_id,
@@ -165,6 +162,10 @@ Context:
             .unwrap_or_else(|| "You are a helpful, friendly assistant.".to_string())
     };
 
+    let default_thinking_level = config
+        .default_thinking_level
+        .unwrap_or(ThinkingEffort::Medium);
+
     // Resolve default model: Config > Default
     let default_model = config.default_model.unwrap_or_else(|| {
         ModelConfig::new("gemini-3.1-pro-preview".to_string(), "Gemini".to_string())
@@ -184,7 +185,7 @@ Context:
     // simply disabled and the app continues.
     let _log_guard = ait::logger::init_logging();
 
-    let mut app = App::new(&system_prompt, default_model);
+    let mut app = App::new(&system_prompt, default_model, default_thinking_level);
 
     // Seed MCP status (one `Connecting` entry per enabled server) so the
     // footer shows "connecting" immediately, before any server resolves.
@@ -202,8 +203,7 @@ Context:
     // the footer and the tool bridge list. A clone of the config is kept for
     // on-demand reconnects when the user re-enables a server.
     let mcp_config = config.mcp.clone();
-    let (mcp_tx, mut mcp_rx) =
-        mpsc::channel::<ait::mcp::McpServerOutcome>(16);
+    let (mcp_tx, mut mcp_rx) = mpsc::channel::<ait::mcp::McpServerOutcome>(16);
     let mcp_enable_tx = mcp_tx.clone();
     let mcp_config_for_connect = mcp_config.clone();
     task::spawn(async move {
@@ -384,8 +384,7 @@ Context:
             // Snapshot the currently-connected MCP bridges so the spawned
             // task can resolve and execute tools. `McpToolBridge` is cheap to
             // clone (it holds a channel handle to the running service).
-            let mcp_bridges: Vec<mcp_genai_glue::McpToolBridge> =
-                app.mcp_bridges.clone();
+            let mcp_bridges: Vec<mcp_genai_glue::McpToolBridge> = app.mcp_bridges.clone();
 
             // Spawn ONE task per conversation that drives the full streaming
             // + MCP tool-calling loop, reporting progress via `tx`.

@@ -1577,7 +1577,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Up/Down".bold(),
                 " to navigate the server list, ".into(),
                 "Space".bold(),
-                " to toggle a server's enabled state (connecting/disconnecting it), or press ".into(),
+                " to toggle a server's enabled state (connecting/disconnecting it), or press "
+                    .into(),
                 "Esc/q/S".bold(),
                 " to return to 'normal' mode.".into(),
             ];
@@ -2211,8 +2212,10 @@ fn render_server_management(f: &mut Frame, area: Rect, app: &mut App) {
 
     if app.mcp_statuses.is_empty() {
         let p = Paragraph::new(
-            Text::from("No MCP servers configured. Add servers under [mcp.servers] in config.toml.")
-                .yellow(),
+            Text::from(
+                "No MCP servers configured. Add servers under [mcp.servers] in config.toml.",
+            )
+            .yellow(),
         )
         .wrap(Wrap { trim: true })
         .block(block);
@@ -2230,28 +2233,33 @@ fn render_server_management(f: &mut Frame, area: Rect, app: &mut App) {
 
             // Status glyph + label + detail.
             let (glyph, color, detail) = match s {
-                McpServerStatus::Ready { tool_count, .. } => (
-                    "✓",
-                    Color::Green,
-                    format!("{tool_count} tools"),
-                ),
-                McpServerStatus::Connecting { .. } => ("…", Color::Yellow, "connecting".to_string()),
+                McpServerStatus::Ready { tool_count, .. } => {
+                    ("✓", Color::Green, format!("{tool_count} tools"))
+                }
+                McpServerStatus::Connecting { .. } => {
+                    ("…", Color::Yellow, "connecting".to_string())
+                }
                 McpServerStatus::Failed { error, .. } => {
                     // Truncate long errors to keep the row readable.
                     let short: String = error.chars().take(60).collect();
                     ("✗", Color::Red, format!("failed: {short}"))
                 }
-                McpServerStatus::Disabled { .. } => {
-                    ("○", Color::DarkGray, "disabled".to_string())
-                }
+                McpServerStatus::Disabled { .. } => ("○", Color::DarkGray, "disabled".to_string()),
             };
 
             let on_off = if enabled { "on" } else { "off" };
-            let on_off_color = if enabled { Color::Green } else { Color::DarkGray };
+            let on_off_color = if enabled {
+                Color::Green
+            } else {
+                Color::DarkGray
+            };
 
             let line = Line::from(vec![
                 Span::styled(format!("{glyph} "), Style::default().fg(color)),
-                Span::styled(display.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    display.to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  ["),
                 Span::styled(on_off, Style::default().fg(on_off_color)),
                 Span::raw("]  "),

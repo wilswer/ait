@@ -97,11 +97,8 @@ pub fn migrate_db() -> AppResult<()> {
         .context("Failed to check for model column")?
         > 0;
     if !model_col_exists {
-        conn.execute(
-            "ALTER TABLE Messages ADD COLUMN model TEXT",
-            [],
-        )
-        .context("Failed to add model column to Messages")?;
+        conn.execute("ALTER TABLE Messages ADD COLUMN model TEXT", [])
+            .context("Failed to add model column to Messages")?;
     }
 
     let provider_col_exists: bool = conn
@@ -113,11 +110,8 @@ pub fn migrate_db() -> AppResult<()> {
         .context("Failed to check for provider column")?
         > 0;
     if !provider_col_exists {
-        conn.execute(
-            "ALTER TABLE Messages ADD COLUMN provider TEXT",
-            [],
-        )
-        .context("Failed to add provider column to Messages")?;
+        conn.execute("ALTER TABLE Messages ADD COLUMN provider TEXT", [])
+            .context("Failed to add provider column to Messages")?;
     }
 
     // Add `raw_json` column to store serialized structured ChatMessages for
@@ -132,11 +126,8 @@ pub fn migrate_db() -> AppResult<()> {
         .context("Failed to check for raw_json column")?
         > 0;
     if !raw_json_col_exists {
-        conn.execute(
-            "ALTER TABLE Messages ADD COLUMN raw_json TEXT",
-            [],
-        )
-        .context("Failed to add raw_json column to Messages")?;
+        conn.execute("ALTER TABLE Messages ADD COLUMN raw_json TEXT", [])
+            .context("Failed to add raw_json column to Messages")?;
     }
 
     Ok(())
