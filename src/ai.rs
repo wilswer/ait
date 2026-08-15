@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use futures::StreamExt;
 use genai::adapter::AdapterKind;
 use genai::chat::{
-    CacheControl, ChatMessage, ChatOptions, ChatRequest, ChatRole, ChatStream,
-    ChatStreamEvent, ReasoningEffort, StreamChunk, StreamEnd, Tool, ToolCall, ToolResponse,
+    CacheControl, ChatMessage, ChatOptions, ChatRequest, ChatRole, ChatStream, ChatStreamEvent,
+    ReasoningEffort, StreamChunk, StreamEnd, Tool, ToolCall, ToolResponse,
 };
 use genai::resolver::{AuthData, Endpoint, ProviderConfig, ServiceTargetResolver};
 use genai::{ClientBuilder, ClientConfig, ModelIden, ModelSpec, ServiceTarget};
@@ -284,7 +284,7 @@ fn build_round_request(
 /// ```
 ///
 /// This function removes everything between `<think>` and `</think>` (inclusive
-/// of the tags) and any stray `> `/`< ` tool-note lines, keeping only the
+/// of the tags) and any stray `> `/`> **TOOL OUTPUT**:\n` tool-note lines, keeping only the
 /// assistant text portions.
 fn strip_display_decorations(text: &str) -> String {
     let mut result = String::new();
@@ -303,7 +303,7 @@ fn strip_display_decorations(text: &str) -> String {
             continue;
         }
         // Defensive: skip any leftover tool-call/result annotations.
-        if trimmed.starts_with("> ") || trimmed.starts_with("< ") {
+        if trimmed.starts_with("> ") || trimmed.starts_with("> **TOOL OUTPUT**:\n") {
             continue;
         }
         if !result.is_empty() {
@@ -457,9 +457,7 @@ pub async fn run_assistant_stream(
     for m in messages {
         match m {
             Message::User(m) => chat_messages.push(ChatMessage::user(m.clone())),
-            Message::Assistant(_, _, _, Some(raw)) => {
-                chat_messages.extend(raw.iter().cloned())
-            }
+            Message::Assistant(_, _, _, Some(raw)) => chat_messages.extend(raw.iter().cloned()),
             // Legacy: strip display decorations and build a plain assistant
             // message so ` thinking` blocks and tool notes don't pollute the input.
             Message::Assistant(text, _, _, None) => {
@@ -469,12 +467,10 @@ pub async fn run_assistant_stream(
     }
 
     let clientbuilder = match &model {
-        ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::Ollama => {
-            init_clientbuilder(
-                ollama_host_url.as_deref(),
-                base_chat_opts(thinking_effort, conversation_id),
-            )
-        }
+        ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::Ollama => init_clientbuilder(
+            ollama_host_url.as_deref(),
+            base_chat_opts(thinking_effort, conversation_id),
+        ),
         _ => init_clientbuilder(None, base_chat_opts(thinking_effort, conversation_id)),
     };
     let client = clientbuilder.build();
@@ -815,12 +811,14 @@ fn log_usage(end: &StreamEnd) {
             .as_ref()
             .and_then(|d| d.cache_creation_tokens)
             .unwrap_or(0);
+        let cache_hit = cached as f64 / prompt as f64;
         tracing::info!(
             prompt_tokens = prompt,
             completion_tokens = completion,
             total_tokens = total,
             cached_tokens = cached,
             cache_creation_tokens = cache_creation,
+            cache_hit_ratio = cache_hit,
             "stream completed - token usage"
         );
     } else {
@@ -881,11 +879,11 @@ fn result_char_budget(name: &str) -> Option<usize> {
 }
 
 /// Format a (truncated) tool-result line for the thinking trace, e.g.
-/// `< 18C, partly cloudy`. Long results are truncated to `max_chars` so the
+/// `> **TOOL OUTPUT**:\n18C, partly cloudy`. Long results are truncated to `max_chars` so the
 /// bubble stays readable; the full result is still sent to the model.
 fn format_tool_result_line(content: &str, max_chars: Option<usize>) -> String {
     let trimmed = content.trim();
-    let mut out = String::from("< ");
+    let mut out = String::from("> **TOOL OUTPUT**:\n");
     let char_count = trimmed.chars().count();
     if let Some(max_char_count) = max_chars
         && char_count > max_char_count
@@ -1028,23 +1026,23 @@ mod tests {
     #[test]
     fn format_tool_result_short() {
         let line = format_tool_result_line("18°C, partly cloudy", Some(300));
-        assert_eq!(line, "< 18°C, partly cloudy");
+        assert_eq!(line, "> **TOOL OUTPUT**:\n18°C, partly cloudy");
     }
 
     #[test]
     fn format_tool_result_truncates_long() {
         let long = "x".repeat(500);
         let line = format_tool_result_line(&long, Some(300));
-        assert!(line.starts_with("< "));
+        assert!(line.starts_with("> **TOOL OUTPUT**:\n"));
         assert!(line.ends_with('…'));
-        // 300 chars of content + "< " (2) + "…" (1)
-        assert_eq!(line.chars().count(), 300 + 3);
+        // 300 chars of content + "> **TOOL OUTPUT**:\n" (19) + "…" (1)
+        assert_eq!(line.chars().count(), 300 + 20);
     }
 
     #[test]
     fn format_tool_result_trims_whitespace() {
         let line = format_tool_result_line("  \n  hello  \n", Some(300));
-        assert_eq!(line, "< hello");
+        assert_eq!(line, "> **TOOL OUTPUT**:\nhello");
     }
 
     #[test]
@@ -1052,7 +1050,7 @@ mod tests {
         let s = "é".repeat(350); // each é is 2 bytes but 1 char
         let line = format_tool_result_line(&s, Some(300));
         // Should not panic on char boundary; truncated to 300 chars + ellipsis.
-        assert_eq!(line.chars().count(), 300 + 3);
+        assert_eq!(line.chars().count(), 300 + 20);
     }
 
     // --- per-round combined() ---
@@ -1098,22 +1096,22 @@ mod tests {
         // Round 1: reasoning + tool call (no text)
         h.push_reasoning("let me check the weather.");
         h.push_tool_note("> calling `get_weather`");
-        h.push_tool_note("< 18C");
+        h.push_tool_note("> **TOOL OUTPUT**:\n18C");
         h.end_round();
         // Round 2: reasoning + tool call + text response
         h.push_reasoning("now check the time.");
         h.push_tool_note("> calling `search`");
-        h.push_tool_note("< 14:00");
+        h.push_tool_note("> **TOOL OUTPUT**:\n14:00");
         h.push_text("the time is 14:00.");
         let out = h.combined();
         let expected = concat!(
             "<think>\n",
             "let me check the weather.\n",
-            "> calling `get_weather`\n< 18C\n",
+            "> calling `get_weather`\n> **TOOL OUTPUT**:\n18C\n",
             "</think>\n\n",
             "<think>\n",
             "now check the time.\n",
-            "> calling `search`\n< 14:00\n",
+            "> calling `search`\n> **TOOL OUTPUT**:\n14:00\n",
             "</think>\n",
             "the time is 14:00.",
         );
@@ -1270,7 +1268,7 @@ mod tests {
             "<think>\n",
             "let me check the weather.\n",
             "> calling `get_weather`\n",
-            "< 18C\n",
+            "> **TOOL OUTPUT**:\n18C\n",
             "</think>\n",
             "It is 18C outside.",
         );
@@ -1283,7 +1281,7 @@ mod tests {
             "<think>\n",
             "reasoning round 1\n",
             "> calling `search`\n",
-            "< result\n",
+            "> **TOOL OUTPUT**:\nresult\n",
             "</think>\n\n",
             "<think>\n",
             "reasoning round 2\n",
@@ -1308,7 +1306,7 @@ mod tests {
         let mut h = StreamHelper::new();
         h.push_reasoning("Let me think...");
         h.push_tool_note("> calling `get_weather`");
-        h.push_tool_note("< 18C");
+        h.push_tool_note("> **TOOL OUTPUT**:\n18C");
         h.end_round();
         h.push_text("It is 18C outside.");
         let combined = h.combined();
