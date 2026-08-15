@@ -113,42 +113,6 @@ pub async fn get_models(ollama_host_url: Option<&str>) -> AppResult<Vec<(String,
     Ok(models)
 }
 
-pub async fn assistant_response(
-    messages: &[Message],
-    model: &str,
-    system_prompt: Option<String>,
-    ollama_host_url: Option<&str>,
-) -> AppResult<Message> {
-    let chat_messages = messages
-        .iter()
-        .map(|m| match m {
-            Message::User(m) => ChatMessage::user(m.clone()),
-            Message::Assistant(m, _, _, _) => ChatMessage::assistant(m.clone()),
-        })
-        .collect::<Vec<ChatMessage>>();
-    let mut chat_req = if let Some(system_prompt) = system_prompt {
-        ChatRequest::new(vec![ChatMessage::system(system_prompt)])
-    } else {
-        ChatRequest::new(vec![])
-    };
-
-    for chat_message in chat_messages {
-        chat_req = chat_req.append_message(chat_message);
-    }
-    let client = init_clientbuilder(ollama_host_url, ChatOptions::default()).build();
-    match client.exec_chat(model, chat_req, None).await {
-        Ok(res) => {
-            let chat_res = if let Some(m) = res.into_first_text() {
-                Message::Assistant(m, None, None, None)
-            } else {
-                Message::Assistant("NO RESPONSE".to_string(), None, None, None)
-            };
-            Ok(chat_res)
-        }
-        Err(e) => Err(e.into()),
-    }
-}
-
 pub async fn assistant_response_streaming(
     messages: &[Message],
     model: ModelSpec,
