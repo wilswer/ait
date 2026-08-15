@@ -137,7 +137,15 @@ pub async fn assistant_response_streaming(
         chat_req = chat_req.append_message(chat_message);
     }
 
-    let base_chat_opts = ChatOptions::default().with_cache_control(CacheControl::Ephemeral);
+    let base_chat_opts = match &model {
+        ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::OpenAI => {
+            ChatOptions::default().with_cache_control(CacheControl::Ephemeral24h)
+        }
+        ModelSpec::Name(name) if name.starts_with("gpt") => {
+            ChatOptions::default().with_cache_control(CacheControl::Ephemeral24h)
+        }
+        _ => ChatOptions::default().with_cache_control(CacheControl::Ephemeral),
+    };
 
     let chat_opts = match thinking_effort {
         ThinkingEffort::None => base_chat_opts.with_reasoning_effort(ReasoningEffort::None),
@@ -176,9 +184,21 @@ const MAX_TOOL_ROUNDS: usize = 12;
 ///   automatic prefix cache stays on the same shard across requests/turns.
 ///   genai ignores this on non-OpenAI adapters, so setting it unconditionally
 ///   is safe.
-fn base_chat_opts(thinking_effort: ThinkingEffort, conversation_id: i64) -> ChatOptions {
-    let base = ChatOptions::default()
-        .with_cache_control(CacheControl::Ephemeral)
+fn base_chat_opts(
+    model: &ModelSpec,
+    thinking_effort: ThinkingEffort,
+    conversation_id: i64,
+) -> ChatOptions {
+    let mut base = match &model {
+        ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::OpenAI => {
+            ChatOptions::default().with_cache_control(CacheControl::Ephemeral24h)
+        }
+        ModelSpec::Name(name) if name.starts_with("gpt") => {
+            ChatOptions::default().with_cache_control(CacheControl::Ephemeral24h)
+        }
+        _ => ChatOptions::default().with_cache_control(CacheControl::Ephemeral),
+    };
+    base = base
         .with_prompt_cache_key(format!("ait-conv-{conversation_id}"))
         .with_capture_content(true)
         .with_capture_reasoning_content(true)
@@ -433,9 +453,12 @@ pub async fn run_assistant_stream(
     let clientbuilder = match &model {
         ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::Ollama => init_clientbuilder(
             ollama_host_url.as_deref(),
-            base_chat_opts(thinking_effort, conversation_id),
+            base_chat_opts(&model, thinking_effort, conversation_id),
         ),
-        _ => init_clientbuilder(None, base_chat_opts(thinking_effort, conversation_id)),
+        _ => init_clientbuilder(
+            None,
+            base_chat_opts(&model, thinking_effort, conversation_id),
+        ),
     };
     let client = clientbuilder.build();
 
