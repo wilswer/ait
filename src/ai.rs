@@ -490,6 +490,11 @@ pub async fn run_assistant_stream(
     // up on the next user turn.
     let (mut tools, tool_map) = resolve_tools(&mcp_bridges).await;
     tools.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
+    let tool_names = tools
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect::<Vec<String>>();
+    tracing::info!("Available tools {:?}", tool_names);
 
     // Structured messages collected during this assistant turn for
     // cache-friendly history replay on subsequent turns.
