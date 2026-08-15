@@ -707,11 +707,7 @@ impl<'a> App<'a> {
     ///
     /// `tool_count` is computed by the caller (it requires an async query);
     /// we keep this method sync since `App` methods run on the sync UI loop.
-    pub fn mcp_server_ready(
-        &mut self,
-        conn: crate::mcp::McpConnection,
-        tool_count: usize,
-    ) {
+    pub fn mcp_server_ready(&mut self, conn: crate::mcp::McpConnection, tool_count: usize) {
         let id = conn.id.clone();
         let display_name = conn.display_name.clone();
         tracing::info!(mcp.server = %id, tools = tool_count, "MCP server ready");
@@ -995,15 +991,10 @@ impl<'a> App<'a> {
         };
 
         // Format the streaming message (borrows theme + syntax_set immutably).
-        let formatted = style_message(
-            message,
-            line_width,
-            self.theme.clone(),
-            &self.syntax_set,
-        );
+        let formatted = style_message(message, line_width, self.theme.clone(), &self.syntax_set);
 
         // Store the result in the stream state (mutable borrow).
-        let updated = if let Some(state) = self.streams.get_mut(&conv_id) {
+        if let Some(state) = self.streams.get_mut(&conv_id) {
             state.format_cache.formatted_lines = formatted;
             state.format_cache.last_text = state.partial.clone();
             state.format_cache.dirty = false;
@@ -1011,9 +1002,7 @@ impl<'a> App<'a> {
             true
         } else {
             false
-        };
-
-        updated
+        }
     }
 
     fn write_chat_log(&self) -> AppResult<()> {
@@ -1078,7 +1067,8 @@ impl<'a> App<'a> {
         let total_lines = if self.is_view_streaming() {
             if self.do_highlight {
                 // cached_lines for completed messages + streaming format cache
-                let stream_lines = self.conversation_id
+                let stream_lines = self
+                    .conversation_id
                     .and_then(|id| self.streams.get(&id))
                     .map(|s| s.format_cache.formatted_lines.len())
                     .unwrap_or(0);
@@ -1747,8 +1737,12 @@ impl<'a> App<'a> {
                 && !state.partial.is_empty()
             {
                 let (model, provider) = model_provider_from_spec(&state.selected_model);
-                self.messages
-                    .push(Message::Assistant(state.partial.clone(), model, provider, None));
+                self.messages.push(Message::Assistant(
+                    state.partial.clone(),
+                    model,
+                    provider,
+                    None,
+                ));
             }
 
             // Automatically select the model that produced the latest
@@ -1902,16 +1896,26 @@ mod tests {
         // Messages from a conversation that used different models.
         app.messages = vec![
             Message::User(vec![]),
-            Message::Assistant("hello".into(), Some("gpt-4o".into()), Some("OpenAI".into()), None),
+            Message::Assistant(
+                "hello".into(),
+                Some("gpt-4o".into()),
+                Some("OpenAI".into()),
+                None,
+            ),
             Message::User(vec![]),
-            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into()), None),
+            Message::Assistant(
+                "hi".into(),
+                Some("claude-sonnet-4-20250514".into()),
+                Some("Anthropic".into()),
+                None,
+            ),
         ];
 
         app.sync_model_from_messages();
 
         // The last assistant message used Claude — that should be selected.
         assert_eq!(app.model_list.items[0].selected, false); // gpt-4o
-        assert_eq!(app.model_list.items[1].selected, true);  // claude
+        assert_eq!(app.model_list.items[1].selected, true); // claude
         assert_eq!(app.model_list.items[2].selected, false); // gemini
         let (name, provider) = model_provider_from_spec(&app.selected_model);
         assert_eq!(name.as_deref(), Some("claude-sonnet-4-20250514"));
@@ -1934,16 +1938,17 @@ mod tests {
 
     #[test]
     fn sync_model_missing_from_list_deselects_all() {
-        let mut app = app_with_models(&[
-            ("OpenAI", "gpt-4o"),
-            ("Gemini", "gemini-3.1-pro-preview"),
-        ]);
+        let mut app =
+            app_with_models(&[("OpenAI", "gpt-4o"), ("Gemini", "gemini-3.1-pro-preview")]);
         app.model_list.items[0].selected = true;
 
         // Last assistant response used a model that's not in the list.
-        app.messages = vec![
-            Message::Assistant("hi".into(), Some("claude-sonnet-4-20250514".into()), Some("Anthropic".into()), None),
-        ];
+        app.messages = vec![Message::Assistant(
+            "hi".into(),
+            Some("claude-sonnet-4-20250514".into()),
+            Some("Anthropic".into()),
+            None,
+        )];
 
         app.sync_model_from_messages();
 
