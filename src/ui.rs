@@ -274,8 +274,13 @@ fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'st
     // on `unicode-width`'s count, yet the terminal renders the tab wider,
     // pushing the right border off and eating padding.
     let text_owned: String;
-    let text: &str = if text.contains('\t') {
-        text_owned = text.replace('\t', "    ");
+    let text: &str = if text.contains('\t') || text.contains('\r') {
+        // Tool output can contain CRLF line endings. `str::lines()` removes
+        // the CR only when it is the line terminator; a stray CR (for
+        // example in a diff hunk) has zero width according to unicode-width
+        // but can move the terminal cursor back to column zero, overwriting
+        // the bubble border. Strip it before measuring/rendering.
+        text_owned = text.replace('\t', "    ").replace('\r', "");
         &text_owned
     } else {
         text
@@ -779,6 +784,7 @@ fn process_code_blocks<'a>(
                         Line::from(format!("{}```{}", " ".repeat(indent), &language))
                             .style(style.patch(Style::default().fg(Color::DarkGray))),
                     );
+                    let code = code.replace('\t', "    ").replace('\r', "");
                     let clines = if !language.is_empty() {
                         create_highlighted_code(
                             &code,
@@ -2447,6 +2453,20 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect();
         assert!(!rendered.contains('\t'), "tab character survived rendering");
+    }
+
+    #[test]
+    fn render_markdown_lines_strips_carriage_returns() {
+        let lines = render_markdown_lines("-old\r\n+new\r", 80, Style::default());
+        let rendered: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            !rendered.contains('\r'),
+            "carriage return survived rendering"
+        );
     }
 
     #[test]
