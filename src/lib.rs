@@ -36,6 +36,7 @@ pub mod cli;
 /// Configuration.
 pub mod config;
 
+pub mod observability;
 ///Chat conversations storage.
 pub mod storage;
 

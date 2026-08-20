@@ -13,6 +13,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::app::{Action, AppResult, Message, ThinkingEffort};
+use crate::observability::{PromptFingerprint, RequestObservation};
 
 pub const MODELS: [(&str, &str); 1] = [("Gemini", "gemini-3.1-pro-preview")];
 
@@ -438,6 +439,7 @@ pub async fn run_assistant_stream(
     // replay the exact ChatMessages the provider saw; otherwise we fall back
     // to the display text with decorations stripped.
     let mut chat_messages: Vec<ChatMessage> = Vec::new();
+    let mut legacy_message_count = 0;
     for m in messages {
         match m {
             Message::User(m) => chat_messages.push(ChatMessage::user(m.clone())),
@@ -445,6 +447,7 @@ pub async fn run_assistant_stream(
             // Legacy: strip display decorations and build a plain assistant
             // message so ` thinking` blocks and tool notes don't pollute the input.
             Message::Assistant(text, _, _, None) => {
+                legacy_message_count += 1;
                 chat_messages.push(ChatMessage::assistant(strip_display_decorations(text)))
             }
         }
@@ -486,15 +489,37 @@ pub async fn run_assistant_stream(
     // Structured messages collected during this assistant turn for
     // cache-friendly history replay on subsequent turns.
     let mut raw_messages: Vec<ChatMessage> = Vec::new();
+    let mut previous_fingerprint: Option<PromptFingerprint> = None;
+    let response_id = uuid::Uuid::new_v4().to_string();
 
-    for _round in 0..MAX_TOOL_ROUNDS {
+    for round in 0..MAX_TOOL_ROUNDS {
+        let fingerprint = PromptFingerprint::build(
+            &model,
+            &system_prompt,
+            &chat_messages,
+            &tools,
+            legacy_message_count,
+        );
+        let transition = fingerprint.transition_from(previous_fingerprint.as_ref());
+        let request_id = format!("{response_id}-{round}");
+        let mut observation = RequestObservation::start(
+            conversation_id,
+            request_id,
+            round,
+            fingerprint.clone(),
+            transition,
+        );
         // Build this round's request from the (possibly extended) history,
         // with the stable tool set.
         let chat_req = build_round_request(&system_prompt, &chat_messages, &tools);
 
         let mut stream = match client.exec_chat_stream(model.clone(), chat_req, None).await {
-            Ok(res) => res.stream,
+            Ok(res) => {
+                previous_fingerprint = Some(fingerprint);
+                res.stream
+            }
             Err(e) => {
+                observation.failed(&e);
                 let _ = action_tx
                     .send(Action::Error {
                         conversation_id: Some(conversation_id),
@@ -510,6 +535,7 @@ pub async fn run_assistant_stream(
         loop {
             tokio::select! {
                 _ = cancel_rx.recv() => {
+                    observation.cancelled();
                     let _ = action_tx
                         .send(Action::StreamCancelled {
                             conversation_id,
@@ -525,6 +551,7 @@ pub async fn run_assistant_stream(
                             ChatStreamEvent::ReasoningChunk(StreamChunk { content })
                                 if !content.is_empty() =>
                             {
+                                observation.mark_first_token();
                                 helper.push_reasoning(&content);
                                 let combined = helper.combined();
                                 let _ = action_tx
@@ -535,6 +562,7 @@ pub async fn run_assistant_stream(
                                     .await;
                             }
                             ChatStreamEvent::Chunk(StreamChunk { content }) if !content.is_empty() => {
+                                observation.mark_first_token();
                                 helper.push_text(&content);
                                 let combined = helper.combined();
                                 let _ = action_tx
@@ -545,7 +573,7 @@ pub async fn run_assistant_stream(
                                     .await;
                             }
                             ChatStreamEvent::End(end) => {
-                                log_usage(&end);
+                                observation.completed(&end);
                                 let tool_calls: Vec<ToolCall> = end
                                     .captured_tool_calls()
                                     .map(|c| c.into_iter().cloned().collect())
@@ -646,6 +674,7 @@ pub async fn run_assistant_stream(
                             _ => {}
                         },
                         Some(Err(e)) => {
+                            observation.failed(&e);
                             let _ = action_tx
                                 .send(Action::Error {
                                     conversation_id: Some(conversation_id),
@@ -655,6 +684,7 @@ pub async fn run_assistant_stream(
                             return Ok(());
                         }
                         None => {
+                            observation.ended_without_end_event();
                             // Stream ended without an explicit `End` event.
                             let _ = action_tx
                                 .send(Action::StreamComplete {
@@ -785,36 +815,6 @@ impl StreamHelper {
             blocks.push(block);
         }
         blocks.join("\n\n")
-    }
-}
-
-fn log_usage(end: &StreamEnd) {
-    if let Some(u) = &end.captured_usage {
-        let prompt = u.prompt_tokens.unwrap_or(0);
-        let completion = u.completion_tokens.unwrap_or(0);
-        let total = u.total_tokens.unwrap_or(0);
-        let cached = u
-            .prompt_tokens_details
-            .as_ref()
-            .and_then(|d| d.cached_tokens)
-            .unwrap_or(0);
-        let cache_creation = u
-            .prompt_tokens_details
-            .as_ref()
-            .and_then(|d| d.cache_creation_tokens)
-            .unwrap_or(0);
-        let cache_hit = cached as f64 / prompt as f64;
-        tracing::info!(
-            prompt_tokens = prompt,
-            completion_tokens = completion,
-            total_tokens = total,
-            cached_tokens = cached,
-            cache_creation_tokens = cache_creation,
-            cache_hit_ratio = cache_hit,
-            "stream completed - token usage"
-        );
-    } else {
-        tracing::info!("stream completed - no token usage returned");
     }
 }
 
