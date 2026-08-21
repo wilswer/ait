@@ -27,6 +27,20 @@ default_model = {name = "gemini-3.1-pro-preview", provider = "Gemini"}
 default_thinking_level = "medium"
 
 # ──────────────────────────────────────────────────────────────────────────
+# Typed Python tools
+# ──────────────────────────────────────────────────────────────────────────
+# Python sources are keyed by a stable id. They are loaded when enabled and
+# require `uv` to be installed.
+#
+# [python_tools.sources.weather]
+# script = "/home/alice/tools/weather.py"
+# name = "Weather"
+# enabled = true
+# project_dir = "/home/alice/tools" # optional; otherwise adjacent pyproject.toml
+# uv_command = "uv"
+# timeout_secs = 30
+
+# ──────────────────────────────────────────────────────────────────────────
 # MCP (Model Context Protocol) servers
 # ──────────────────────────────────────────────────────────────────────────
 # Define one sub-table per server under [mcp.servers]. The table key is the

@@ -18,7 +18,43 @@ pub struct Config {
     /// MCP (Model Context Protocol) server configuration.
     #[serde(default)]
     pub mcp: McpConfig,
+    /// Typed Python tool source configuration.
+    #[serde(default)]
+    pub python_tools: PythonToolsConfig,
 }
+
+/// Top-level Python tool configuration (`[python_tools]`).
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PythonToolsConfig {
+    /// Python sources keyed by stable id.
+    #[serde(default)]
+    pub sources: BTreeMap<String, PythonToolConfig>,
+}
+
+/// Configuration for a single typed Python tool source.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PythonToolConfig {
+    /// Python script to load.
+    pub script: PathBuf,
+    /// Optional human-readable display name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Whether the source is loaded at startup.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// Optional project directory override.
+    #[serde(default)]
+    pub project_dir: Option<PathBuf>,
+    /// Command used to invoke uv.
+    #[serde(default = "default_uv_command")]
+    pub uv_command: String,
+    /// Per-process timeout in seconds.
+    #[serde(default = "default_python_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_uv_command() -> String { "uv".to_string() }
+fn default_python_timeout_secs() -> u64 { 30 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ModelConfig {
@@ -377,10 +413,30 @@ name = "Bad"
     }
 
     #[test]
-    fn no_mcp_section_is_fine() {
+    fn no_mcp_or_python_section_is_fine() {
         let toml = r#"system_prompt = "hi""#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.mcp.servers.is_empty());
+        assert!(config.python_tools.sources.is_empty());
+    }
+
+    #[test]
+    fn parses_python_tool_config() {
+        let config: Config = toml::from_str(r#"
+[python_tools.sources.weather]
+script = "tools/weather.py"
+name = "Weather tools"
+enabled = false
+project_dir = "tools"
+timeout_secs = 12
+uv_command = "uv"
+"#).unwrap();
+        let source = &config.python_tools.sources["weather"];
+        assert_eq!(source.script, PathBuf::from("tools/weather.py"));
+        assert_eq!(source.name.as_deref(), Some("Weather tools"));
+        assert!(!source.enabled);
+        assert_eq!(source.timeout_secs, 12);
+        assert_eq!(source.project_dir, Some(PathBuf::from("tools")));
     }
 
     // --- expand_env ---

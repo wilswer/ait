@@ -9,7 +9,7 @@ use tokio::task;
 use ait::ai::{get_models, run_assistant_stream};
 use ait::app::{Action, App, AppMode, AppResult, Message, Notification, SpawnArgs, ThinkingEffort};
 use ait::cli::Cli;
-use ait::config::{Config, ModelConfig};
+use ait::config::{Config, ModelConfig, PythonToolConfig};
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
 use ait::python_tools::{PythonToolSource, validate_source_path};
@@ -17,7 +17,16 @@ use ait::storage::{create_db, migrate_db};
 use ait::tools::ToolRegistry;
 use ait::tui::Tui;
 
-/// Build an immutable registry snapshot for one assistant request.
+fn configured_python_source(id: &str, cfg: &PythonToolConfig) -> PythonToolSource {
+    let mut source = PythonToolSource::new(id.to_string(), cfg.script.clone());
+    source.display_name = cfg.name.clone().unwrap_or_else(|| id.to_string());
+    source.project_dir = cfg.project_dir.clone().or(source.project_dir);
+    source.timeout = std::time::Duration::from_secs(cfg.timeout_secs);
+    source.uv_command = cfg.uv_command.clone();
+    source
+}
+
+
 ///
 /// MCP schemas are fetched from live connections when a request begins. Python
 /// schemas were validated at startup and are cached in `App`, so this does not
@@ -236,12 +245,25 @@ Context:
 
     let mut app = App::new(&system_prompt, default_model, default_thinking_level);
 
+    // Load enabled Python sources declared in config. CLI sources are retained
+    // as an explicit override/addition for backwards compatibility.
+    for (id, cfg) in &config.python_tools.sources {
+        if !cfg.enabled {
+            continue;
+        }
+        validate_source_path(&cfg.script)
+            .with_context(|| format!("Invalid Python tool source `{}`", cfg.script.display()))?;
+        let source = configured_python_source(id, cfg);
+        let definitions = source.discover().await.map_err(|error| {
+            anyhow::anyhow!("Failed to load Python tools from `{}`: {error}", source.script.display())
+        })?;
+        app.python_tool_definitions.insert(source.id.clone(), definitions);
+        app.python_tool_sources.push(source);
+    }
     // Phase 1 Python tools are explicitly opt-in through repeated
     // `--python-tools <file>` arguments. Validate and discover them before
     // entering the alternate-screen TUI so failures remain terminal-safe.
     for (index, script) in cli.python_tools.iter().enumerate() {
-        validate_source_path(script)
-            .with_context(|| format!("Invalid Python tool source `{}`", script.display()))?;
 
         let mut source = PythonToolSource::new(format!("python-{}", index + 1), script.clone());
         source.display_name = script
