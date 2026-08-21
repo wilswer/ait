@@ -81,7 +81,45 @@ Or serialize all file in a directory and add as context:
 yek my_dir | ait
 ```
 
-## Chat history
+AIT can also load typed Python functions as local tools. `uv` must be installed and
+available on `PATH`:
+
+```bash
+ait --python-tools ./tools.py
+```
+
+The option may be repeated. A tool file contains public, module-level Python
+functions with complete parameter and return annotations plus a docstring:
+
+```python
+def word_count(text: str) -> int:
+    """Count words in text."""
+    return len(text.split())
+```
+
+Python dependencies are managed by `uv`. If `pyproject.toml` is placed directly
+beside the script, AIT uses that project and its declared dependencies, while
+also supplying Pydantic for schema generation. Without an adjacent project file,
+only the standard library and AIT's internal Pydantic dependency are available.
+Python files execute as trusted local code with the user's permissions; AIT does
+not sandbox them.
+
+Python sources can also be configured in the normal config file:
+
+```toml
+[python_tools.sources.weather]
+script = "/home/alice/tools/weather.py"
+name = "Weather"
+enabled = true
+# Optional overrides:
+# project_dir = "/home/alice/tools"
+# uv_command = "uv"
+# timeout_secs = 30
+```
+
+The adjacent project convention is used by default; `project_dir` overrides it.
+
+
 
 Chat history is stored as a `sqlite` database (facilitated by the
 [`rusqlite`](https://github.com/rusqlite/rusqlite) crate) in the platform's

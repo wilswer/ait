@@ -1,0 +1,6 @@
+[project]
+name = "ait-example-tools"
+version = "0.1.0"
+description = "Example typed Python tools for AIT"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.32"]
