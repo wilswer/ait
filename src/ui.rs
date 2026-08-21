@@ -1784,6 +1784,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
     }
 
+    // Python statuses and MCP statuses share the same management view.
+    if !app.python_tool_statuses.is_empty() {
+        let (ready, tools, loading) = app.python_tool_status_counts();
+        msg.push("   ".into());
+        msg.push(Span::styled(
+            "Python:",
+            Style::default().fg(Color::DarkGray),
+        ));
+        if ready > 0 {
+            msg.push(Span::styled(
+                format!(" {ready} ready ({tools} tools)"),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        if loading > 0 {
+            msg.push(Span::styled(
+                format!(" {loading} loading"),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+    }
+
     // MCP server status summary (only when at least one server is configured).
     if !app.mcp_statuses.is_empty() {
         let (ready, ready_tools, connecting, failed) = app.mcp_status_counts();
@@ -2215,66 +2237,78 @@ fn render_server_management(f: &mut Frame, area: Rect, app: &mut App) {
     use crate::mcp::McpServerStatus;
 
     let block = Block::new().padding(Padding::uniform(1));
+    let mut items: Vec<ListItem> = Vec::new();
 
-    if app.mcp_statuses.is_empty() {
-        let p = Paragraph::new(
-            Text::from(
-                "No MCP servers configured. Add servers under [mcp.servers] in config.toml.",
-            )
-            .yellow(),
-        )
-        .wrap(Wrap { trim: true })
-        .block(block);
-        f.render_widget(p, area);
-        return;
+    for s in &app.mcp_statuses {
+        let id = s.id();
+        let display = s.display_name();
+        let enabled = app.mcp_is_enabled(id);
+
+        // Status glyph + label + detail.
+        let (glyph, color, detail) = match s {
+            McpServerStatus::Ready { tool_count, .. } => {
+                ("✓", Color::Green, format!("{tool_count} tools"))
+            }
+            McpServerStatus::Connecting { .. } => ("…", Color::Yellow, "connecting".to_string()),
+            McpServerStatus::Failed { error, .. } => {
+                // Truncate long errors to keep the row readable.
+                let short: String = error.chars().take(60).collect();
+                ("✗", Color::Red, format!("failed: {short}"))
+            }
+            McpServerStatus::Disabled { .. } => ("○", Color::DarkGray, "disabled".to_string()),
+        };
+
+        let on_off = if enabled { "on" } else { "off" };
+        let on_off_color = if enabled {
+            Color::Green
+        } else {
+            Color::DarkGray
+        };
+
+        let line = Line::from(vec![
+            Span::styled(format!("{glyph} "), Style::default().fg(color)),
+            Span::styled(
+                display.to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  ["),
+            Span::styled(on_off, Style::default().fg(on_off_color)),
+            Span::raw("]  "),
+            Span::styled(detail, Style::default().fg(Color::DarkGray)),
+        ]);
+        items.push(ListItem::new(line));
     }
 
-    let items: Vec<ListItem> = app
-        .mcp_statuses
-        .iter()
-        .map(|s| {
-            let id = s.id();
-            let display = s.display_name();
-            let enabled = app.mcp_is_enabled(id);
+    for status in &app.python_tool_statuses {
+        let (glyph, color, detail) = match status {
+            crate::python_tools::PythonToolStatus::Loading { .. } => {
+                ("…", Color::Yellow, "loading".to_string())
+            }
+            crate::python_tools::PythonToolStatus::Ready { tool_count, .. } => {
+                ("✓", Color::Green, format!("{tool_count} tools"))
+            }
+            crate::python_tools::PythonToolStatus::Failed { error, .. } => (
+                "✗",
+                Color::Red,
+                format!("failed: {}", error.chars().take(60).collect::<String>()),
+            ),
+        };
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(format!("{glyph} "), Style::default().fg(color)),
+            Span::styled(
+                status.display_name().to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  [python]  "),
+            Span::styled(detail, Style::default().fg(Color::DarkGray)),
+        ])));
+    }
 
-            // Status glyph + label + detail.
-            let (glyph, color, detail) = match s {
-                McpServerStatus::Ready { tool_count, .. } => {
-                    ("✓", Color::Green, format!("{tool_count} tools"))
-                }
-                McpServerStatus::Connecting { .. } => {
-                    ("…", Color::Yellow, "connecting".to_string())
-                }
-                McpServerStatus::Failed { error, .. } => {
-                    // Truncate long errors to keep the row readable.
-                    let short: String = error.chars().take(60).collect();
-                    ("✗", Color::Red, format!("failed: {short}"))
-                }
-                McpServerStatus::Disabled { .. } => ("○", Color::DarkGray, "disabled".to_string()),
-            };
-
-            let on_off = if enabled { "on" } else { "off" };
-            let on_off_color = if enabled {
-                Color::Green
-            } else {
-                Color::DarkGray
-            };
-
-            let line = Line::from(vec![
-                Span::styled(format!("{glyph} "), Style::default().fg(color)),
-                Span::styled(
-                    display.to_string(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  ["),
-                Span::styled(on_off, Style::default().fg(on_off_color)),
-                Span::raw("]  "),
-                Span::styled(detail, Style::default().fg(Color::DarkGray)),
-            ]);
-            ListItem::new(line)
-        })
-        .collect();
-
+    if items.is_empty() {
+        items.push(ListItem::new(Line::from(
+            "No MCP or Python tool sources configured.".yellow(),
+        )));
+    }
     f.render_stateful_widget(styled_list(items, block), area, &mut app.mcp_server_state);
 }
 

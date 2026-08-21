@@ -182,6 +182,39 @@ impl PythonToolSource {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum PythonToolStatus {
+    Loading {
+        id: String,
+        display_name: String,
+    },
+    Ready {
+        id: String,
+        display_name: String,
+        tool_count: usize,
+    },
+    Failed {
+        id: String,
+        display_name: String,
+        error: String,
+    },
+}
+
+impl PythonToolStatus {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Loading { id, .. } | Self::Ready { id, .. } | Self::Failed { id, .. } => id,
+        }
+    }
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Loading { display_name, .. }
+            | Self::Ready { display_name, .. }
+            | Self::Failed { display_name, .. } => display_name,
+        }
+    }
+}
+
 /// A tool discovered in a Python source file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PythonToolDefinition {

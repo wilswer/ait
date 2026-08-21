@@ -189,6 +189,18 @@ pub enum Action {
     McpEnableRequested {
         id: String,
     },
+    /// Python source discovery completed in the background.
+    PythonToolsLoaded {
+        id: String,
+        source: crate::python_tools::PythonToolSource,
+        definitions: Vec<crate::python_tools::PythonToolDefinition>,
+    },
+    /// Python source discovery failed in the background.
+    PythonToolsFailed {
+        id: String,
+        display_name: String,
+        error: String,
+    },
 }
 
 pub fn estimate_tokens(text: &str) -> AppResult<usize> {
@@ -562,6 +574,8 @@ pub struct App<'a> {
     pub mcp_enabled: std::collections::HashSet<String>,
     /// Typed Python tool sources that successfully loaded for this process.
     pub python_tool_sources: Vec<crate::python_tools::PythonToolSource>,
+    /// UI-facing status for configured Python sources.
+    pub python_tool_statuses: Vec<crate::python_tools::PythonToolStatus>,
     /// Cached definitions for each loaded Python source. These are combined
     /// with active MCP tools into a request-safe registry when a stream starts.
     pub python_tool_definitions:
@@ -640,6 +654,7 @@ impl Default for App<'_> {
             mcp_connections: std::collections::HashMap::new(),
             mcp_enabled: std::collections::HashSet::new(),
             python_tool_sources: Vec::new(),
+            python_tool_statuses: Vec::new(),
             python_tool_definitions: std::collections::HashMap::new(),
             mcp_server_state: ratatui::widgets::ListState::default(),
             needs_stream_scroll: false,
@@ -708,6 +723,43 @@ impl<'a> App<'a> {
         self.streams.len()
     }
 
+    // --- Python tool status ---
+
+    pub fn python_tool_loaded(
+        &mut self,
+        source: crate::python_tools::PythonToolSource,
+        definitions: Vec<crate::python_tools::PythonToolDefinition>,
+    ) {
+        let id = source.id.clone();
+        let display_name = source.display_name.clone();
+        self.python_tool_sources.retain(|s| s.id != id);
+        self.python_tool_sources.push(source);
+        self.python_tool_definitions
+            .insert(id.clone(), definitions.clone());
+        self.update_python_tool_status(crate::python_tools::PythonToolStatus::Ready {
+            id,
+            display_name,
+            tool_count: definitions.len(),
+        });
+    }
+
+    pub fn python_tool_failed(&mut self, id: String, display_name: String, error: String) {
+        self.update_python_tool_status(crate::python_tools::PythonToolStatus::Failed {
+            id,
+            display_name,
+            error,
+        });
+    }
+
+    fn update_python_tool_status(&mut self, status: crate::python_tools::PythonToolStatus) {
+        let id = status.id().to_string();
+        if let Some(slot) = self.python_tool_statuses.iter_mut().find(|s| s.id() == id) {
+            *slot = status;
+        } else {
+            self.python_tool_statuses.push(status);
+        }
+    }
+
     // --- MCP status ---
 
     /// Mark an MCP server as connected, store its owning connection, and
@@ -753,6 +805,23 @@ impl<'a> App<'a> {
 
     /// Counts of MCP servers by state, for the footer summary. Returns
     /// `(ready, ready_tool_total, connecting, failed)`.
+    pub fn python_tool_status_counts(&self) -> (usize, usize, usize) {
+        let mut ready = 0;
+        let mut tools = 0;
+        let mut loading = 0;
+        for status in &self.python_tool_statuses {
+            match status {
+                crate::python_tools::PythonToolStatus::Ready { tool_count, .. } => {
+                    ready += 1;
+                    tools += *tool_count;
+                }
+                crate::python_tools::PythonToolStatus::Loading { .. } => loading += 1,
+                crate::python_tools::PythonToolStatus::Failed { .. } => {}
+            }
+        }
+        (ready, tools, loading)
+    }
+
     pub fn mcp_status_counts(&self) -> (usize, usize, usize, usize) {
         let mut ready = 0;
         let mut ready_tools = 0;

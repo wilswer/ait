@@ -53,8 +53,12 @@ pub struct PythonToolConfig {
     pub timeout_secs: u64,
 }
 
-fn default_uv_command() -> String { "uv".to_string() }
-fn default_python_timeout_secs() -> u64 { 30 }
+fn default_uv_command() -> String {
+    "uv".to_string()
+}
+fn default_python_timeout_secs() -> u64 {
+    30
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ModelConfig {
@@ -422,7 +426,8 @@ name = "Bad"
 
     #[test]
     fn parses_python_tool_config() {
-        let config: Config = toml::from_str(r#"
+        let config: Config = toml::from_str(
+            r#"
 [python_tools.sources.weather]
 script = "tools/weather.py"
 name = "Weather tools"
@@ -430,7 +435,9 @@ enabled = false
 project_dir = "tools"
 timeout_secs = 12
 uv_command = "uv"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let source = &config.python_tools.sources["weather"];
         assert_eq!(source.script, PathBuf::from("tools/weather.py"));
         assert_eq!(source.name.as_deref(), Some("Weather tools"));

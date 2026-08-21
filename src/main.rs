@@ -26,7 +26,6 @@ fn configured_python_source(id: &str, cfg: &PythonToolConfig) -> PythonToolSourc
     source
 }
 
-
 ///
 /// MCP schemas are fetched from live connections when a request begins. Python
 /// schemas were validated at startup and are cached in `App`, so this does not
@@ -176,6 +175,20 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
         Action::ContextAddDone { notification } => {
             app.set_app_mode(AppMode::Notify { notification });
         }
+        Action::PythonToolsLoaded {
+            source,
+            definitions,
+            ..
+        } => {
+            app.python_tool_loaded(source, definitions);
+        }
+        Action::PythonToolsFailed {
+            id,
+            display_name,
+            error,
+        } => {
+            app.python_tool_failed(id, display_name, error);
+        }
         // MCP outcomes are consumed directly in the main `tokio::select!`
         // (they own a `McpConnection` that can't go through the action
         // channel). `McpEnableRequested` is handled in the main loop where it
@@ -245,48 +258,9 @@ Context:
 
     let mut app = App::new(&system_prompt, default_model, default_thinking_level);
 
-    // Load enabled Python sources declared in config. CLI sources are retained
-    // as an explicit override/addition for backwards compatibility.
-    for (id, cfg) in &config.python_tools.sources {
-        if !cfg.enabled {
-            continue;
-        }
-        validate_source_path(&cfg.script)
-            .with_context(|| format!("Invalid Python tool source `{}`", cfg.script.display()))?;
-        let source = configured_python_source(id, cfg);
-        let definitions = source.discover().await.map_err(|error| {
-            anyhow::anyhow!("Failed to load Python tools from `{}`: {error}", source.script.display())
-        })?;
-        app.python_tool_definitions.insert(source.id.clone(), definitions);
-        app.python_tool_sources.push(source);
-    }
-    // Phase 1 Python tools are explicitly opt-in through repeated
-    // `--python-tools <file>` arguments. Validate and discover them before
-    // entering the alternate-screen TUI so failures remain terminal-safe.
-    for (index, script) in cli.python_tools.iter().enumerate() {
-
-        let mut source = PythonToolSource::new(format!("python-{}", index + 1), script.clone());
-        source.display_name = script
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| script.display().to_string());
-
-        tracing::info!(path = %source.script.display(), "discovering Python tools");
-        let definitions = source.discover().await.map_err(|error| {
-            anyhow::anyhow!(
-                "Failed to load Python tools from `{}`: {error}",
-                source.script.display()
-            )
-        })?;
-        tracing::info!(
-            path = %source.script.display(),
-            tools = definitions.len(),
-            "loaded Python tools"
-        );
-        app.python_tool_definitions
-            .insert(source.id.clone(), definitions);
-        app.python_tool_sources.push(source);
-    }
+    // Python discovery is scheduled after the TUI is initialized. Invalid
+    // files, missing `uv`, and dependency failures therefore become visible
+    // source errors instead of terminating before alternate-screen startup.
 
     // Seed MCP status (one `Connecting` entry per enabled server) so the
     // footer shows "connecting" immediately, before any server resolves.
@@ -312,6 +286,8 @@ Context:
     });
 
     // Initialize the terminal user interface.
+    // Python discovery is intentionally performed after TUI initialization;
+    // each configured source reports its result through the action channel.
     let backend = CrosstermBackend::new(std::io::stderr());
     let terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
@@ -320,6 +296,80 @@ Context:
 
     let events = EventHandler::new(16);
     let (action_tx, mut action_rx) = mpsc::channel(32);
+
+    for (id, cfg) in &config.python_tools.sources {
+        if !cfg.enabled {
+            continue;
+        }
+        let source = configured_python_source(id, cfg);
+        let display_name = source.display_name.clone();
+        let source_id = source.id.clone();
+        app.python_tool_statuses
+            .push(ait::python_tools::PythonToolStatus::Loading {
+                id: source_id.clone(),
+                display_name,
+            });
+        let tx = action_tx.clone();
+        task::spawn(async move {
+            let action = match validate_source_path(&source.script).and_then(|_| Ok(())) {
+                Ok(()) => match source.discover().await {
+                    Ok(definitions) => Action::PythonToolsLoaded {
+                        id: source.id.clone(),
+                        source,
+                        definitions,
+                    },
+                    Err(error) => Action::PythonToolsFailed {
+                        id: source.id.clone(),
+                        display_name: source.display_name.clone(),
+                        error: error.to_string(),
+                    },
+                },
+                Err(error) => Action::PythonToolsFailed {
+                    id: source.id.clone(),
+                    display_name: source.display_name.clone(),
+                    error: error.to_string(),
+                },
+            };
+            let _ = tx.send(action).await;
+        });
+    }
+
+    for (index, script) in cli.python_tools.iter().enumerate() {
+        let mut source = PythonToolSource::new(format!("python-{}", index + 1), script.clone());
+        source.display_name = script
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| script.display().to_string());
+        let source_id = source.id.clone();
+        app.python_tool_statuses
+            .push(ait::python_tools::PythonToolStatus::Loading {
+                id: source_id,
+                display_name: source.display_name.clone(),
+            });
+        let tx = action_tx.clone();
+        task::spawn(async move {
+            let action = match validate_source_path(&source.script) {
+                Ok(()) => match source.discover().await {
+                    Ok(definitions) => Action::PythonToolsLoaded {
+                        id: source.id.clone(),
+                        source,
+                        definitions,
+                    },
+                    Err(error) => Action::PythonToolsFailed {
+                        id: source.id.clone(),
+                        display_name: source.display_name.clone(),
+                        error: error.to_string(),
+                    },
+                },
+                Err(error) => Action::PythonToolsFailed {
+                    id: source.id.clone(),
+                    display_name: source.display_name.clone(),
+                    error: error.to_string(),
+                },
+            };
+            let _ = tx.send(action).await;
+        });
+    }
 
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
