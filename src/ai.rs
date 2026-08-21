@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use futures::StreamExt;
 use genai::adapter::AdapterKind;
 use genai::chat::{
@@ -8,12 +6,12 @@ use genai::chat::{
 };
 use genai::resolver::{AuthData, Endpoint, ProviderConfig, ServiceTargetResolver};
 use genai::{ClientBuilder, ClientConfig, ModelIden, ModelSpec, ServiceTarget};
-use mcp_genai_glue::McpToolBridge;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::app::{Action, AppResult, Message, ThinkingEffort};
 use crate::observability::{PromptFingerprint, RequestObservation};
+use crate::tools::ToolRegistry;
 
 pub const MODELS: [(&str, &str); 1] = [("Gemini", "gemini-3.1-pro-preview")];
 
@@ -376,48 +374,16 @@ fn finalize_raw_messages(
     Some(result)
 }
 
-/// Resolve the union of tools across all connected MCP servers.
-///
-/// Returns the genai tool list to send to the model, plus a map from tool name
-/// to the [`McpToolBridge`] that owns it (used to dispatch `tools/call`). On
-/// name collisions across servers the last server seen wins and a warning is
-/// logged; a future revision could namespace by server id.
-async fn resolve_tools(bridges: &[McpToolBridge]) -> (Vec<Tool>, HashMap<String, McpToolBridge>) {
-    let mut tools = Vec::new();
-    let mut by_name = HashMap::new();
-    for bridge in bridges {
-        match bridge.tools().await {
-            Ok(server_tools) => {
-                for tool in server_tools {
-                    let name = tool.name.as_str().to_string();
-                    if by_name.contains_key(&name) {
-                        tracing::warn!(
-                            mcp.tool = %name,
-                            "tool name collision across MCP servers; last definition wins"
-                        );
-                    }
-                    by_name.insert(name, bridge.clone());
-                    tools.push(tool);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to list tools from an MCP server; skipping");
-            }
-        }
-    }
-    (tools, by_name)
-}
-
 /// Run the full assistant response stream, including the agentic tool-calling
 /// loop.
 ///
-/// The model is allowed to call MCP tools (resolved from `mcp_bridges`); each
-/// tool-call round is executed against the owning server and the result is
-/// fed back as a tool-response turn, up to [`MAX_TOOL_ROUNDS`] rounds. Text and
-/// reasoning chunks are streamed back to the UI via `action_tx` as
-/// [`Action::StreamPartial`] updates; the final message is sent as
-/// [`Action::StreamComplete`] (or [`Action::StreamCancelled`] if the user
-/// cancels).
+/// The model may call tools supplied by the request-safe [`ToolRegistry`].
+/// The registry can contain MCP-backed tools, typed Python tools, or both.
+/// Each tool-call round is executed and fed back as a tool-response turn, up
+/// to [`MAX_TOOL_ROUNDS`] rounds. Text and reasoning chunks are streamed back
+/// to the UI via `action_tx` as [`Action::StreamPartial`] updates; the final
+/// message is sent as [`Action::StreamComplete`] (or
+/// [`Action::StreamCancelled`] if the user cancels).
 ///
 /// This owns the entire multi-round conversation so the caller (`main.rs`)
 /// only has to spawn it once per submitted message.
@@ -428,7 +394,7 @@ pub async fn run_assistant_stream(
     system_prompt: Option<String>,
     thinking_effort: ThinkingEffort,
     ollama_host_url: Option<String>,
-    mcp_bridges: Vec<McpToolBridge>,
+    tool_registry: ToolRegistry,
     conversation_id: i64,
     action_tx: mpsc::Sender<Action>,
     mut cancel_rx: mpsc::Receiver<()>,
@@ -471,19 +437,11 @@ pub async fn run_assistant_stream(
 
     let mut helper = StreamHelper::new();
 
-    // Resolve the tool set **once**, before the round loop, and sort it
-    // deterministically by name. Resolving per-round means a server
-    // connecting mid-conversation changes the tool list (and its order),
-    // which busts the provider's prefix cache on every Anthropic request.
-    // Keeping it stable across rounds and turns is the cache-friendly
-    // trade-off: servers that finish connecting mid-conversation are picked
-    // up on the next user turn.
-    let (mut tools, tool_map) = resolve_tools(&mcp_bridges).await;
-    tools.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
-    let tool_names = tools
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect::<Vec<String>>();
+    // The registry is a stable snapshot supplied by the caller. It has
+    // already been built from the active MCP and Python sources before the
+    // request begins, so tool schemas/executors cannot change mid-stream.
+    let tools = tool_registry.tools().to_vec();
+    let tool_names = tool_registry.names();
     tracing::info!("Available tools {:?}", tool_names);
 
     // Structured messages collected during this assistant turn for
@@ -579,7 +537,7 @@ pub async fn run_assistant_stream(
                                     .map(|c| c.into_iter().cloned().collect())
                                     .unwrap_or_default();
 
-                                if !tool_calls.is_empty() && !tool_map.is_empty() {
+                                if !tool_calls.is_empty() && !tool_registry.is_empty() {
                                     // Append the assistant tool-use turn (thought
                                     // signatures included, ordered before calls).
                                     if let Some(msg) = end.into_assistant_message_for_tool_use() {
@@ -603,14 +561,9 @@ pub async fn run_assistant_stream(
                                             })
                                             .await;
 
-                                        let content = match tool_map.get(&fn_name) {
-                                            Some(bridge) => match bridge.execute(tc).await {
-                                                Ok(resp) => resp.content,
-                                                Err(e) => format!("Error: {e}"),
-                                            },
-                                            None => format!(
-                                                "Error: no MCP server provides tool `{fn_name}`"
-                                            ),
+                                        let content = match tool_registry.execute(tc).await {
+                                            Ok(resp) => resp.content,
+                                            Err(e) => format!("Error: {e}"),
                                         };
                                         tracing::info!(
                                             mcp.tool = %fn_name,

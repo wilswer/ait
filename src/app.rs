@@ -552,9 +552,6 @@ pub struct App<'a> {
     /// Per-server status for the MCP footer (connecting/ready/failed), one
     /// entry per `enabled` server in the config. Drives the status counts.
     pub mcp_statuses: Vec<crate::mcp::McpServerStatus>,
-    /// Bridges of currently-connected MCP servers. Snapshot by streaming
-    /// tasks so they can resolve/execute tools.
-    pub mcp_bridges: Vec<mcp_genai_glue::McpToolBridge>,
     /// Owning `McpConnection`s, keyed by server id. Keeping these alive keeps
     /// the underlying `RunningService` (transport) running. Removed when the
     /// user disables a server.
@@ -563,9 +560,14 @@ pub struct App<'a> {
     /// Initialized from config (`enabled = true`); toggled in the server
     /// management view. Independent of live connection status.
     pub mcp_enabled: std::collections::HashSet<String>,
-    /// List selection state for the server management view.
+    /// Typed Python tool sources that successfully loaded for this process.
+    pub python_tool_sources: Vec<crate::python_tools::PythonToolSource>,
+    /// Cached definitions for each loaded Python source. These are combined
+    /// with active MCP tools into a request-safe registry when a stream starts.
+    pub python_tool_definitions:
+        std::collections::HashMap<String, Vec<crate::python_tools::PythonToolDefinition>>,
+    /// List state for the server management view.
     pub mcp_server_state: ratatui::widgets::ListState,
-    /// Set when a streaming chunk arrives while the user is following the
     /// stream (at the bottom). The actual `scroll_to_bottom()` is deferred
     /// until after `refresh_streaming_format()` has updated the format cache,
     /// so the scroll target reflects the current formatted line count.
@@ -635,9 +637,10 @@ impl Default for App<'_> {
             },
             is_loading_models: true,
             mcp_statuses: Vec::new(),
-            mcp_bridges: Vec::new(),
             mcp_connections: std::collections::HashMap::new(),
             mcp_enabled: std::collections::HashSet::new(),
+            python_tool_sources: Vec::new(),
+            python_tool_definitions: std::collections::HashMap::new(),
             mcp_server_state: ratatui::widgets::ListState::default(),
             needs_stream_scroll: false,
         }
@@ -725,11 +728,6 @@ impl<'a> App<'a> {
         // Replace any prior connection for this id (avoids duplicate bridges
         // on reconnect), then rebuild the bridges list.
         self.mcp_connections.insert(id, conn);
-        self.mcp_bridges = self
-            .mcp_connections
-            .values()
-            .map(|c| c.bridge.clone())
-            .collect();
     }
 
     /// Mark an MCP server as failed. Replaces any prior status entry with the
@@ -791,13 +789,6 @@ impl<'a> App<'a> {
         }
         // Drop the owning connection (cancels the running service).
         self.mcp_connections.remove(id);
-        // Rebuild the bridges list from remaining connections (the one we
-        // just removed is gone, so its bridge drops out too).
-        self.mcp_bridges = self
-            .mcp_connections
-            .values()
-            .map(|c| c.bridge.clone())
-            .collect();
         // Update status to Disabled, preserving the display name.
         let display_name = self
             .mcp_statuses
@@ -1830,8 +1821,8 @@ mod tests {
             app.mcp_statuses[0],
             McpServerStatus::Disabled { .. }
         ));
-        // No live connection was present, so bridges stay empty.
-        assert!(app.mcp_bridges.is_empty());
+        // No live connection was present, so Python/MCP tool state is unchanged.
+        assert!(app.python_tool_sources.is_empty());
     }
 
     #[test]

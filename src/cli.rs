@@ -17,6 +17,10 @@ pub struct Cli {
     /// Ollama host URL.
     #[arg(short, long)]
     pub ollama_host: Option<String>,
+    /// Typed Python tool script to load. May be supplied more than once.
+    /// Requires `uv` on PATH; AIT provisions Pydantic through uv.
+    #[arg(long = "python-tools", value_name = "FILE")]
+    pub python_tools: Vec<PathBuf>,
 }
 
 impl Cli {

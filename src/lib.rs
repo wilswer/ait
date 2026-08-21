@@ -21,6 +21,12 @@ pub mod handler;
 /// GenAI chat client.
 pub mod ai;
 
+/// Typed Python tool discovery and execution via uv.
+pub mod python_tools;
+
+/// Unified MCP and Python tool registry.
+pub mod tools;
+
 /// MCP server loader / bridge wiring.
 pub mod mcp;
 

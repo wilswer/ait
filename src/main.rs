@@ -12,10 +12,59 @@ use ait::cli::Cli;
 use ait::config::{Config, ModelConfig};
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
+use ait::python_tools::{PythonToolSource, validate_source_path};
 use ait::storage::{create_db, migrate_db};
+use ait::tools::ToolRegistry;
 use ait::tui::Tui;
 
-/// Handle a single terminal event (key/mouse/tick/resize).
+/// Build an immutable registry snapshot for one assistant request.
+///
+/// MCP schemas are fetched from live connections when a request begins. Python
+/// schemas were validated at startup and are cached in `App`, so this does not
+/// re-import user code. The returned snapshot is moved into the stream task and
+/// is stable for every tool-calling round of that request.
+async fn build_tool_registry(app: &App<'_>) -> ToolRegistry {
+    let mut builder = ToolRegistry::builder();
+
+    for connection in app.mcp_connections.values() {
+        match connection.bridge.tools().await {
+            Ok(tools) => {
+                if let Err(error) = builder.add_mcp_tools(connection.bridge.clone(), tools) {
+                    tracing::warn!(
+                        mcp.server = %connection.id,
+                        error = %error,
+                        "skipping conflicting MCP tools while building request registry"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    mcp.server = %connection.id,
+                    error = %error,
+                    "failed to list MCP tools while building request registry"
+                );
+            }
+        }
+    }
+
+    for source in &app.python_tool_sources {
+        let Some(definitions) = app.python_tool_definitions.get(&source.id) else {
+            continue;
+        };
+        if let Err(error) = builder.add_python_tools(source.clone(), definitions.clone()) {
+            tracing::warn!(
+                python.source = %source.id,
+                error = %error,
+                "skipping conflicting Python tools while building request registry"
+            );
+        }
+    }
+
+    let registry = builder.build();
+    tracing::info!(tools = ?registry.names(), "built tool registry for request");
+    registry
+}
+
 fn handle_event(event: Event, app: &mut App, action_tx: &mpsc::Sender<Action>) -> AppResult<()> {
     match event {
         Event::Tick => app.tick(),
@@ -186,6 +235,36 @@ Context:
     let _log_guard = ait::logger::init_logging();
 
     let mut app = App::new(&system_prompt, default_model, default_thinking_level);
+
+    // Phase 1 Python tools are explicitly opt-in through repeated
+    // `--python-tools <file>` arguments. Validate and discover them before
+    // entering the alternate-screen TUI so failures remain terminal-safe.
+    for (index, script) in cli.python_tools.iter().enumerate() {
+        validate_source_path(script)
+            .with_context(|| format!("Invalid Python tool source `{}`", script.display()))?;
+
+        let mut source = PythonToolSource::new(format!("python-{}", index + 1), script.clone());
+        source.display_name = script
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| script.display().to_string());
+
+        tracing::info!(path = %source.script.display(), "discovering Python tools");
+        let definitions = source.discover().await.map_err(|error| {
+            anyhow::anyhow!(
+                "Failed to load Python tools from `{}`: {error}",
+                source.script.display()
+            )
+        })?;
+        tracing::info!(
+            path = %source.script.display(),
+            tools = definitions.len(),
+            "loaded Python tools"
+        );
+        app.python_tool_definitions
+            .insert(source.id.clone(), definitions);
+        app.python_tool_sources.push(source);
+    }
 
     // Seed MCP status (one `Connecting` entry per enabled server) so the
     // footer shows "connecting" immediately, before any server resolves.
@@ -381,10 +460,11 @@ Context:
             } = args;
             let ollama_host_url = resolved_ollama_host.clone();
             let tx = action_tx.clone();
-            // Snapshot the currently-connected MCP bridges so the spawned
-            // task can resolve and execute tools. `McpToolBridge` is cheap to
-            // clone (it holds a channel handle to the running service).
-            let mcp_bridges: Vec<mcp_genai_glue::McpToolBridge> = app.mcp_bridges.clone();
+            // Build a fresh immutable snapshot from active MCP connections
+            // plus the cached, validated Python definitions. This lookup is
+            // performed before spawning so the stream cannot observe a later
+            // source change mid-tool-loop.
+            let tool_registry = build_tool_registry(&app).await;
 
             // Spawn ONE task per conversation that drives the full streaming
             // + MCP tool-calling loop, reporting progress via `tx`.
@@ -395,7 +475,7 @@ Context:
                     sys_prompt,
                     thinking_effort,
                     ollama_host_url,
-                    mcp_bridges,
+                    tool_registry,
                     conversation_id,
                     tx,
                     cancel_rx,
