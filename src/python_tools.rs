@@ -26,6 +26,9 @@ pub struct PythonToolSource {
     pub id: String,
     pub display_name: String,
     pub script: PathBuf,
+    /// Project directory passed to `uv --project`, when a pyproject.toml is
+    /// located beside the tool script.
+    pub project_dir: Option<PathBuf>,
     pub timeout: Duration,
     pub uv_command: String,
 }
@@ -33,10 +36,13 @@ pub struct PythonToolSource {
 impl PythonToolSource {
     pub fn new(id: impl Into<String>, script: impl Into<PathBuf>) -> Self {
         let id = id.into();
+        let script = script.into();
+        let project_dir = adjacent_project_dir(&script);
         Self {
             display_name: id.clone(),
             id,
-            script: script.into(),
+            script,
+            project_dir,
             timeout: DEFAULT_TOOL_TIMEOUT,
             uv_command: "uv".to_string(),
         }
@@ -45,7 +51,9 @@ impl PythonToolSource {
     pub async fn discover(&self) -> Result<Vec<PythonToolDefinition>, PythonToolError> {
         let script = self.script_arg();
         let response = self.run_bridge(&["discover", &script]).await?;
-        response.into_discovery_result()
+        response
+            .into_discovery_result()
+            .map_err(|error| self.enrich_missing_dependency_error(error))
     }
 
     pub async fn execute(&self, call: &ToolCall) -> Result<ToolResponse, PythonToolError> {
@@ -55,7 +63,10 @@ impl PythonToolSource {
             .run_bridge(&["execute", &script, &call.fn_name, &arguments])
             .await?;
 
-        match response.into_execution_result() {
+        match response
+            .into_execution_result()
+            .map_err(|error| self.enrich_missing_dependency_error(error))
+        {
             Ok(result) => {
                 let content = format_tool_result(&result);
                 Ok(ToolResponse::from_tool_call(call, content))
@@ -70,6 +81,36 @@ impl PythonToolSource {
         }
     }
 
+    /// Attach a hint to `ModuleNotFoundError` failures when this source has
+    /// no adjacent `pyproject.toml`. Only the standard library plus AIT's
+    /// injected Pydantic dependency are available in that case, so a missing
+    /// third-party import is almost always solved by creating a project file
+    /// beside the tool script.
+    fn enrich_missing_dependency_error(&self, error: PythonToolError) -> PythonToolError {
+        let PythonToolError::Bridge(mut bridge_error) = error else {
+            return error;
+        };
+        let is_missing_module = bridge_error.kind == "module_load_error"
+            && bridge_error.message.contains("ModuleNotFoundError");
+        if self.project_dir.is_none() && is_missing_module {
+            let dir = self
+                .script
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| ".".to_string());
+            bridge_error.hint = Some(format!(
+                "This tool file has no adjacent pyproject.toml, so only the Python \
+                 standard library (plus pydantic, provisioned by AIT) is available. \
+                 Create `{dir}/pyproject.toml` and declare the missing dependency, e.g.:\n\n\
+                 [project]\n\
+                 name = \"ait-tools\"\n\
+                 version = \"0.1.0\"\n\
+                 dependencies = [\"<package-name>\"]"
+            ));
+        }
+        PythonToolError::Bridge(bridge_error)
+    }
+
     fn script_arg(&self) -> String {
         self.script.to_string_lossy().into_owned()
     }
@@ -79,8 +120,11 @@ impl PythonToolSource {
         let bridge_path = bridge.path().to_path_buf();
 
         let mut command = Command::new(&self.uv_command);
+        command.arg("run");
+        if let Some(project_dir) = &self.project_dir {
+            command.arg("--project").arg(project_dir);
+        }
         command
-            .arg("run")
             .arg("--with")
             .arg(PYDANTIC_REQUIREMENT)
             .arg(&bridge_path)
@@ -177,6 +221,9 @@ impl PythonBridgeError {
             && self.kind == "argument_validation_error"
         {
             output.push_str(&format!(" Details: {details}"));
+        }
+        if let Some(hint) = &self.hint {
+            output.push_str(&format!("\nHint: {hint}"));
         }
         output
     }
@@ -295,6 +342,14 @@ pub async fn load_tools(source: &PythonToolSource) -> Result<Vec<Tool>, PythonTo
     })
 }
 
+pub fn adjacent_project_dir(script: &Path) -> Option<PathBuf> {
+    let parent = script.parent()?;
+    parent
+        .join("pyproject.toml")
+        .is_file()
+        .then(|| parent.to_path_buf())
+}
+
 pub fn validate_source_path(path: &Path) -> Result<()> {
     if path.is_file() {
         Ok(())
@@ -364,6 +419,36 @@ mod tests {
         let bridge_response: BridgeResponse = serde_json::from_str(response).unwrap();
         let error = bridge_response.into_discovery_result().unwrap_err();
         assert!(matches!(error, PythonToolError::Bridge(_)));
+    }
+
+    #[test]
+    fn finds_only_adjacent_pyproject() {
+        let temp = tempfile::tempdir().unwrap();
+        let tools_dir = temp.path().join("tools");
+        std::fs::create_dir(&tools_dir).unwrap();
+        let script = tools_dir.join("tools.py");
+        std::fs::write(&script, "").unwrap();
+
+        assert_eq!(adjacent_project_dir(&script), None);
+        std::fs::write(
+            tools_dir.join("pyproject.toml"),
+            "[project]\nname='tools'\n",
+        )
+        .unwrap();
+        assert_eq!(adjacent_project_dir(&script), Some(tools_dir));
+    }
+
+    #[test]
+    fn does_not_use_parent_project_without_adjacent_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        let tools_dir = project.join("nested");
+        std::fs::create_dir(&tools_dir).unwrap();
+        std::fs::write(project.join("pyproject.toml"), "[project]\nname='parent'\n").unwrap();
+        let script = tools_dir.join("tools.py");
+        std::fs::write(&script, "").unwrap();
+
+        assert_eq!(adjacent_project_dir(&script), None);
     }
 
     #[test]
