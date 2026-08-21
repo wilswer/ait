@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs;
 use std::path::PathBuf;
@@ -8,9 +9,11 @@ use anyhow::{Context, Result, anyhow, bail};
 #[cfg(not(target_os = "linux"))]
 use arboard::Clipboard;
 use genai::ModelSpec;
-use genai::chat::ContentPart;
+use genai::adapter::AdapterKind;
+use genai::chat::{ChatMessage, ContentPart};
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
+use tokio::sync::mpsc;
 
 use ratatui::{
     buffer::Buffer,
@@ -19,11 +22,11 @@ use ratatui::{
     widgets::{Block, Borders, ListState},
 };
 use ratatui_explorer::{File, FileExplorer, FileExplorerBuilder};
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{TextArea, WrapMode};
 use tiktoken_rs::cl100k_base;
 
 use crate::config::ModelConfig;
-use crate::models::{ModelItem, generate_model_spec};
+use crate::models::{ModelItem, generate_model_spec, model_provider_from_spec};
 use crate::ui::messages_to_lines;
 use crate::{
     ai::MODELS,
@@ -39,14 +42,121 @@ use crate::{models::ModelList, snippets::SnippetList};
 
 pub const RECACHE_COOLDOWN: u64 = 250;
 
+/// Minimum interval between streaming format refresh passes, in milliseconds.
+/// Prevents re-parsing the entire streaming message on every single token.
+pub const STREAMING_FORMAT_THROTTLE: u64 = 50;
+
+/// Maximum number of conversations that may have an in-flight LLM stream at
+/// once. Bounded to limit cost, memory, and provider rate limits.
+pub const MAX_CONCURRENT_STREAMS: usize = 3;
+
+/// Resolves the system prompt to send for a given model. OpenAI GPT models
+/// get no system prompt (matching the original behaviour); everything else
+/// uses the application's system prompt.
+fn system_prompt_for_model(model: &ModelSpec, base: &str) -> Option<String> {
+    match model {
+        ModelSpec::Name(name) if name.starts_with("gpt") => None,
+        ModelSpec::Iden(iden) if iden.adapter_kind == AdapterKind::OpenAI => None,
+        _ => Some(base.to_string()),
+    }
+}
+
+/// Cached formatted output for the streaming assistant message.
+/// Avoids re-processing already-formatted content on every chunk by storing
+/// the result of the last [`style_message`] pass and only re-formatting when
+/// new content has arrived (and the throttle interval has elapsed).
+#[derive(Debug, Clone)]
+pub struct StreamingFormatCache {
+    /// Already-formatted (syntax-highlighted, word-wrapped) lines for the
+    /// streaming assistant message.
+    pub formatted_lines: Vec<Line<'static>>,
+    /// The partial text that was formatted to produce `formatted_lines`.
+    pub last_text: String,
+    /// `true` when new content has arrived since the last formatting pass.
+    pub dirty: bool,
+    /// Timestamp of the last formatting pass (for throttling).
+    pub last_format_time: Instant,
+}
+
+impl Default for StreamingFormatCache {
+    fn default() -> Self {
+        Self {
+            formatted_lines: Vec::new(),
+            last_text: String::new(),
+            dirty: false,
+            // Set to the past so the first format pass is never throttled.
+            last_format_time: Instant::now() - Duration::from_secs(1),
+        }
+    }
+}
+
+/// Per-conversation state for an in-flight (or about-to-start) LLM stream.
+///
+/// One entry exists in `App::streams` for each conversation that currently has
+/// a pending/streaming request. It is removed when the stream completes, is
+/// cancelled, or errors out.
+#[derive(Debug, Clone)]
+pub struct StreamState {
+    /// `true` once the first response chunk has arrived.
+    pub is_streaming: bool,
+    /// `true` from submit until the first chunk arrives (request in flight but
+    /// not yet streaming).
+    pub is_waiting: bool,
+    /// Accumulated partial assistant text, kept so it can be reattached to the
+    /// view when the user browses away from and back to this conversation.
+    pub partial: String,
+    /// Cancel sender for the spawned streaming task. `None` once the task has
+    /// been launched (and consumed by a cancel) or after the task finishes.
+    pub cancel_tx: Option<mpsc::Sender<()>>,
+    /// Snapshot of the conversation history sent with the request.
+    pub messages: Vec<Message>,
+    /// Model used for this request.
+    pub selected_model: ModelSpec,
+    /// Thinking effort used for this request.
+    pub thinking_effort: ThinkingEffort,
+    /// Resolved system prompt for this request.
+    pub system_prompt: Option<String>,
+    /// Cached formatted lines for the streaming assistant message.
+    pub format_cache: StreamingFormatCache,
+}
+
+/// Arguments needed to spawn a streaming task, extracted from a
+/// [`StreamState`] so the task can own the data without borrowing `App`.
+pub struct SpawnArgs {
+    pub conversation_id: i64,
+    pub messages: Vec<Message>,
+    pub selected_model: ModelSpec,
+    pub thinking_effort: ThinkingEffort,
+    pub system_prompt: Option<String>,
+    pub cancel_rx: mpsc::Receiver<()>,
+}
+
 /// Async actions reported back to the main event loop by background tasks.
 #[derive(Debug, Clone)]
 pub enum Action {
-    StreamStart,
-    StreamPartial(String),
-    StreamComplete(String),
-    StreamCancelled(String),
-    Error(String),
+    StreamStart {
+        conversation_id: i64,
+    },
+    StreamPartial {
+        conversation_id: i64,
+        content: String,
+    },
+    StreamComplete {
+        conversation_id: i64,
+        content: String,
+        /// Structured messages for this assistant turn, for cache-friendly
+        /// history replay on subsequent requests.
+        raw_messages: Option<Vec<ChatMessage>>,
+    },
+    StreamCancelled {
+        conversation_id: i64,
+        content: String,
+        raw_messages: Option<Vec<ChatMessage>>,
+    },
+    Error {
+        conversation_id: Option<i64>,
+        message: String,
+    },
     ModelsLoaded(Vec<(String, String)>),
     /// A single file was validated and its tokens estimated in the background.
     /// The file is added to the context with the estimated token count
@@ -59,6 +169,25 @@ pub enum Action {
     /// the app to the given notification.
     ContextAddDone {
         notification: Notification,
+    },
+    /// An MCP server finished connecting and is ready for tool calls. The
+    /// connection is moved into the app so it stays alive for the session.
+    McpServerReady {
+        id: String,
+        display_name: String,
+        tool_count: usize,
+        bridge: mcp_genai_glue::McpToolBridge,
+    },
+    /// An MCP server failed to connect.
+    McpServerFailed {
+        id: String,
+        display_name: String,
+        error: String,
+    },
+    /// The user enabled a server in the management view; the main loop spawns
+    /// a connect attempt for it. Carries the server id.
+    McpEnableRequested {
+        id: String,
     },
 }
 
@@ -194,10 +323,26 @@ pub enum UserContent {
     Context,
 }
 
+/**
+ * A chat message.
+ *
+ * Assistant messages additionally carry the `model` and `provider` that
+ * produced them (`None` for messages created before this was tracked, or
+ * for synthetic placeholder messages).
+ */
 #[derive(Debug, Clone)]
 pub enum Message {
     User(Vec<ContentPart>),
-    Assistant(String),
+    Assistant(
+        String,
+        Option<String>,
+        Option<String>,
+        /// The exact `ChatMessage`s sent to the provider during this assistant
+        /// turn (tool-use messages, tool responses, final text). When present,
+        /// these are replayed instead of the display text to keep the prefix
+        /// byte-identical for provider prompt caching.
+        Option<Vec<ChatMessage>>,
+    ),
 }
 
 #[derive(Debug, Clone)]
@@ -244,7 +389,7 @@ impl Display for Message {
                 }
                 Ok(())
             }
-            Message::Assistant(text) => write!(f, "{}", text),
+            Message::Assistant(text, _, _, _) => write!(f, "{}", text),
         }
     }
 }
@@ -254,7 +399,8 @@ pub type AppResult<T> = Result<T>;
 
 pub const THINKING_EFFORTS: [&str; 6] = ["None", "Low", "Medium", "High", "XHigh", "Max"];
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThinkingEffort {
     None,
     Low,
@@ -312,6 +458,7 @@ pub enum AppMode {
     FilterHistory,
     ExploreFiles,
     ShowContext,
+    ServerManagement,
     Help,
     Notify { notification: Notification },
 }
@@ -343,16 +490,12 @@ pub struct App<'a> {
     pub app_mode: AppMode,
     /// Conversation ID for chat database.
     pub conversation_id: Option<i64>,
-    /// Conversation ID that the currently in-flight stream belongs to.
-    ///
-    /// Captured at submit time so that the assistant's response is always
-    /// persisted to the conversation that originated the request, even if the
-    /// user browses to a different chat while the stream is in flight.
-    pub pending_conversation_id: Option<i64>,
+    /// In-flight (pending or streaming) conversations, keyed by conversation id.
+    /// A conversation appears here from `submit_message` until the stream
+    /// completes, is cancelled, or errors.
+    pub streams: HashMap<i64, StreamState>,
     /// System prompt
     pub system_prompt: &'a str,
-    /// Has unprocessed messages
-    pub has_unprocessed_messages: bool,
     /// History of recorded messages
     pub messages: Vec<Message>,
     /// Vertical scroll
@@ -380,6 +523,8 @@ pub struct App<'a> {
     pub theme_index: usize,
     /// Highlighting theme
     pub theme: Theme,
+    /// Cached syntax set for code highlighting (loaded once, reused).
+    pub syntax_set: SyntaxSet,
     /// Terminal size
     pub size: Option<TerminalSize>,
     /// Cached highlighted lines
@@ -388,10 +533,6 @@ pub struct App<'a> {
     pub needs_recache: bool,
     /// Time of last recaching of syntax highlighting
     pub last_recache: Instant,
-    /// Is the app receiving streaming messages
-    pub is_streaming: bool,
-    /// Is the app waiting for a response
-    pub is_waiting_for_response: bool,
     /// Spinner animation frame counter
     pub spinner_frame: usize,
     /// File explorer
@@ -408,6 +549,27 @@ pub struct App<'a> {
     pub thinking_effort_state: ListState,
     /// Is the app loading available models?
     pub is_loading_models: bool,
+    /// Per-server status for the MCP footer (connecting/ready/failed), one
+    /// entry per `enabled` server in the config. Drives the status counts.
+    pub mcp_statuses: Vec<crate::mcp::McpServerStatus>,
+    /// Bridges of currently-connected MCP servers. Snapshot by streaming
+    /// tasks so they can resolve/execute tools.
+    pub mcp_bridges: Vec<mcp_genai_glue::McpToolBridge>,
+    /// Owning `McpConnection`s, keyed by server id. Keeping these alive keeps
+    /// the underlying `RunningService` (transport) running. Removed when the
+    /// user disables a server.
+    pub mcp_connections: std::collections::HashMap<String, crate::mcp::McpConnection>,
+    /// User intent for this session: which server ids should be connected.
+    /// Initialized from config (`enabled = true`); toggled in the server
+    /// management view. Independent of live connection status.
+    pub mcp_enabled: std::collections::HashSet<String>,
+    /// List selection state for the server management view.
+    pub mcp_server_state: ratatui::widgets::ListState,
+    /// Set when a streaming chunk arrives while the user is following the
+    /// stream (at the bottom). The actual `scroll_to_bottom()` is deferred
+    /// until after `refresh_streaming_format()` has updated the format cache,
+    /// so the scroll target reflects the current formatted line count.
+    pub needs_stream_scroll: bool,
 }
 
 pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
@@ -418,6 +580,7 @@ pub fn styled_textarea(title: &'static str) -> TextArea<'static> {
     input_textarea.set_cursor_style(Style::default().bg(Color::DarkGray));
     input_textarea.set_placeholder_text("Start typing...");
     input_textarea.set_placeholder_style(Style::default().fg(Color::DarkGray).italic().dim());
+    input_textarea.set_wrap_mode(WrapMode::WordOrGlyph);
     input_textarea
 }
 
@@ -428,8 +591,7 @@ impl Default for App<'_> {
             app_mode: AppMode::Normal,
             system_prompt: "You are a helpful, friendly assistant.",
             conversation_id: None,
-            pending_conversation_id: None,
-            has_unprocessed_messages: false,
+            streams: HashMap::new(),
             messages: Vec::new(),
             // user_messages: Vec::new(),
             // assistant_messages: Vec::new(),
@@ -451,12 +613,11 @@ impl Default for App<'_> {
             selection: Selection::default(),
             theme_index: 0,
             theme: load_theme(0),
+            syntax_set: SyntaxSet::load_defaults_nonewlines(),
             size: None,
             cached_lines: Vec::new(),
             needs_recache: false,
             last_recache: Instant::now() - Duration::from_secs(1),
-            is_streaming: false,
-            is_waiting_for_response: false,
             spinner_frame: 0,
             file_explorer: FileExplorerBuilder::default()
                 .show_hidden(true)
@@ -473,12 +634,22 @@ impl Default for App<'_> {
                 s
             },
             is_loading_models: true,
+            mcp_statuses: Vec::new(),
+            mcp_bridges: Vec::new(),
+            mcp_connections: std::collections::HashMap::new(),
+            mcp_enabled: std::collections::HashSet::new(),
+            mcp_server_state: ratatui::widgets::ListState::default(),
+            needs_stream_scroll: false,
         }
     }
 }
 
 impl<'a> App<'a> {
-    pub fn new(system_prompt: &'a str, default_model: ModelConfig) -> Self {
+    pub fn new(
+        system_prompt: &'a str,
+        default_model: ModelConfig,
+        default_thinking_effort: ThinkingEffort,
+    ) -> Self {
         let model_list = ModelList::from_iter(MODELS.map(|(provider, name)| {
             if name == default_model.name {
                 (provider, name, true)
@@ -493,6 +664,7 @@ impl<'a> App<'a> {
                 default_model.provider.as_str(),
             ),
             model_list,
+            thinking_effort: default_thinking_effort,
             ..Default::default()
         }
     }
@@ -506,21 +678,206 @@ impl<'a> App<'a> {
         self.app_mode = new_app_mode;
     }
 
-    /// Returns true if the conversation currently being viewed is the one that
-    /// has an in-flight stream. When this is false, streaming-related UI (spinner,
-    /// partial message) should not be shown for the current view.
+    /// Returns true if the conversation currently being viewed has a stream
+    /// that is actively producing chunks. Streaming-related UI (live partial,
+    /// non-cached rendering) should only be shown when this is true.
     pub fn is_view_streaming(&self) -> bool {
-        self.is_streaming
-            && self.pending_conversation_id.is_some()
-            && self.pending_conversation_id == self.conversation_id
+        self.conversation_id
+            .is_some_and(|id| self.streams.get(&id).is_some_and(|s| s.is_streaming))
     }
 
     /// Returns true if the current view should show the "waiting for response"
-    /// indicator, i.e. the in-flight request belongs to the viewed conversation.
+    /// indicator (the request is in flight but no chunks have arrived yet).
     pub fn is_view_waiting(&self) -> bool {
-        self.is_waiting_for_response
-            && self.pending_conversation_id.is_some()
-            && self.pending_conversation_id == self.conversation_id
+        self.conversation_id
+            .is_some_and(|id| self.streams.get(&id).is_some_and(|s| s.is_waiting))
+    }
+
+    /// Returns true if the currently viewed conversation has any in-flight
+    /// stream (either waiting for the first chunk or actively streaming).
+    pub fn current_has_stream(&self) -> bool {
+        self.conversation_id
+            .is_some_and(|id| self.streams.contains_key(&id))
+    }
+
+    /// Number of conversations with an in-flight stream.
+    pub fn active_stream_count(&self) -> usize {
+        self.streams.len()
+    }
+
+    // --- MCP status ---
+
+    /// Mark an MCP server as connected, store its owning connection, and
+    /// register its bridge for tool calls. Replaces any prior status entry
+    /// with the same id.
+    ///
+    /// `tool_count` is computed by the caller (it requires an async query);
+    /// we keep this method sync since `App` methods run on the sync UI loop.
+    pub fn mcp_server_ready(&mut self, conn: crate::mcp::McpConnection, tool_count: usize) {
+        let id = conn.id.clone();
+        let display_name = conn.display_name.clone();
+        tracing::info!(mcp.server = %id, tools = tool_count, "MCP server ready");
+        self.update_mcp_status(crate::mcp::McpServerStatus::Ready {
+            id: id.clone(),
+            display_name,
+            tool_count,
+        });
+        // Replace any prior connection for this id (avoids duplicate bridges
+        // on reconnect), then rebuild the bridges list.
+        self.mcp_connections.insert(id, conn);
+        self.mcp_bridges = self
+            .mcp_connections
+            .values()
+            .map(|c| c.bridge.clone())
+            .collect();
+    }
+
+    /// Mark an MCP server as failed. Replaces any prior status entry with the
+    /// same id.
+    pub fn mcp_server_failed(&mut self, id: String, display_name: String, error: String) {
+        tracing::warn!(mcp.server = %id, error = %error, "MCP server failed to connect");
+        self.update_mcp_status(crate::mcp::McpServerStatus::Failed {
+            id,
+            display_name,
+            error,
+        });
+    }
+
+    /// Replace the status entry matching `id`, or push a new one.
+    fn update_mcp_status(&mut self, status: crate::mcp::McpServerStatus) {
+        let id = status.id().to_string();
+        if let Some(slot) = self.mcp_statuses.iter_mut().find(|s| s.id() == id) {
+            *slot = status;
+        } else {
+            self.mcp_statuses.push(status);
+        }
+    }
+
+    /// Counts of MCP servers by state, for the footer summary. Returns
+    /// `(ready, ready_tool_total, connecting, failed)`.
+    pub fn mcp_status_counts(&self) -> (usize, usize, usize, usize) {
+        let mut ready = 0;
+        let mut ready_tools = 0;
+        let mut connecting = 0;
+        let mut failed = 0;
+        for s in &self.mcp_statuses {
+            match s {
+                crate::mcp::McpServerStatus::Ready { tool_count, .. } => {
+                    ready += 1;
+                    ready_tools += *tool_count;
+                }
+                crate::mcp::McpServerStatus::Connecting { .. } => connecting += 1,
+                crate::mcp::McpServerStatus::Failed { .. } => failed += 1,
+                // Disabled servers are omitted from the footer counts.
+                crate::mcp::McpServerStatus::Disabled { .. } => {}
+            }
+        }
+        (ready, ready_tools, connecting, failed)
+    }
+
+    // --- Server management (enable/disable) ---
+
+    /// User intent: should this server be connected right now?
+    pub fn mcp_is_enabled(&self, id: &str) -> bool {
+        self.mcp_enabled.contains(id)
+    }
+
+    /// Disconnect a server: drop its owning connection (cancels the
+    /// transport), remove its bridge, and mark its status `Disabled`.
+    pub fn mcp_disable(&mut self, id: &str) {
+        if !self.mcp_enabled.remove(id) {
+            // Already disabled; nothing to do.
+            return;
+        }
+        // Drop the owning connection (cancels the running service).
+        self.mcp_connections.remove(id);
+        // Rebuild the bridges list from remaining connections (the one we
+        // just removed is gone, so its bridge drops out too).
+        self.mcp_bridges = self
+            .mcp_connections
+            .values()
+            .map(|c| c.bridge.clone())
+            .collect();
+        // Update status to Disabled, preserving the display name.
+        let display_name = self
+            .mcp_statuses
+            .iter()
+            .find(|s| s.id() == id)
+            .map(|s| s.display_name().to_string())
+            .unwrap_or_else(|| id.to_string());
+        self.update_mcp_status(crate::mcp::McpServerStatus::Disabled {
+            id: id.to_string(),
+            display_name,
+        });
+        tracing::info!(mcp.server = id, "MCP server disabled");
+    }
+
+    /// Mark a server as user-enabled and set its status to `Connecting`.
+    /// The caller is responsible for spawning the actual connect attempt.
+    pub fn mcp_enable(&mut self, id: &str) {
+        if self.mcp_enabled.insert(id.to_string()) {
+            let display_name = self
+                .mcp_statuses
+                .iter()
+                .find(|s| s.id() == id)
+                .map(|s| s.display_name().to_string())
+                .unwrap_or_else(|| id.to_string());
+            self.update_mcp_status(crate::mcp::McpServerStatus::Connecting {
+                id: id.to_string(),
+                display_name,
+            });
+            tracing::info!(mcp.server = id, "MCP server enabled");
+        }
+    }
+
+    /// The server ids in the management list order (sorted, matching
+    /// `mcp_statuses`).
+    pub fn mcp_server_ids(&self) -> Vec<String> {
+        self.mcp_statuses
+            .iter()
+            .map(|s| s.id().to_string())
+            .collect()
+    }
+
+    /// The currently selected server id in the management view, if any.
+    pub fn mcp_selected_id(&self) -> Option<String> {
+        let idx = self.mcp_server_state.selected()?;
+        self.mcp_server_ids().get(idx).cloned()
+    }
+
+    /// Cancels the in-flight stream for the currently viewed conversation, if
+    /// any. The streaming task will emit a `StreamCancelled` action with
+    /// whatever partial content was produced.
+    pub fn cancel_current_stream(&mut self) {
+        if let Some(id) = self.conversation_id
+            && let Some(state) = self.streams.get_mut(&id)
+            && let Some(tx) = state.cancel_tx.take()
+        {
+            let _ = tx.try_send(());
+        }
+    }
+
+    /// Extracts the set of streams that have been submitted but not yet
+    /// spawned into a streaming task. For each, a cancel channel is created
+    /// and stored on the stream state; the returned [`SpawnArgs`] carry the
+    /// receiving end plus the request data needed to spawn the task.
+    pub fn take_pending_spawns(&mut self) -> Vec<SpawnArgs> {
+        let mut pending = Vec::new();
+        for (&conv_id, state) in self.streams.iter_mut() {
+            if state.is_waiting && state.cancel_tx.is_none() {
+                let (cancel_tx, cancel_rx) = mpsc::channel::<()>(1);
+                state.cancel_tx = Some(cancel_tx);
+                pending.push(SpawnArgs {
+                    conversation_id: conv_id,
+                    messages: state.messages.clone(),
+                    selected_model: state.selected_model.clone(),
+                    thinking_effort: state.thinking_effort.clone(),
+                    system_prompt: state.system_prompt.clone(),
+                    cancel_rx,
+                });
+            }
+        }
+        pending
     }
 
     pub fn create_conversation(&mut self) -> AppResult<i64> {
@@ -542,6 +899,7 @@ impl<'a> App<'a> {
                 message,
                 width.saturating_sub(4) as usize,
                 self.theme.clone(),
+                &self.syntax_set,
             ));
         }
     }
@@ -591,8 +949,65 @@ impl<'a> App<'a> {
                     message,
                     width.saturating_sub(4) as usize,
                     self.theme.clone(),
+                    &self.syntax_set,
                 ));
             }
+        }
+    }
+
+    /// Refresh the formatted-lines cache for the currently-viewed streaming
+    /// conversation. Throttled to avoid re-parsing the entire streaming
+    /// message on every single token.
+    ///
+    /// This is a no-op when the viewed conversation is not streaming, when
+    /// no new content has arrived since the last pass, or when the throttle
+    /// interval has not yet elapsed.
+    pub fn refresh_streaming_format(&mut self) -> bool {
+        let conv_id = match self.conversation_id {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Check dirty flag and throttle without holding a mutable borrow.
+        let needs_refresh = {
+            let Some(state) = self.streams.get(&conv_id) else {
+                return false;
+            };
+            if !state.format_cache.dirty {
+                return false;
+            }
+            state.format_cache.last_format_time.elapsed()
+                >= Duration::from_millis(STREAMING_FORMAT_THROTTLE)
+        };
+
+        if !needs_refresh {
+            return false;
+        }
+
+        // Gather formatting inputs from the view (immutable borrows).
+        let message = match self.messages.last() {
+            Some(Message::Assistant(text, model, provider, raw)) => {
+                Message::Assistant(text.clone(), model.clone(), provider.clone(), raw.clone())
+            }
+            _ => return false,
+        };
+        let line_width = match self.size {
+            Some(TerminalSize { width, .. }) => width.saturating_sub(4) as usize,
+            None => return false,
+        };
+
+        // Format the streaming message (borrows theme + syntax_set immutably).
+        let formatted = style_message(message, line_width, self.theme.clone(), &self.syntax_set);
+
+        // Store the result in the stream state (mutable borrow).
+        if let Some(state) = self.streams.get_mut(&conv_id) {
+            state.format_cache.formatted_lines = formatted;
+            state.format_cache.last_text = state.partial.clone();
+            state.format_cache.dirty = false;
+            state.format_cache.last_format_time = Instant::now();
+            true
+        } else {
+            false
         }
     }
 
@@ -603,8 +1018,10 @@ impl<'a> App<'a> {
                 Message::User(_) => {
                     chat_log.push_str(&format!("User: {}\n", message));
                 }
-                Message::Assistant(message) => {
-                    chat_log.push_str(&format!("Assistant: {message}\n"));
+                Message::Assistant(message, model, provider, _) => {
+                    let model = model.as_deref().unwrap_or("unknown");
+                    let provider = provider.as_deref().unwrap_or("unknown");
+                    chat_log.push_str(&format!("Assistant ({model} -- {provider}): {message}\n"));
                 }
             }
         }
@@ -653,14 +1070,33 @@ impl<'a> App<'a> {
         // Bubble lines are pre-wrapped to fit the chat block, and the chat
         // paragraph is rendered without wrapping, so the line count is simply
         // the number of generated lines.
-        let total_lines = if !self.is_view_streaming() && self.do_highlight {
+        let total_lines = if self.is_view_streaming() {
+            if self.do_highlight {
+                // cached_lines for completed messages + streaming format cache
+                let stream_lines = self
+                    .conversation_id
+                    .and_then(|id| self.streams.get(&id))
+                    .map(|s| s.format_cache.formatted_lines.len())
+                    .unwrap_or(0);
+                let cached = self.cached_lines.len();
+                // If the format cache is empty (first pass not yet done),
+                // fall back to plain-text line count for the last message.
+                if stream_lines > 0 {
+                    cached + stream_lines
+                } else {
+                    messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
+                }
+            } else {
+                messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
+            }
+        } else if self.do_highlight {
             self.cached_lines.len()
         } else {
             messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
         };
         let sub = if self.is_view_streaming() {
             (height - 4) as usize
-        } else if self.has_unprocessed_messages {
+        } else if self.is_view_waiting() {
             (height - 8) as usize
         } else {
             2
@@ -709,11 +1145,14 @@ impl<'a> App<'a> {
         if text.is_empty() {
             return Ok(());
         }
-        if self.is_waiting_for_response {
-            bail!("The app is waiting for a response.");
+        if self.current_has_stream() {
+            bail!("A response is already in flight for this chat.");
         }
-        if self.is_streaming {
-            bail!("The app is streaming a response.");
+        if self.streams.len() >= MAX_CONCURRENT_STREAMS {
+            bail!(
+                "Too many concurrent streams (max {}). Wait for one to finish.",
+                MAX_CONCURRENT_STREAMS
+            );
         }
         let mut content_parts = Vec::new();
         if let Some(context) = &self.current_context {
@@ -765,13 +1204,12 @@ impl<'a> App<'a> {
         let n_assistant_messages = self
             .messages
             .iter()
-            .filter(|m| matches!(m, Message::Assistant(_)))
+            .filter(|m| matches!(m, Message::Assistant(..)))
             .count();
         if n_user_messages != n_assistant_messages {
             return Ok(());
         }
 
-        self.has_unprocessed_messages = true;
         self.reset_input_textarea();
         self.set_app_mode(AppMode::Normal);
         self.write_chat_log()
@@ -783,12 +1221,31 @@ impl<'a> App<'a> {
             let id = self.create_conversation()?;
             insert_message(id, &message)?;
         }
-        // Tie the upcoming streamed response to the conversation that this
-        // message was submitted to, so it persists here even if the user
-        // browses to another chat before the response arrives.
-        self.pending_conversation_id = self.conversation_id;
+        // Record an in-flight stream for this conversation so the upcoming
+        // response is routed here, and so the spawn loop can launch it.
+        let conv_id = self
+            .conversation_id
+            .ok_or_else(|| anyhow!("No conversation id after submit"))?;
         self.add_cached_lines(message.clone());
         self.messages.push(message);
+        // Record an in-flight stream for this conversation so the upcoming
+        // response is routed here, and so the spawn loop can launch it. The
+        // message history (including the message just submitted) is snapshotted
+        // here so the streaming task is independent of the current view.
+        self.streams.insert(
+            conv_id,
+            StreamState {
+                is_streaming: false,
+                is_waiting: true,
+                partial: String::new(),
+                cancel_tx: None,
+                messages: self.messages.clone(),
+                selected_model: self.selected_model.clone(),
+                thinking_effort: self.thinking_effort.clone(),
+                system_prompt: system_prompt_for_model(&self.selected_model, self.system_prompt),
+                format_cache: StreamingFormatCache::default(),
+            },
+        );
 
         self.scroll_to_bottom()
             .context("Scrolling to bottom failed.")?;
@@ -806,22 +1263,40 @@ impl<'a> App<'a> {
         }));
     }
 
-    pub async fn receive_message(&mut self, message: Message) -> AppResult<()> {
-        self.is_streaming = false;
-        self.is_waiting_for_response = false;
-        self.has_unprocessed_messages = false;
+    pub async fn receive_message(
+        &mut self,
+        conversation_id: i64,
+        message: Message,
+    ) -> AppResult<()> {
+        // The stream is resolved; drop its state. If the state is already gone
+        // (e.g. the conversation was deleted mid-stream), there is nothing to
+        // persist and nothing to update in the view.
+        let stream_state = match self.streams.remove(&conversation_id) {
+            Some(state) => state,
+            None => return Ok(()),
+        };
 
-        // The response always belongs to the conversation that originated the
-        // request, regardless of which chat the user is currently viewing.
-        let target_id = self.pending_conversation_id.or(self.conversation_id);
-        let is_current = target_id == self.conversation_id;
+        // Record which model produced this assistant message, taken from the
+        // in-flight stream state (the source of truth for the request that
+        // just completed). The incoming message from the streaming action
+        // carries no model info, so we attach it here before persisting /
+        // updating the view.
+        let message = match message {
+            Message::Assistant(text, model, provider, raw) => {
+                let (m, p) = model_provider_from_spec(&stream_state.selected_model);
+                Message::Assistant(text, model.or(m), provider.or(p), raw)
+            }
+            other => other,
+        };
+
+        let is_current = self.conversation_id == Some(conversation_id);
 
         // Only mutate the in-memory view when the user is still looking at the
         // conversation that the stream belongs to. Otherwise persist silently
         // to the database; the message will appear when the user reopens that
         // chat (which reloads from the database).
         if is_current {
-            if let Some(Message::Assistant(_)) = self.messages.last() {
+            if let Some(Message::Assistant(..)) = self.messages.last() {
                 self.messages.pop();
             }
 
@@ -839,45 +1314,91 @@ impl<'a> App<'a> {
                 .context("Unable to write received message to chat log")?;
         }
 
-        if let Some(id) = target_id {
-            insert_message(id, &message)?;
-            touch_conversation(id)?;
-        } else {
-            // No conversation exists yet; create one for the response. This
-            // only happens if the user message was never persisted, which
-            // should not occur in normal flow but is handled defensively.
-            let id = self.create_conversation()?;
-            insert_message(id, &message)?;
-            touch_conversation(id)?;
-        }
+        insert_message(conversation_id, &message)?;
+        touch_conversation(conversation_id)?;
 
         if is_current {
             self.add_cached_lines(message.clone());
             self.messages.push(message);
+            // The view was rendering the live partial from `messages_to_lines`
+            // during streaming; force a rebuild of the cached (highlighted)
+            // lines so it matches the final message list.
+            self.needs_recache = true;
         }
 
-        // Stream resolved; clear the pending association.
-        self.pending_conversation_id = None;
         Ok(())
     }
 
-    pub async fn receive_incomplete_message(&mut self, captured_content: &str) -> AppResult<()> {
-        // If we are already scrolled to the bottom, continue scrolling.
-        let do_scroll =
-            self.vertical_scroll == self.get_max_scroll().context("Could not get max scroll.")?;
-        // Ensure there is an assistant message at the tail to update. This is
-        // also needed when the user browses away and back to the streaming
-        // conversation mid-stream (the partial message would have been
-        // dropped when reloading from the database).
-        if !matches!(self.messages.last(), Some(Message::Assistant(_))) {
-            self.messages.push(Message::Assistant(String::new()));
+    pub async fn receive_incomplete_message(
+        &mut self,
+        conversation_id: i64,
+        captured_content: &str,
+    ) -> AppResult<()> {
+        let is_current = self.conversation_id == Some(conversation_id);
+
+        // Update the per-conversation partial buffer. If the stream state is
+        // gone (e.g. conversation deleted), ignore the chunk entirely.
+        //
+        // An empty `captured_content` corresponds to the `StreamStart` signal
+        // (the request has been sent but no chunks have arrived yet). We must
+        // NOT flip `is_waiting` -> `is_streaming` here, otherwise the
+        // "Processing user query..." spinner disappears before any real
+        // content arrives. The transition happens only on the first non-empty
+        // chunk.
+        let mut just_started = false;
+        if let Some(state) = self.streams.get_mut(&conversation_id) {
+            if !captured_content.is_empty() {
+                if !state.is_streaming {
+                    // First real chunk: waiting -> streaming transition.
+                    just_started = true;
+                }
+                state.is_waiting = false;
+                state.is_streaming = true;
+                state.partial = captured_content.to_string();
+                state.format_cache.dirty = true;
+            }
+        } else {
+            return Ok(());
         }
-        if let Some(Message::Assistant(last)) = self.messages.last_mut() {
-            *last = captured_content.to_string();
-        }
-        if do_scroll {
-            self.scroll_to_bottom()
-                .context("Could not set max scroll in incomplete message.")?;
+
+        // Only touch the in-memory view for the conversation the user is
+        // currently looking at, and only once there is actual content to
+        // show (the waiting bubble covers the no-content-yet phase).
+        if is_current && !captured_content.is_empty() {
+            // On the first chunk we force a scroll to the bottom: the
+            // max-scroll formula changes between the waiting and streaming
+            // phases, so the "are we already at the bottom" check would
+            // otherwise fail and auto-scroll would never latch on. On
+            // subsequent chunks we only follow if the user is already at the
+            // bottom.
+            let do_scroll = just_started
+                || self.vertical_scroll
+                    == self.get_max_scroll().context("Could not get max scroll.")?;
+            // Ensure there is an assistant message at the tail to update. This
+            // is also needed when the user browses away and back to the
+            // streaming conversation mid-stream (the partial message would
+            // have been dropped when reloading from the database).
+            if !matches!(self.messages.last(), Some(Message::Assistant(..))) {
+                // Seed a placeholder assistant message carrying the model /
+                // provider from the in-flight stream so the bubble header
+                // shows which model is responding even mid-stream.
+                let (model, provider) = match self.streams.get(&conversation_id) {
+                    Some(s) => model_provider_from_spec(&s.selected_model),
+                    None => (None, None),
+                };
+                self.messages
+                    .push(Message::Assistant(String::new(), model, provider, None));
+            }
+            if let Some(Message::Assistant(last, _, _, _)) = self.messages.last_mut() {
+                *last = captured_content.to_string();
+            }
+            if do_scroll {
+                // Defer the actual scroll-to-bottom until after
+                // refresh_streaming_format() has updated the format cache,
+                // so the scroll target reflects the current formatted line
+                // count.
+                self.needs_stream_scroll = true;
+            }
         }
         Ok(())
     }
@@ -892,7 +1413,7 @@ impl<'a> App<'a> {
     #[cfg(not(target_os = "linux"))]
     pub fn yank_latest_assistant_message(&mut self) {
         let mut assistant_messages = self.messages.iter().filter_map(|m| match m {
-            Message::Assistant(message) => Some(message),
+            Message::Assistant(message, _, _, _) => Some(message),
             _ => None,
         });
         if let Some(message) = assistant_messages.next_back() {
@@ -1043,6 +1564,26 @@ impl<'a> App<'a> {
         self.chat_list.state.select_last();
     }
 
+    /// Automatically select the model that produced the latest
+    /// assistant response in the current conversation (if any), so the
+    /// model selector reflects the model used for the most recent message.
+    fn sync_model_from_messages(&mut self) {
+        for msg in self.messages.iter().rev() {
+            if let Message::Assistant(_, Some(model), Some(provider), _) = msg {
+                for (idx, item) in self.model_list.items.iter_mut().enumerate() {
+                    if item.name == *model && item.provider == *provider {
+                        item.selected = true;
+                        self.model_list.state.select(Some(idx));
+                    } else {
+                        item.selected = false;
+                    }
+                }
+                self.selected_model = generate_model_spec(model, provider);
+                break;
+            }
+        }
+    }
+
     pub fn set_chat_list(&mut self, query_filter: Option<String>) -> AppResult<()> {
         let chats = list_conversations(query_filter)?;
         let chats = chats
@@ -1062,6 +1603,14 @@ impl<'a> App<'a> {
     pub fn delete_selected_chat(&mut self) -> AppResult<()> {
         if let Some(i) = self.chat_list.state.selected() {
             let chat_id = self.chat_list.items[i].chat_id;
+            // Cancel any in-flight stream for this conversation and discard its
+            // state so late actions from the task are ignored (the conversation
+            // will no longer exist in the database).
+            if let Some(state) = self.streams.remove(&chat_id)
+                && let Some(tx) = state.cancel_tx
+            {
+                let _ = tx.try_send(());
+            }
             delete_conversation(chat_id)?;
             self.chat_list.items.remove(i);
             let new_chat_index = if i >= self.chat_list.items.len() {
@@ -1076,12 +1625,18 @@ impl<'a> App<'a> {
             self.cached_lines.clear();
             self.messages = list_all_messages(new_chat_id)?;
             self.conversation_id = Some(new_chat_id);
+            self.sync_model_from_messages();
             self.needs_recache = true;
         }
         Ok(())
     }
 
     pub fn delete_chat_by_id(&mut self, id: i64) -> AppResult<()> {
+        if let Some(state) = self.streams.remove(&id)
+            && let Some(tx) = state.cancel_tx
+        {
+            let _ = tx.try_send(());
+        }
         delete_conversation(id)?;
         Ok(())
     }
@@ -1091,15 +1646,12 @@ impl<'a> App<'a> {
             self.messages.clear();
             self.cached_lines.clear();
             self.conversation_id = None;
-            self.has_unprocessed_messages = false;
             self.snippet_list = SnippetList::new();
-            // NOTE: `is_streaming` / `is_waiting_for_response` / `pending_conversation_id`
-            // are intentionally left untouched here. They describe the global
-            // in-flight request, which may belong to a different conversation
-            // than the freshly created (empty) chat. Resetting them would
-            // allow a second concurrent stream to be spawned. The view only
-            // shows streaming state for the conversation that owns the stream
-            // (see `is_view_streaming` / `is_view_waiting`).
+            // NOTE: `streams` is intentionally left untouched here. It tracks
+            // in-flight requests that may belong to other conversations; a
+            // freshly created (empty) chat has no stream of its own. The view
+            // only shows streaming state for the conversation that owns a
+            // stream (see `is_view_streaming` / `is_view_waiting`).
         }
     }
 
@@ -1112,7 +1664,6 @@ impl<'a> App<'a> {
     }
 
     pub fn redo_last_message(&mut self) -> AppResult<()> {
-        self.has_unprocessed_messages = false;
         while let Some(m) = self.messages.pop() {
             if let Some(chat_id) = self.conversation_id {
                 delete_message(chat_id, &m)?;
@@ -1169,9 +1720,10 @@ impl<'a> App<'a> {
                 item.selected = false;
             }
             self.chat_list.items[i].selected = true;
-            self.conversation_id = Some(self.chat_list.items[i].chat_id);
+            let conv_id = self.chat_list.items[i].chat_id;
+            self.conversation_id = Some(conv_id);
             self.messages.clear();
-            self.messages = list_all_messages(self.chat_list.items[i].chat_id)?;
+            self.messages = list_all_messages(conv_id)?;
             self.snippet_list.clear();
             for message in self.messages.iter_mut() {
                 let message_content = message.to_string();
@@ -1184,9 +1736,253 @@ impl<'a> App<'a> {
                     .collect();
                 self.snippet_list.items.extend(snippet_items);
             }
+            // Reattach the live partial if this conversation has an in-flight
+            // stream, so the user immediately sees progress when browsing back
+            // to it mid-stream.
+            if let Some(state) = self.streams.get(&conv_id)
+                && !state.partial.is_empty()
+            {
+                let (model, provider) = model_provider_from_spec(&state.selected_model);
+                self.messages.push(Message::Assistant(
+                    state.partial.clone(),
+                    model,
+                    provider,
+                    None,
+                ));
+            }
+
+            // Automatically select the model that produced the latest
+            // assistant response in this conversation, so the model selector
+            // reflects the model used for the most recent message.
+            self.sync_model_from_messages();
+
             self.needs_recache = true;
             self.vertical_scroll = 0;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcp::McpServerStatus;
+
+    /// Build an `App` with seeded MCP statuses and enabled intent (no live
+    /// connections — we only test the intent/status bookkeeping, which is the
+    /// pure logic that doesn't need a running service).
+    fn app_with_statuses(statuses: Vec<McpServerStatus>, enabled: &[&str]) -> App<'static> {
+        let mut app = App::default();
+        app.mcp_statuses = statuses;
+        for id in enabled {
+            app.mcp_enabled.insert(id.to_string());
+        }
+        app
+    }
+
+    #[test]
+    fn enable_adds_to_intent_and_sets_connecting() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Disabled {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &[],
+        );
+
+        assert!(!app.mcp_is_enabled("kagi"));
+        app.mcp_enable("kagi");
+        assert!(app.mcp_is_enabled("kagi"));
+        assert!(matches!(
+            app.mcp_statuses[0],
+            McpServerStatus::Connecting { .. }
+        ));
+    }
+
+    #[test]
+    fn enable_is_idempotent() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Connecting {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &["kagi"],
+        );
+        // Already enabled — calling again is a no-op.
+        app.mcp_enable("kagi");
+        assert_eq!(app.mcp_enabled.len(), 1);
+    }
+
+    #[test]
+    fn disable_removes_intent_and_sets_disabled() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Connecting {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &["kagi"],
+        );
+
+        assert!(app.mcp_is_enabled("kagi"));
+        app.mcp_disable("kagi");
+        assert!(!app.mcp_is_enabled("kagi"));
+        assert!(matches!(
+            app.mcp_statuses[0],
+            McpServerStatus::Disabled { .. }
+        ));
+        // No live connection was present, so bridges stay empty.
+        assert!(app.mcp_bridges.is_empty());
+    }
+
+    #[test]
+    fn disable_is_noop_when_already_disabled() {
+        let mut app = app_with_statuses(
+            vec![McpServerStatus::Disabled {
+                id: "kagi".into(),
+                display_name: "Kagi".into(),
+            }],
+            &[],
+        );
+        app.mcp_disable("kagi");
+        assert!(!app.mcp_is_enabled("kagi"));
+        assert!(matches!(
+            app.mcp_statuses[0],
+            McpServerStatus::Disabled { .. }
+        ));
+    }
+
+    #[test]
+    fn status_counts_exclude_disabled() {
+        let app = app_with_statuses(
+            vec![
+                McpServerStatus::Ready {
+                    id: "fs".into(),
+                    display_name: "FS".into(),
+                    tool_count: 5,
+                },
+                McpServerStatus::Disabled {
+                    id: "kagi".into(),
+                    display_name: "Kagi".into(),
+                },
+                McpServerStatus::Connecting {
+                    id: "weather".into(),
+                    display_name: "Weather".into(),
+                },
+            ],
+            &["fs", "weather"],
+        );
+        let (ready, tools, connecting, failed) = app.mcp_status_counts();
+        assert_eq!(ready, 1);
+        assert_eq!(tools, 5);
+        assert_eq!(connecting, 1);
+        assert_eq!(failed, 0);
+    }
+
+    /// Build an `App` with a custom set of models in the model list.
+    fn app_with_models(models: &[(&'static str, &'static str)]) -> App<'static> {
+        let mut app = App::default();
+        app.model_list = ModelList::from_iter(
+            models
+                .iter()
+                .map(|&(provider, name)| (provider, name, false))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        );
+        app
+    }
+
+    #[test]
+    fn sync_model_selects_last_assistant_model() {
+        let mut app = app_with_models(&[
+            ("OpenAI", "gpt-4o"),
+            ("Anthropic", "claude-sonnet-4-20250514"),
+            ("Gemini", "gemini-3.1-pro-preview"),
+        ]);
+
+        // Messages from a conversation that used different models.
+        app.messages = vec![
+            Message::User(vec![]),
+            Message::Assistant(
+                "hello".into(),
+                Some("gpt-4o".into()),
+                Some("OpenAI".into()),
+                None,
+            ),
+            Message::User(vec![]),
+            Message::Assistant(
+                "hi".into(),
+                Some("claude-sonnet-4-20250514".into()),
+                Some("Anthropic".into()),
+                None,
+            ),
+        ];
+
+        app.sync_model_from_messages();
+
+        // The last assistant message used Claude — that should be selected.
+        assert_eq!(app.model_list.items[0].selected, false); // gpt-4o
+        assert_eq!(app.model_list.items[1].selected, true); // claude
+        assert_eq!(app.model_list.items[2].selected, false); // gemini
+        let (name, provider) = model_provider_from_spec(&app.selected_model);
+        assert_eq!(name.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(provider.as_deref(), Some("Anthropic"));
+    }
+
+    #[test]
+    fn sync_model_no_assistant_messages_keeps_current() {
+        let mut app = app_with_models(&[("Gemini", "gemini-3.1-pro-preview")]);
+        app.model_list.items[0].selected = true;
+
+        // Conversation with only a user message.
+        app.messages = vec![Message::User(vec![])];
+
+        app.sync_model_from_messages();
+
+        // Nothing should change.
+        assert!(app.model_list.items[0].selected);
+    }
+
+    #[test]
+    fn sync_model_missing_from_list_deselects_all() {
+        let mut app =
+            app_with_models(&[("OpenAI", "gpt-4o"), ("Gemini", "gemini-3.1-pro-preview")]);
+        app.model_list.items[0].selected = true;
+
+        // Last assistant response used a model that's not in the list.
+        app.messages = vec![Message::Assistant(
+            "hi".into(),
+            Some("claude-sonnet-4-20250514".into()),
+            Some("Anthropic".into()),
+            None,
+        )];
+
+        app.sync_model_from_messages();
+
+        // No item in the list matches, so none should be selected.
+        assert_eq!(app.model_list.items[0].selected, false);
+        assert_eq!(app.model_list.items[1].selected, false);
+        // But selected_model is still set to the historical model.
+        let (name, provider) = model_provider_from_spec(&app.selected_model);
+        assert_eq!(name.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(provider.as_deref(), Some("Anthropic"));
+    }
+
+    #[test]
+    fn server_ids_preserve_status_order() {
+        let app = app_with_statuses(
+            vec![
+                McpServerStatus::Disabled {
+                    id: "alpha".into(),
+                    display_name: "Alpha".into(),
+                },
+                McpServerStatus::Ready {
+                    id: "beta".into(),
+                    display_name: "Beta".into(),
+                    tool_count: 2,
+                },
+            ],
+            &["beta"],
+        );
+        assert_eq!(app.mcp_server_ids(), vec!["alpha", "beta"]);
     }
 }

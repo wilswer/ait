@@ -21,6 +21,9 @@ pub mod handler;
 /// GenAI chat client.
 pub mod ai;
 
+/// MCP server loader / bridge wiring.
+pub mod mcp;
+
 /// Model selector.
 pub mod models;
 
@@ -33,6 +36,7 @@ pub mod cli;
 /// Configuration.
 pub mod config;
 
+pub mod observability;
 ///Chat conversations storage.
 pub mod storage;
 

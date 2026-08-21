@@ -1,16 +1,13 @@
 use anyhow::Context;
 use clap::Parser;
-use futures::{FutureExt, StreamExt};
-use genai::ModelSpec;
-use genai::adapter::AdapterKind;
-use genai::chat::{ChatStreamEvent, StreamChunk, StreamEnd};
+use futures::FutureExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio::task;
 
-use ait::ai::{assistant_response_streaming, get_models};
-use ait::app::{Action, App, AppMode, AppResult, Message, Notification};
+use ait::ai::{get_models, run_assistant_stream};
+use ait::app::{Action, App, AppMode, AppResult, Message, Notification, SpawnArgs, ThinkingEffort};
 use ait::cli::Cli;
 use ait::config::{Config, ModelConfig};
 use ait::event::{Event, EventHandler};
@@ -19,22 +16,16 @@ use ait::storage::{create_db, migrate_db};
 use ait::tui::Tui;
 
 /// Handle a single terminal event (key/mouse/tick/resize).
-fn handle_event(
-    event: Event,
-    app: &mut App,
-    current_cancel_tx: &mut Option<mpsc::Sender<()>>,
-    action_tx: &mpsc::Sender<Action>,
-) -> AppResult<()> {
+fn handle_event(event: Event, app: &mut App, action_tx: &mpsc::Sender<Action>) -> AppResult<()> {
     match event {
         Event::Tick => app.tick(),
         Event::Key(key_event) => {
             if key_event.code == crossterm::event::KeyCode::Char('u')
                 && app.app_mode == AppMode::Normal
             {
-                // If we have an active stream, send the cancel signal
-                if let Some(tx) = current_cancel_tx.take() {
-                    let _ = tx.try_send(());
-                }
+                // Cancel the in-flight stream for the currently viewed
+                // conversation, if any.
+                app.cancel_current_stream();
             }
             handle_key_events(key_event, app, action_tx).context("Error handling key events")?;
         }
@@ -52,45 +43,70 @@ fn handle_event(
 /// Handle a single async action coming back from a spawned task.
 async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
     match action {
-        Action::StreamStart => {
+        Action::StreamStart { conversation_id } => {
             // Only seed the in-memory partial message for the view when the
             // user is still on the conversation that owns the stream.
-            if app.pending_conversation_id == app.conversation_id {
-                app.receive_incomplete_message("").await?;
+            if app.conversation_id == Some(conversation_id) {
+                app.receive_incomplete_message(conversation_id, "").await?;
             }
         }
-        Action::StreamPartial(content) => {
-            // The first chunk means the response has started, regardless of
-            // which chat is currently viewed.
-            app.is_waiting_for_response = false;
-            if app.pending_conversation_id == app.conversation_id {
-                if !app.is_streaming {
-                    app.is_streaming = true;
-                    app.scroll_to_bottom()?;
-                }
-                app.receive_incomplete_message(&content).await?;
+        Action::StreamPartial {
+            conversation_id,
+            content,
+        } => {
+            app.receive_incomplete_message(conversation_id, &content)
+                .await?;
+        }
+        Action::StreamComplete {
+            conversation_id,
+            content,
+            raw_messages,
+        } => {
+            app.receive_message(
+                conversation_id,
+                Message::Assistant(content, None, None, raw_messages),
+            )
+            .await?;
+        }
+        Action::StreamCancelled {
+            conversation_id,
+            content,
+            raw_messages,
+        } => {
+            // Persist whatever portion of the message was generated before
+            // stopping.
+            app.receive_message(
+                conversation_id,
+                Message::Assistant(content, None, None, raw_messages),
+            )
+            .await?;
+        }
+        Action::Error {
+            conversation_id,
+            message,
+        } => {
+            // Drop the in-flight state for this conversation (if any).
+            if let Some(id) = conversation_id {
+                app.streams.remove(&id);
             }
-        }
-        Action::StreamComplete(content) => {
-            app.is_streaming = false;
-            app.is_waiting_for_response = false;
-            app.receive_message(Message::Assistant(content)).await?;
-        }
-        Action::StreamCancelled(content) => {
-            app.is_streaming = false;
-            app.is_waiting_for_response = false;
-            // Persist whatever portion of the message was generated before stopping
-            app.receive_message(Message::Assistant(content)).await?;
-        }
-        Action::Error(err_msg) => {
-            app.is_waiting_for_response = false;
-            app.has_unprocessed_messages = false;
-            app.is_streaming = false;
-            // The in-flight request failed; release its conversation association.
-            app.pending_conversation_id = None;
-            app.set_app_mode(AppMode::Notify {
-                notification: Notification::Error(err_msg),
-            });
+            // Surface the error notification when it either isn't tied to a
+            // specific conversation (e.g. model discovery) or the user is
+            // looking at the conversation it belongs to. Background stream
+            // failures don't interrupt the current view.
+            let show_notification = match conversation_id {
+                None => true,
+                Some(id) => app.conversation_id == Some(id),
+            };
+            if show_notification {
+                app.set_app_mode(AppMode::Notify {
+                    notification: Notification::Error(message),
+                });
+            } else {
+                tracing::warn!(
+                    ?conversation_id,
+                    "background stream errored while viewing a different chat"
+                );
+            }
         }
         Action::ModelsLoaded(models) => {
             app.set_models(models);
@@ -102,6 +118,13 @@ async fn handle_action(action: Action, app: &mut App<'_>) -> AppResult<()> {
         Action::ContextAddDone { notification } => {
             app.set_app_mode(AppMode::Notify { notification });
         }
+        // MCP outcomes are consumed directly in the main `tokio::select!`
+        // (they own a `McpConnection` that can't go through the action
+        // channel). `McpEnableRequested` is handled in the main loop where it
+        // has access to the config. These arms should never fire.
+        Action::McpServerReady { .. }
+        | Action::McpServerFailed { .. }
+        | Action::McpEnableRequested { .. } => {}
     }
     Ok(())
 }
@@ -139,6 +162,10 @@ Context:
             .unwrap_or_else(|| "You are a helpful, friendly assistant.".to_string())
     };
 
+    let default_thinking_level = config
+        .default_thinking_level
+        .unwrap_or(ThinkingEffort::Medium);
+
     // Resolve default model: Config > Default
     let default_model = config.default_model.unwrap_or_else(|| {
         ModelConfig::new("gemini-3.1-pro-preview".to_string(), "Gemini".to_string())
@@ -158,7 +185,30 @@ Context:
     // simply disabled and the app continues.
     let _log_guard = ait::logger::init_logging();
 
-    let mut app = App::new(&system_prompt, default_model);
+    let mut app = App::new(&system_prompt, default_model, default_thinking_level);
+
+    // Seed MCP status (one `Connecting` entry per enabled server) so the
+    // footer shows "connecting" immediately, before any server resolves.
+    app.mcp_statuses = ait::mcp::initial_statuses(&config.mcp);
+    // Seed user intent from config: every `enabled = true` server is on.
+    for (id, cfg) in &config.mcp.servers {
+        if cfg.enabled {
+            app.mcp_enabled.insert(id.clone());
+        }
+    }
+
+    // Connect to MCP servers declared (and enabled) in the config. This runs
+    // in the background so a slow/hanging server never blocks the TUI; each
+    // server's outcome (ready/failed) is delivered to the main loop, updating
+    // the footer and the tool bridge list. A clone of the config is kept for
+    // on-demand reconnects when the user re-enables a server.
+    let mcp_config = config.mcp.clone();
+    let (mcp_tx, mut mcp_rx) = mpsc::channel::<ait::mcp::McpServerOutcome>(16);
+    let mcp_enable_tx = mcp_tx.clone();
+    let mcp_config_for_connect = mcp_config.clone();
+    task::spawn(async move {
+        ait::mcp::connect_all_streaming(&mcp_config_for_connect, mcp_tx).await;
+    });
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(std::io::stderr());
@@ -169,7 +219,6 @@ Context:
 
     let events = EventHandler::new(16);
     let (action_tx, mut action_rx) = mpsc::channel(32);
-    let mut current_cancel_tx: Option<mpsc::Sender<()>> = None;
 
     let mut tui = Tui::new(terminal, events);
     tui.init().context("Failed to initialize terminal")?;
@@ -185,21 +234,94 @@ Context:
             // --- Terminal events ---
             maybe_event = tui.events.next() => {
                 let event = maybe_event.context("Unable to get next event")?;
-                handle_event(event, &mut app, &mut current_cancel_tx, &action_tx)?;
+                handle_event(event, &mut app, &action_tx)?;
 
                 // Drain any terminal events that arrived immediately behind it.
                 while let Some(Ok(next_event)) = tui.events.next().now_or_never() {
-                    handle_event(next_event, &mut app, &mut current_cancel_tx, &action_tx)?;
+                    handle_event(next_event, &mut app, &action_tx)?;
                 }
             }
 
             // --- Async actions from spawned tasks ---
             Some(action) = action_rx.recv() => {
+                // `McpEnableRequested` needs the config + mcp_tx, which live in
+                // this scope, so handle it here before `handle_action`.
+                if let Action::McpEnableRequested { ref id } = action {
+                    let Some(server_cfg) = mcp_config.servers.get(id).cloned() else {
+                        tracing::warn!(mcp.server = %id, "McpEnableRequested for unknown server id");
+                        continue;
+                    };
+                    let mcp_tx = mcp_enable_tx.clone();
+                    let id = id.clone();
+                    task::spawn(async move {
+                        let outcome = match ait::mcp::connect_one(id.clone(), server_cfg).await {
+                            Ok(conn) => ait::mcp::McpServerOutcome::Ready(Box::new(conn)),
+                            Err(e) => {
+                                tracing::warn!(mcp.server = %id, error = %e, "failed to connect MCP server");
+                                ait::mcp::McpServerOutcome::Failed { id, error: e.to_string() }
+                            }
+                        };
+                        let _ = mcp_tx.send(outcome).await;
+                    });
+                    continue;
+                }
                 handle_action(action, &mut app).await?;
 
                 // Drain any other actions already queued up.
                 while let Ok(action) = action_rx.try_recv() {
+                    if let Action::McpEnableRequested { ref id } = action {
+                        let Some(server_cfg) = mcp_config.servers.get(id).cloned() else {
+                            continue;
+                        };
+                        let mcp_tx = mcp_enable_tx.clone();
+                        let id = id.clone();
+                        task::spawn(async move {
+                            let outcome = match ait::mcp::connect_one(id.clone(), server_cfg).await {
+                                Ok(conn) => ait::mcp::McpServerOutcome::Ready(Box::new(conn)),
+                                Err(e) => {
+                                    tracing::warn!(mcp.server = %id, error = %e, "failed to connect MCP server");
+                                    ait::mcp::McpServerOutcome::Failed { id, error: e.to_string() }
+                                }
+                            };
+                            let _ = mcp_tx.send(outcome).await;
+                        });
+                        continue;
+                    }
                     handle_action(action, &mut app).await?;
+                }
+            }
+
+            // --- MCP server outcomes coming online ---
+            Some(outcome) = mcp_rx.recv() => {
+                use ait::mcp::McpServerOutcome;
+                match outcome {
+                    McpServerOutcome::Ready(conn) => {
+                        let conn = *conn;
+                        let id = conn.id.clone();
+                        // Only accept the connection if the user still wants
+                        // this server on (they may have disabled it while it
+                        // was connecting).
+                        if !app.mcp_is_enabled(&id) {
+                            tracing::info!(
+                                mcp.server = %id,
+                                "dropping connection for disabled server"
+                            );
+                            // Dropping `conn` cancels the service.
+                            continue;
+                        }
+                        let tool_count = conn.tool_count().await;
+                        app.mcp_server_ready(conn, tool_count);
+                    }
+                    McpServerOutcome::Failed { id, error } => {
+                        // Look up the display name we seeded earlier.
+                        let display_name = app
+                            .mcp_statuses
+                            .iter()
+                            .find(|s| s.id() == id)
+                            .map(|s| s.display_name().to_string())
+                            .unwrap_or_else(|| id.clone());
+                        app.mcp_server_failed(id, display_name, error);
+                    }
                 }
             }
         }
@@ -219,7 +341,10 @@ Context:
                     }
                     Err(e) => {
                         let _ = tx
-                            .send(Action::Error(format!("Failed to find models: {}", e)))
+                            .send(Action::Error {
+                                conversation_id: None,
+                                message: format!("Failed to find models: {}", e),
+                            })
                             .await;
                     }
                 }
@@ -231,150 +356,53 @@ Context:
             app.needs_recache = false;
         }
 
-        if app.has_unprocessed_messages {
-            app.has_unprocessed_messages = false;
-            app.is_waiting_for_response = true;
+        // Refresh the streaming format cache for the viewed conversation (if
+        // it is actively streaming). Throttled internally to avoid
+        // re-parsing on every single token.
+        // If the cache was updated and the user is following the stream,
+        // re-scroll to the bottom so the view tracks the new content.
+        if app.refresh_streaming_format() && app.needs_stream_scroll {
+            app.scroll_to_bottom()
+                .context("Could not scroll to bottom after streaming format refresh")?;
+            app.needs_stream_scroll = false;
+        }
 
-            // Clone data needed for the task
-            let messages = app.messages.clone();
-            let selected_model = app.selected_model.clone();
-            let thinking_effort = app.thinking_effort.clone();
+        // Launch streaming tasks for any conversations that have been
+        // submitted but not yet spawned. Scanning every iteration is cheap
+        // (the map is small and bounded by `MAX_CONCURRENT_STREAMS`).
+        for args in app.take_pending_spawns() {
+            let SpawnArgs {
+                conversation_id,
+                messages,
+                selected_model,
+                thinking_effort,
+                system_prompt: sys_prompt,
+                cancel_rx,
+            } = args;
             let ollama_host_url = resolved_ollama_host.clone();
-            let sys_prompt = match &selected_model {
-                ModelSpec::Name(name) => {
-                    if name.starts_with("gpt") {
-                        None
-                    } else {
-                        Some(system_prompt.clone())
-                    }
-                }
-                ModelSpec::Iden(iden) => {
-                    if iden.adapter_kind == AdapterKind::OpenAI {
-                        None
-                    } else {
-                        Some(system_prompt.clone())
-                    }
-                }
-                _ => Some(system_prompt.clone()),
-            };
-
             let tx = action_tx.clone();
+            // Snapshot the currently-connected MCP bridges so the spawned
+            // task can resolve and execute tools. `McpToolBridge` is cheap to
+            // clone (it holds a channel handle to the running service).
+            let mcp_bridges: Vec<mcp_genai_glue::McpToolBridge> = app.mcp_bridges.clone();
 
-            let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
-            current_cancel_tx = Some(cancel_tx);
-
-            // Spawn ONE task that does everything
+            // Spawn ONE task per conversation that drives the full streaming
+            // + MCP tool-calling loop, reporting progress via `tx`.
             task::spawn(async move {
-                let response = assistant_response_streaming(
+                if let Err(e) = run_assistant_stream(
                     &messages,
                     selected_model,
                     sys_prompt,
                     thinking_effort,
                     ollama_host_url,
+                    mcp_bridges,
+                    conversation_id,
+                    tx,
+                    cancel_rx,
                 )
-                .await;
-
-                match response {
-                    Ok(mut stream) => {
-                        let mut full_content = String::new();
-                        let mut full_thinking_content = String::new();
-                        let _ = tx.send(Action::StreamStart).await;
-
-                        loop {
-                            tokio::select! {
-                                _ = cancel_rx.recv() => {
-                                    let all_content = if !full_thinking_content.is_empty() {
-                                        format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
-                                    } else {
-                                        full_content
-                                    };
-                                    let _ = tx.send(Action::StreamCancelled(all_content)).await;
-                                    break;
-                                }
-                                result_opt = stream.next() => {
-                                    match result_opt {
-                                        Some(Ok(event)) => {
-                                            let mut partial_updated = false;
-
-                                            match event {
-                                                ChatStreamEvent::ReasoningChunk(StreamChunk { content }) if !content.is_empty() => {
-                                                    full_thinking_content.push_str(&content);
-                                                    partial_updated = true;
-                                                }
-                                                ChatStreamEvent::Chunk(StreamChunk { content }) if !content.is_empty() => {
-                                                    full_content.push_str(&content);
-                                                    partial_updated = true;
-                                                }
-                                                ChatStreamEvent::End(StreamEnd {captured_content: Some(content), captured_reasoning_content: reasoning_content, captured_usage: usage, ..}) => {
-                                                    // Log token usage
-                                                    if let Some(u) = &usage {
-                                                        let prompt = u.prompt_tokens.unwrap_or(0);
-                                                        let completion = u.completion_tokens.unwrap_or(0);
-                                                        let total = u.total_tokens.unwrap_or(0);
-                                                        let cached = u
-                                                            .prompt_tokens_details
-                                                            .as_ref()
-                                                            .and_then(|d| d.cached_tokens)
-                                                            .unwrap_or(0);
-                                                        let cache_creation = u
-                                                            .prompt_tokens_details
-                                                            .as_ref()
-                                                            .and_then(|d| d.cache_creation_tokens)
-                                                            .unwrap_or(0);
-
-                                                        tracing::info!(
-                                                            prompt_tokens = prompt,
-                                                            completion_tokens = completion,
-                                                            total_tokens = total,
-                                                            cached_tokens = cached,
-                                                            cache_creation_tokens = cache_creation,
-                                                            "stream completed - token usage"
-                                                        );
-                                                    } else {
-                                                        tracing::info!("stream completed - no token usage returned");
-                                                    }
-                                                    if let Some(texts) = content.into_joined_texts() {
-                                                        let full = if let Some(reasoning) = reasoning_content {
-                                                            format!("<think>\n{}\n</think>\n{}", reasoning, texts)
-                                                        } else {
-                                                            texts
-                                                        };
-                                                        let _ = tx.send(Action::StreamComplete(full)).await;
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-
-                                            if partial_updated {
-                                                let all_content = if !full_thinking_content.is_empty() {
-                                                    format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
-                                                } else {
-                                                    full_content.clone()
-                                                };
-                                                let _ = tx.send(Action::StreamPartial(all_content)).await;
-                                            }
-                                        }
-                                        Some(Err(e)) => {
-                                            let _ = tx.send(Action::Error(format!("Stream error: {}", e))).await;
-                                            break;
-                                        }
-                                        None => {
-                                            let all_content = if !full_thinking_content.is_empty() {
-                                                format!("<think>\n{}\n</think>\n{}", full_thinking_content, full_content)
-                                            } else {
-                                                full_content
-                                            };
-                                            let _ = tx.send(Action::StreamComplete(all_content)).await;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Action::Error(format!("API Error: {}", e))).await;
-                    }
+                .await
+                {
+                    tracing::error!(error = %e, "assistant stream task failed");
                 }
             });
         }

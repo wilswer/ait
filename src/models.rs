@@ -4,6 +4,24 @@ use ratatui::{
     widgets::{ListItem, ListState},
 };
 
+/// Extract a `(model, provider)` pair (both as display strings) from a
+/// [`ModelSpec`], for persisting alongside an assistant message and for
+/// showing in the UI which model produced a response. `provider` is `None`
+/// for a bare [`ModelSpec::Name`] (no adapter kind attached).
+pub fn model_provider_from_spec(spec: &ModelSpec) -> (Option<String>, Option<String>) {
+    match spec {
+        ModelSpec::Name(name) => (Some(name.as_str().to_string()), None),
+        ModelSpec::Iden(iden) => (
+            Some(iden.model_name.as_str().to_string()),
+            Some(iden.adapter_kind.as_str().to_string()),
+        ),
+        ModelSpec::Target(target) => (
+            Some(target.model.model_name.as_str().to_string()),
+            Some(target.model.adapter_kind.as_str().to_string()),
+        ),
+    }
+}
+
 pub struct ModelList {
     pub items: Vec<ModelItem>,
     pub state: ListState,

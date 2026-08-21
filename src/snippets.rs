@@ -27,16 +27,14 @@ pub fn create_highlighted_code<'a>(
     language: impl Into<String>,
     theme: &Theme,
     style: Style,
+    syntax_set: &SyntaxSet,
 ) -> Vec<Line<'a>> {
-    // Load syntax set and theme
+    // (syntax set is now passed in)
     let code = code.into();
     let language = language.into();
-    let ps = SyntaxSet::load_defaults_nonewlines();
-
-    // Get syntax reference for the specified language
-    let syntax = ps
+    let syntax = syntax_set
         .find_syntax_by_name(&language)
-        .unwrap_or_else(|| ps.find_syntax_plain_text());
+        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
     // Create highlighter with default theme
     let mut h = HighlightLines::new(syntax, theme);
@@ -46,7 +44,7 @@ pub fn create_highlighted_code<'a>(
         .lines()
         .map(|line| {
             let highlights = h
-                .highlight_line(line, &ps)
+                .highlight_line(line, syntax_set)
                 .expect("Error highlighting line");
 
             let spans: Vec<Span> = highlights

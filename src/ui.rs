@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::env;
 
 use genai::ModelSpec;
@@ -16,6 +17,7 @@ use ratatui::{
     },
 };
 use syntect::highlighting::Theme;
+use syntect::parsing::SyntaxSet;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
@@ -179,12 +181,17 @@ fn centered_rects_with_search(percent_x: u16, percent_y: u16, r: Rect) -> (Rect,
     (main_rect, search_rect)
 }
 
-fn right_aligned_rect(r: Rect, p: u16) -> Rect {
+fn right_aligned_rect_percent(r: Rect, p: u16) -> Rect {
     Layout::horizontal([Constraint::Percentage(100 - p), Constraint::Fill(1)]).split(r)[1]
 }
 
-fn left_aligned_rect(r: Rect, p: u16) -> Rect {
+fn left_aligned_rect_percent(r: Rect, p: u16) -> Rect {
     Layout::horizontal([Constraint::Fill(1), Constraint::Percentage(100 - p)]).split(r)[0]
+}
+
+fn make_rects_from_left_aligned_constraint(r: Rect, l: u16) -> (Rect, Rect) {
+    let rects = Layout::horizontal([Constraint::Length(l), Constraint::Fill(1)]).split(r);
+    (rects[0], rects[1])
 }
 
 /// Parse a single line for inline markdown markers (`**bold**`, `*italic*`, `` `code` ``).
@@ -261,6 +268,24 @@ fn is_separator(s: &str) -> bool {
 
 /// Render a markdown text segment into styled [`Line`]s, with word-wrapping.
 fn render_markdown_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    // Normalize tabs to 4 spaces.  `unicode-width` counts `\t` as 1 column,
+    // but terminals expand it to the next tab stop (up to 8 columns).  This
+    // mismatch breaks chat-bubble width calculations: `fit_spans` clips based
+    // on `unicode-width`'s count, yet the terminal renders the tab wider,
+    // pushing the right border off and eating padding.
+    let text_owned: String;
+    let text: &str = if text.contains('\t') || text.contains('\r') {
+        // Tool output can contain CRLF line endings. `str::lines()` removes
+        // the CR only when it is the line terminator; a stray CR (for
+        // example in a diff hunk) has zero width according to unicode-width
+        // but can move the terminal cursor back to column zero, overwriting
+        // the bubble border. Strip it before measuring/rendering.
+        text_owned = text.replace('\t', "    ").replace('\r', "");
+        &text_owned
+    } else {
+        text
+    };
+
     let mut lines: Vec<Line<'static>> = Vec::new();
     let raw_lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
@@ -435,10 +460,10 @@ pub fn strip_inline_markdown(text: &str) -> String {
 }
 
 /// Word-wrap a sequence of styled spans into multiple lines, preserving the
-/// style of every (sub)span. Splits on whitespace; a single long word may
-/// exceed `width`.
+/// style of every (sub)span. Splits on whitespace; a single long word that
+/// exceeds `width` is broken at the character level so no line ever overflows.
 fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
-    use unicode_width::UnicodeWidthStr;
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
     if width == 0 {
         return vec![Line::from(spans.to_vec())];
@@ -497,8 +522,42 @@ fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Line<'a>> {
                 continue;
             }
         }
-        cur_w += w;
-        cur.push(Span::styled(tok.text.into_owned(), tok.style));
+        // If a single token is wider than the available space on the
+        // current line, break it at the character level so no line ever
+        // exceeds `width`.  Without this, a long unbreakable token (e.g.
+        // a URL, a file path, or GFF3 data) overflows the bubble and breaks
+        // the right-border padding.
+        let avail = width - cur_w;
+        if w > avail {
+            let style = tok.style;
+            let mut chars = tok.text.as_ref().chars().peekable();
+            while chars.peek().is_some() {
+                let avail = width - cur_w;
+                let mut chunk = String::new();
+                let mut chunk_w = 0usize;
+                while let Some(&ch) = chars.peek() {
+                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                    if chunk_w + cw > avail && !chunk.is_empty() {
+                        break;
+                    }
+                    chunk.push(ch);
+                    chunk_w += cw;
+                    chars.next();
+                }
+                cur.push(Span::styled(chunk, style));
+                cur_w += chunk_w;
+                if cur_w >= width {
+                    if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
+                        cur.pop();
+                    }
+                    out.push(Line::from(std::mem::take(&mut cur)));
+                    cur_w = 0;
+                }
+            }
+        } else {
+            cur_w += w;
+            cur.push(Span::styled(tok.text.into_owned(), tok.style));
+        }
     }
     if !cur.is_empty() {
         if cur.last().map(|s| s.content.as_ref()) == Some(" ") {
@@ -685,7 +744,12 @@ enum TableAlignment {
     Right,
 }
 
-fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) -> Vec<Line<'a>> {
+fn process_code_blocks<'a>(
+    text: impl Into<String>,
+    width: usize,
+    theme: Theme,
+    syntax_set: &SyntaxSet,
+) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
     let text = text.into();
     let style = Style::default();
@@ -720,12 +784,14 @@ fn process_code_blocks<'a>(text: impl Into<String>, width: usize, theme: Theme) 
                         Line::from(format!("{}```{}", " ".repeat(indent), &language))
                             .style(style.patch(Style::default().fg(Color::DarkGray))),
                     );
+                    let code = code.replace('\t', "    ").replace('\r', "");
                     let clines = if !language.is_empty() {
                         create_highlighted_code(
                             &code,
                             translate_language_name_to_syntect_name(Some(&language)),
                             &theme,
                             style,
+                            syntax_set,
                         )
                     } else {
                         let wrapped = textwrap::wrap(&code, width);
@@ -760,14 +826,14 @@ enum BubbleAlign {
 }
 
 struct BubbleSkin {
-    title: &'static str,
+    title: Cow<'static, str>,
     align: BubbleAlign,
     border: Style,
 }
 
 fn user_skin() -> BubbleSkin {
     BubbleSkin {
-        title: "User",
+        title: Cow::Borrowed("User"),
         align: BubbleAlign::Right,
         border: Style::default()
             .fg(Color::Yellow)
@@ -777,12 +843,21 @@ fn user_skin() -> BubbleSkin {
 
 fn assistant_skin() -> BubbleSkin {
     BubbleSkin {
-        title: "Assistant",
+        title: Cow::Borrowed("Assistant"),
         align: BubbleAlign::Left,
         border: Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
     }
+}
+
+/// Build the title for an assistant bubble, including which model produced
+/// the response. Falls back to "unknown" for messages that predate model
+/// tracking (or while the model is not yet known).
+fn assistant_title(model: Option<&str>, provider: Option<&str>) -> Cow<'static, str> {
+    let model = model.unwrap_or("unknown");
+    let provider = provider.unwrap_or("unknown");
+    Cow::Owned(format!("Assistant ({model} -- {provider})"))
 }
 
 /// Maximum width available for the *content* (text) inside a bubble, given the
@@ -828,6 +903,66 @@ fn fit_spans<'a>(line: &Line, width: usize) -> Vec<Span<'a>> {
     out
 }
 
+/// Build the styled spans for a chat-history-preview role header, dimming
+/// and italicizing the model attribution `(<model> -- <provider>)` while the
+/// role label and trailing colon use `role_style.bold()`.
+fn style_preview_header(header: &str, role_style: Style) -> Vec<Span<'static>> {
+    let label_style = role_style.bold();
+    let attr_style = Style::default().dim().italic();
+    match header.split_once('(') {
+        Some((role, rest)) => {
+            let mut spans = vec![Span::styled(role.to_string(), label_style)];
+            spans.push(Span::styled("(".to_string(), attr_style));
+            if let Some((attr, tail)) = rest.split_once(')') {
+                spans.push(Span::styled(attr.to_string(), attr_style));
+                spans.push(Span::styled(")".to_string(), attr_style));
+                spans.push(Span::styled(tail.to_string(), label_style));
+            } else {
+                spans.push(Span::styled(rest.to_string(), attr_style));
+            }
+            spans
+        }
+        None => vec![Span::styled(header.to_string(), label_style)],
+    }
+}
+
+/// Build the styled spans for an assistant bubble's top border header, with
+/// the model attribution (`(<model> -- <provider>)`) dimmed and italicized
+/// to de-emphasize it next to the bold "Assistant" role label. Only the
+/// portion matching `attribution` (i.e. starting at the first `(`) is
+/// de-emphasized; the role label and surrounding border chars use `border`.
+fn bubble_title_spans(
+    prefix: &str,
+    title: &str,
+    suffix: &str,
+    border: Style,
+) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let attr_style = Style::default().dim().italic();
+    // Split the title into role + attribution at the first '('.
+    match title.split_once('(') {
+        Some((role, rest)) => {
+            spans.push(Span::styled(prefix.to_string(), border));
+            spans.push(Span::styled(role.to_string(), border));
+            spans.push(Span::styled("(".to_string(), attr_style));
+            // `rest` includes the trailing ')' (and any text after it).
+            if let Some((attr, tail)) = rest.split_once(')') {
+                spans.push(Span::styled(attr.to_string(), attr_style));
+                spans.push(Span::styled(")".to_string(), attr_style));
+                spans.push(Span::styled(tail.to_string(), border));
+            } else {
+                spans.push(Span::styled(rest.to_string(), attr_style));
+            }
+            spans.push(Span::styled(suffix.to_string(), border));
+        }
+        None => {
+            // No attribution (e.g. plain "Assistant"): emit as a single span.
+            spans.push(Span::styled(format!("{prefix}{title}{suffix}"), border));
+        }
+    }
+    spans
+}
+
 /// Wrap already-rendered body lines in a rounded chat bubble, aligned left or
 /// right within `line_width` columns.
 fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -> Vec<Line<'a>> {
@@ -859,13 +994,15 @@ fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -
     let mut lines: Vec<Line<'a>> = Vec::new();
 
     if skin.title == "Assistant" {
-        // Top border: ╭─ Assistant ───────╮
-        let head = format!("╭─ {} ", skin.title);
-        let fill = outer.saturating_sub(head.chars().count() + 1);
-        lines.push(pad(vec![Span::styled(
-            format!("{}{}╮", head, "─".repeat(fill)),
-            skin.border,
-        )]));
+        // Top border: ╭─ Assistant (<model> -- <provider>) ───────╮
+        // The model attribution is separated out and dimmed/italicized so
+        // the role label stays the visual anchor.
+        let head_spans = bubble_title_spans("╭─ ", &skin.title, " ", skin.border);
+        let head_w = skin.title.chars().count() + "╭─ ".chars().count() + 1;
+        let fill = outer.saturating_sub(head_w + 1);
+        let mut spans = head_spans;
+        spans.push(Span::styled(format!("{}╮", "─".repeat(fill)), skin.border));
+        lines.push(pad(spans));
     } else {
         // Top border: ╭─────── User ─╮
         let head = format!(" {} ─╮", skin.title);
@@ -894,25 +1031,39 @@ fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -
 }
 
 /// Render a single message as a styled (syntax-highlighted) chat bubble.
-pub fn style_message<'a>(message: Message, line_width: usize, theme: Theme) -> Vec<Line<'a>> {
+pub fn style_message<'a>(
+    message: Message,
+    line_width: usize,
+    theme: Theme,
+    syntax_set: &SyntaxSet,
+) -> Vec<Line<'a>> {
     let content_width = bubble_max_content_width(line_width);
     let (skin, text) = match &message {
         Message::User(_) => (user_skin(), message.to_string()),
-        Message::Assistant(t) => {
+        Message::Assistant(t, model, provider, _) => {
             if t.is_empty() {
                 return Vec::new();
             }
-            (assistant_skin(), t.clone())
+            let mut skin = assistant_skin();
+            skin.title = assistant_title(model.as_deref(), provider.as_deref());
+            (skin, t.clone())
         }
     };
-    let body = process_code_blocks(text, content_width, theme);
+    let body = process_code_blocks(text, content_width, theme, syntax_set);
     let mut lines = frame_bubble(body, line_width, &skin);
     lines.push(Line::from(""));
     lines
 }
 
 /// Render an assistant "waiting for response" bubble with an animated spinner.
-fn waiting_bubble<'a>(line_width: usize, spinner_frame: usize) -> Vec<Line<'a>> {
+/// `model`/`provider` (taken from the in-flight stream state) are shown in
+/// the bubble header so the user can see which model is responding.
+fn waiting_bubble<'a>(
+    line_width: usize,
+    spinner_frame: usize,
+    model: Option<&str>,
+    provider: Option<&str>,
+) -> Vec<Line<'a>> {
     let frame = SPINNER_FRAMES[(spinner_frame / 2) % SPINNER_FRAMES.len()];
     let thinking_split_n = (spinner_frame / 8) % THINKING_VERB.len();
     let (think1, think2) = THINKING_VERB.split_at(thinking_split_n);
@@ -924,7 +1075,9 @@ fn waiting_bubble<'a>(line_width: usize, spinner_frame: usize) -> Vec<Line<'a>> 
         ])
         .style(Style::default().fg(Color::DarkGray)),
     ];
-    let mut lines = frame_bubble(body, line_width, &assistant_skin());
+    let mut skin = assistant_skin();
+    skin.title = assistant_title(model, provider);
+    let mut lines = frame_bubble(body, line_width, &skin);
     lines.push(Line::from(""));
     lines
 }
@@ -936,11 +1089,13 @@ pub fn messages_to_lines<'a>(messages: &[Message], line_width: usize) -> Vec<Lin
     for message in messages {
         let (skin, text) = match message {
             Message::User(_) => (user_skin(), message.to_string()),
-            Message::Assistant(m) => {
+            Message::Assistant(m, model, provider, _) => {
                 if m.is_empty() {
                     continue;
                 }
-                (assistant_skin(), m.clone())
+                let mut skin = assistant_skin();
+                skin.title = assistant_title(model.as_deref(), provider.as_deref());
+                (skin, m.clone())
             }
         };
         let body: Vec<Line> = textwrap::wrap(&text, content_width.max(1))
@@ -959,14 +1114,54 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
         .end_symbol(Some("↓"));
     // Width available for a rendered line inside the bordered chat block.
     let line_width = messages_area.width.saturating_sub(2) as usize;
-    let mut messages = if !app.is_view_streaming() && app.do_highlight {
+
+    // During streaming with highlighting enabled, use the pre-formatted
+    // cached lines for all completed messages, plus the incrementally-
+    // formatted lines from the streaming format cache for the streaming
+    // assistant message.
+    let mut messages = if app.is_view_streaming() {
+        if app.do_highlight {
+            // cached_lines contains all completed messages (user + prior
+            // assistant). The streaming assistant message is NOT in
+            // cached_lines — it is appended from the format cache.
+            let mut lines = app.cached_lines.clone();
+            // Append the incrementally-formatted streaming message.
+            if let Some(id) = app.conversation_id
+                && let Some(state) = app.streams.get(&id)
+            {
+                if !state.format_cache.formatted_lines.is_empty() {
+                    lines.extend(state.format_cache.formatted_lines.clone());
+                } else {
+                    // Fallback: render the last message as plain text
+                    // until the first format pass completes.
+                    if let Some(last) = app.messages.last() {
+                        lines.extend(messages_to_lines(std::slice::from_ref(last), line_width));
+                    }
+                }
+            }
+            lines
+        } else {
+            messages_to_lines(&app.messages, line_width)
+        }
+    } else if app.do_highlight {
         app.cached_lines.clone()
     } else {
         messages_to_lines(&app.messages, line_width)
     };
 
     if app.is_view_waiting() {
-        messages.extend(waiting_bubble(line_width, app.spinner_frame));
+        // Pull the model/provider from the in-flight stream state so the
+        // waiting bubble header shows which model is being queried.
+        let (wm, wp) = match app.conversation_id.and_then(|id| app.streams.get(&id)) {
+            Some(s) => crate::models::model_provider_from_spec(&s.selected_model),
+            None => (None, None),
+        };
+        messages.extend(waiting_bubble(
+            line_width,
+            app.spinner_frame,
+            wm.as_deref(),
+            wp.as_deref(),
+        ));
     }
 
     let mut scrollbar_state = ScrollbarState::new(messages.len()).position(app.vertical_scroll);
@@ -1255,11 +1450,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_thinking_effort_list(f, area, app);
         }
         AppMode::SnippetSelection => {
-            let area = left_aligned_rect(messages_area, 25);
+            let area = left_aligned_rect_percent(messages_area, 25);
             render_popup(f, "Select Snippet", area);
             render_snippet_list(f, area, app);
 
-            let preview_area = right_aligned_rect(messages_area, 75);
+            let preview_area = right_aligned_rect_percent(messages_area, 75);
             render_popup(f, "Snippet Preview", preview_area);
             if let Some(snippet) = app.get_snippet() {
                 let snippet_text = if let Some(lang) = &snippet.language {
@@ -1268,6 +1463,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         lang,
                         &app.theme,
                         Style::default(),
+                        &app.syntax_set,
                     ))
                 } else {
                     Text::from(snippet.text.as_str()).magenta()
@@ -1313,6 +1509,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to explore files, ".into(),
                 "c".bold(),
                 " to view context files, ".into(),
+                "S".bold(),
+                " to manage MCP servers, ".into(),
                 "n".bold(),
                 " to start a new chat, ".into(),
                 "u".bold(),
@@ -1380,6 +1578,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Esc/q/Enter".bold(),
                 " to return to 'normal' mode.".into(),
             ];
+            let server_keys = vec![
+                "Press ".into(),
+                "Up/Down".bold(),
+                " to navigate the server list, ".into(),
+                "Space".bold(),
+                " to toggle a server's enabled state (connecting/disconnecting it), or press "
+                    .into(),
+                "Esc/q/S".bold(),
+                " to return to 'normal' mode.".into(),
+            ];
             let msg = vec![
                 Line::from(Span::raw("Welcome to AI in the Terminal! ").bold()),
                 Line::from(""),
@@ -1411,6 +1619,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Line::from(""),
                 Line::from(Span::raw("When viewing context:").bold()),
                 Line::from(context_keys),
+                Line::from(""),
+                Line::from(Span::raw("When managing MCP servers:").bold()),
+                Line::from(server_keys),
             ];
             let help_text_block = Block::new().padding(Padding::uniform(1));
             let text = Text::from(msg).patch_style(Style::default());
@@ -1424,7 +1635,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
                 .end_symbol(Some("↓"));
-            let mut scrollbar_state = ScrollbarState::new(30).position(app.help_scroll);
+            let mut scrollbar_state = ScrollbarState::new(40).position(app.help_scroll);
             f.render_stateful_widget(
                 scrollbar,
                 area.inner(Margin {
@@ -1444,6 +1655,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_popup(f, "Files Added to Context", area);
             render_context_list(f, area, app);
         }
+        AppMode::ServerManagement => {
+            let area = centered_rect(70, 60, messages_area);
+            render_popup(f, "MCP Servers - Space to toggle, Esc/q to return", area);
+            render_server_management(f, area, app);
+        }
         AppMode::Notify { notification } => {
             let area = centered_rect(40, 40, messages_area);
             render_popup(f, "Notification", area);
@@ -1451,7 +1667,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
     }
 
-    let msg = match app.app_mode {
+    let mut msg = match app.app_mode {
         AppMode::Editing => {
             vec![
                 "Press ".into(),
@@ -1478,6 +1694,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
             vec![
                 "These files will be included in your next message. Press ".into(),
                 "Esc/q/Enter".bold(),
+                " to return.".into(),
+            ]
+        }
+        AppMode::ServerManagement => {
+            vec![
+                "Navigate: ".into(),
+                "j/k or Up/Down".bold(),
+                ". ".into(),
+                "Space".bold(),
+                " to toggle enabled. ".into(),
+                "Esc/q/S".bold(),
                 " to return.".into(),
             ]
         }
@@ -1543,6 +1770,48 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ]
         }
     };
+    if app.active_stream_count() > 0 {
+        msg.push("  ".into());
+        msg.push(Span::styled(
+            format!("⏳ streaming {} chat(s)", app.active_stream_count()),
+            Style::default().fg(Color::Cyan),
+        ));
+        if app.is_view_streaming() || app.is_view_waiting() {
+            msg.push(Span::styled(
+                " (this chat) — u to cancel",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+    }
+
+    // MCP server status summary (only when at least one server is configured).
+    if !app.mcp_statuses.is_empty() {
+        let (ready, ready_tools, connecting, failed) = app.mcp_status_counts();
+        msg.push("   ".into());
+        msg.push(Span::styled("MCP:", Style::default().fg(Color::DarkGray)));
+        if ready > 0 {
+            msg.push(" ".into());
+            msg.push(Span::styled(
+                format!("{ready} ready ({ready_tools} tools)"),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        if connecting > 0 {
+            msg.push(" ".into());
+            msg.push(Span::styled(
+                format!("{connecting} connecting"),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        if failed > 0 {
+            msg.push(" ".into());
+            msg.push(Span::styled(
+                format!("{failed} failed"),
+                Style::default().fg(Color::Red),
+            ));
+        }
+    }
+
     let text = Text::from(Line::from(msg)).patch_style(Style::default());
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, help_area);
@@ -1653,29 +1922,168 @@ fn render_chat_history_list(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(styled_list(items, block), area, &mut app.chat_list.state);
 }
 
+/// Case-insensitive substring test. Used to decide which lines of the chat
+/// preview are shown while filtering conversations by message content.
+fn ci_contains(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack.to_lowercase().contains(&needle.to_lowercase())
+}
+
+/// If `slice` starts with a case-insensitive match of `needle` (compared
+/// character by character), returns the byte length of the matched prefix.
+/// Otherwise returns `None`. Unicode case folding is handled via
+/// `char::to_lowercase`.
+fn ci_match_len(slice: &str, needle: &[char]) -> Option<usize> {
+    let mut si = slice.char_indices();
+    for nc in needle {
+        let (_, sc) = si.next()?;
+        if !sc.to_lowercase().eq(nc.to_lowercase()) {
+            return None;
+        }
+    }
+    // Byte offset where the next char starts, or slice length if we consumed
+    // everything — i.e. the byte length of the matched prefix.
+    Some(match si.next() {
+        Some((nb, _)) => nb,
+        None => slice.len(),
+    })
+}
+
+/// Split `line` into styled spans, wrapping every (case-insensitive)
+/// occurrence of `query` in `match_style` and the surrounding text in
+/// `base_style`. Slicing is byte-correct and Unicode-aware.
+fn highlight_line(
+    line: &str,
+    query: &str,
+    base_style: Style,
+    match_style: Style,
+) -> Vec<Span<'static>> {
+    if query.is_empty() {
+        return vec![Span::styled(line.to_string(), base_style)];
+    }
+    let needle: Vec<char> = query.chars().collect();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut rest = 0usize; // byte offset of the un-emitted prefix
+    let mut pos = 0usize; // current search position
+    let len = line.len();
+    while pos < len {
+        if let Some(mlen) = ci_match_len(&line[pos..], &needle) {
+            let abs_end = pos + mlen;
+            if pos > rest {
+                spans.push(Span::styled(line[rest..pos].to_string(), base_style));
+            }
+            spans.push(Span::styled(line[pos..abs_end].to_string(), match_style));
+            pos = abs_end;
+            rest = pos;
+        } else {
+            // Advance one character boundary.
+            match line[pos..].char_indices().nth(1) {
+                Some((nb, _)) => pos += nb,
+                None => break,
+            }
+        }
+    }
+    if rest < len {
+        spans.push(Span::styled(line[rest..].to_string(), base_style));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(line.to_string(), base_style));
+    }
+    spans
+}
+
 fn render_chat_history_panel(f: &mut Frame, messages_area: Rect, app: &mut App) {
-    let area = left_aligned_rect(messages_area, 25);
+    let (area, preview_area) = make_rects_from_left_aligned_constraint(messages_area, 36);
     render_popup(f, "Select Chat", area);
     render_chat_history_list(f, area, app);
 
-    let preview_area = right_aligned_rect(messages_area, 75);
     render_popup(f, "Chat Preview", preview_area);
 
+    // The active search query (if any) drives match highlighting and line
+    // filtering in the preview. When a query is present, only lines that
+    // contain it (case-insensitively) are shown, with every occurrence
+    // highlighted in bold; otherwise the full conversation is shown plainly.
+    let query: Option<String> = app
+        .search_bar
+        .lines()
+        .first()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let preview_text = app.get_selected_chat_id().map(|id| {
-        list_all_messages(*id)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|m| match m {
-                Message::User(_) => format!("USER: {}\n", m),
-                Message::Assistant(t) => format!("ASSISTANT: {t}\n"),
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let messages = list_all_messages(*id).unwrap_or_default();
+        let mut out: Vec<Line> = Vec::new();
+        for m in messages {
+            let (header, body, role_style): (Cow<'static, str>, String, Style) = match &m {
+                Message::User(_) => (
+                    Cow::Borrowed("USER:"),
+                    m.to_string(),
+                    Style::default().yellow(),
+                ),
+                Message::Assistant(t, model, provider, _) => {
+                    let model = model.as_deref().unwrap_or("unknown");
+                    let provider = provider.as_deref().unwrap_or("unknown");
+                    (
+                        Cow::Owned(format!("ASSISTANT: ({model} -- {provider})")),
+                        t.clone(),
+                        Style::default().green(),
+                    )
+                }
+            };
+            // Match style keeps the role color but adds bold + a highlight
+            // background so occurrences are easy to spot in the preview.
+            let match_style = role_style.add_modifier(Modifier::BOLD).bg(Color::DarkGray);
+
+            let mut wrote_header = false;
+            let mut last_emitted_idx: Option<usize> = None;
+            // Trailing "\n" mirrors the original behaviour (a blank separator
+            // line per message in the unfiltered view). Indexing the lines
+            // lets us detect gaps between matches and insert a dim "..."
+            // separator so the user can tell non-matching lines were skipped.
+            let body_with_newline = format!("{body}\n");
+            let lines: Vec<&str> = body_with_newline.split('\n').collect();
+            for (i, line) in lines.iter().enumerate() {
+                let matches = query.as_ref().is_some_and(|q| ci_contains(line, q));
+                if query.is_some() && !matches {
+                    continue;
+                }
+                if !wrote_header {
+                    // De-emphasize the model attribution in the preview
+                    // header to match the chat bubble styling: the role label
+                    // and colon use the role color + bold, while the
+                    // `(<model> -- <provider>)` part is dimmed/italicized.
+                    let header_spans = style_preview_header(&header, role_style);
+                    out.push(Line::from(header_spans));
+                    wrote_header = true;
+                }
+                // Insert a "..." gap separator when lines were skipped between
+                // the previously shown line and this one (also covers the gap
+                // before the first match of a message). Only meaningful while
+                // filtering — in the unfiltered view every line is shown.
+                if query.is_some()
+                    && match last_emitted_idx {
+                        Some(prev) => prev + 1 != i,
+                        None => i != 0,
+                    }
+                {
+                    out.push(Line::from("...").style(Style::default().fg(Color::DarkGray).dim()));
+                }
+                let spans = match &query {
+                    Some(q) => highlight_line(line, q, role_style, match_style),
+                    None => vec![Span::styled(line.to_string(), role_style)],
+                };
+                out.push(Line::from(spans));
+                last_emitted_idx = Some(i);
+            }
+        }
+        out
     });
     if let Some(text) = preview_text {
         f.render_widget(
-            Paragraph::new(Text::from(text.as_str()).magenta())
-                .wrap(Wrap { trim: true })
+            Paragraph::new(text)
+                .wrap(Wrap { trim: false })
                 .block(Block::new().padding(Padding::uniform(1))),
             preview_area,
         );
@@ -1801,6 +2209,75 @@ fn render_notification(f: &mut Frame, area: Rect, notification: &Notification) {
     f.render_widget(context_text, area);
 }
 
+/// Render the MCP server management list: one row per configured server with
+/// its enabled state, connection status, tool count, and any error.
+fn render_server_management(f: &mut Frame, area: Rect, app: &mut App) {
+    use crate::mcp::McpServerStatus;
+
+    let block = Block::new().padding(Padding::uniform(1));
+
+    if app.mcp_statuses.is_empty() {
+        let p = Paragraph::new(
+            Text::from(
+                "No MCP servers configured. Add servers under [mcp.servers] in config.toml.",
+            )
+            .yellow(),
+        )
+        .wrap(Wrap { trim: true })
+        .block(block);
+        f.render_widget(p, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .mcp_statuses
+        .iter()
+        .map(|s| {
+            let id = s.id();
+            let display = s.display_name();
+            let enabled = app.mcp_is_enabled(id);
+
+            // Status glyph + label + detail.
+            let (glyph, color, detail) = match s {
+                McpServerStatus::Ready { tool_count, .. } => {
+                    ("✓", Color::Green, format!("{tool_count} tools"))
+                }
+                McpServerStatus::Connecting { .. } => {
+                    ("…", Color::Yellow, "connecting".to_string())
+                }
+                McpServerStatus::Failed { error, .. } => {
+                    // Truncate long errors to keep the row readable.
+                    let short: String = error.chars().take(60).collect();
+                    ("✗", Color::Red, format!("failed: {short}"))
+                }
+                McpServerStatus::Disabled { .. } => ("○", Color::DarkGray, "disabled".to_string()),
+            };
+
+            let on_off = if enabled { "on" } else { "off" };
+            let on_off_color = if enabled {
+                Color::Green
+            } else {
+                Color::DarkGray
+            };
+
+            let line = Line::from(vec![
+                Span::styled(format!("{glyph} "), Style::default().fg(color)),
+                Span::styled(
+                    display.to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  ["),
+                Span::styled(on_off, Style::default().fg(on_off_color)),
+                Span::raw("]  "),
+                Span::styled(detail, Style::default().fg(Color::DarkGray)),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    f.render_stateful_widget(styled_list(items, block), area, &mut app.mcp_server_state);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1910,6 +2387,85 @@ mod tests {
                 "│ 日 本 語 │ 5     │",
                 "│ English  │ 10    │",
             ]
+        );
+    }
+
+    // --- wrap_spans tests ---
+
+    #[test]
+    fn wrap_spans_long_word_is_broken() {
+        // A single unbreakable token wider than `width` should be broken at
+        // the character level, not allowed to overflow.
+        let spans = vec![Span::raw("abcdefghij")]; // 10 chars
+        let lines = wrap_spans(&spans, 4);
+        for line in &lines {
+            assert!(
+                line.width() <= 4,
+                "line width {} exceeds 4: {:?}",
+                line.width(),
+                line_to_string(line)
+            );
+        }
+        // All characters should be preserved across the broken lines.
+        let combined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(combined, "abcdefghij");
+    }
+
+    #[test]
+    fn wrap_spans_long_word_after_normal_text() {
+        // Normal text followed by a very long word.
+        let spans = vec![Span::raw("hi "), Span::raw("xxxxxxxxxx")];
+        let lines = wrap_spans(&spans, 5);
+        for line in &lines {
+            assert!(
+                line.width() <= 5,
+                "line width {} exceeds 5: {:?}",
+                line.width(),
+                line_to_string(line)
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_spans_normal_text_unaffected() {
+        let spans = vec![Span::raw("hello world foo bar")];
+        let lines = wrap_spans(&spans, 10);
+        for line in &lines {
+            assert!(line.width() <= 10);
+        }
+    }
+
+    // --- render_markdown_lines tab normalization ---
+
+    #[test]
+    fn render_markdown_lines_normalizes_tabs() {
+        // Tabs in text should be replaced with spaces so that width
+        // calculations match terminal rendering.
+        let text = "field1\tfield2\tfield3";
+        let lines = render_markdown_lines(text, 80, Style::default());
+        let rendered: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(!rendered.contains('\t'), "tab character survived rendering");
+    }
+
+    #[test]
+    fn render_markdown_lines_strips_carriage_returns() {
+        let lines = render_markdown_lines("-old\r\n+new\r", 80, Style::default());
+        let rendered: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            !rendered.contains('\r'),
+            "carriage return survived rendering"
         );
     }
 
