@@ -119,3 +119,102 @@ This file should be stored in the platform specific location:
   /Users/Alice/Library/Application Support/ait/config.toml
 - Windows: `{FOLDERID_RoamingAppData}`\ait\config.toml, e.g.,
   C:\Users\Alice\AppData\Roaming\ait\config.toml
+
+## MCP (Model Context Protocol) servers
+
+`ait` supports the [Model Context Protocol](https://modelcontextprotocol.io) for
+extending the assistant with external tools (file access, search, weather, and
+so on). MCP servers are declared in `config.toml` under `[mcp.servers.<id>]` and
+connect automatically on startup when enabled.
+
+### Configuration
+
+Each server has a stable id (the TOML table key) and uses **either** the
+**stdio** transport (a child process) **or** the **http** transport (a remote
+URL). Setting both `command` and `url`, or neither, is a configuration error.
+
+```toml
+[mcp.servers.filesystem]
+name = "Filesystem"
+enabled = true
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+env = {}
+```
+
+```toml
+[mcp.servers.weather]
+name = "Weather"
+enabled = true
+url = "https://weather.example.com/mcp"
+api_key = "your-secret-key"
+headers = { "X-Custom-Header" = "value" }
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `name` | Optional human-readable display name. Defaults to the server id. |
+| `enabled` | Whether the server connects automatically at startup. Defaults to `true`. |
+| `command` | Command to spawn for a stdio server (e.g. `npx`, `uvx`). |
+| `args` | Arguments passed to the command. |
+| `env` | Extra environment variables for the spawned process (where stdio server secrets such as API keys go). |
+| `url` | URL of a streamable-http MCP server. |
+| `api_key` | API key sent as `Authorization: Bearer <api_key>` on every request to an http server. |
+| `headers` | Extra HTTP headers for an http server (e.g. `X-API-Key`). |
+
+### Secrets
+
+Both transports support **environment variable expansion**, so you never need to
+store API keys or other secrets verbatim in the config file. References are
+expanded at connect time; placeholders stay on disk.
+
+- `${VAR}` → value of `VAR` (error if unset)
+- `${VAR:-default}` → value of `VAR`, or `default` if unset
+- `$VAR` → value of `VAR` (error if unset)
+- `$$` — a literal `$`
+
+```toml
+[mcp.servers.kagi]
+command = "uvx"
+args = ["kagimcp"]
+env = { KAGI_API_KEY = "${KAGI_API_KEY}" }   # set KAGI_API_KEY in your shell
+```
+
+An unset variable with no default is a hard error, so a missing secret fails
+loudly instead of silently sending an empty value to a server.
+
+### Managing servers in-app
+
+- Press `S` in normal mode to open the **server management** view.
+- Use `j`/`k` or `Up`/`Down` to move through the configured servers.
+- Press `Space` to **toggle** a server's enabled state, connecting or
+  disconnecting it live.
+- Press `Esc`, `q`, or `S` to return to normal mode.
+
+The footer shows a summary of MCP server status (ready, connecting, failed)
+and the connected tools available to the assistant.
+
+### How tools are used
+
+When you submit a message, the assistant can call any tool exposed by the
+currently-connected MCP servers. The model decides when a tool is needed; each
+call is executed immediately and the result is fed back into the conversation
+so the model can continue. Tool calls and results are shown inline in the
+thinking trace, so you can watch what the assistant is doing. The conversation
+supports up to 12 tool-calling rounds per response to prevent runaway loops.
+
+### Example servers
+
+A few well-known MCP servers to try:
+
+```toml
+[mcp.servers.filesystem]
+name = "Filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/sandbox"]
+
+[mcp.servers.everything]
+name = "Everything (test)"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-everything"]
+```
