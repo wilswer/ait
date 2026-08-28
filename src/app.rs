@@ -557,6 +557,10 @@ pub struct App<'a> {
     pub do_highlight: bool,
     /// Selected thinking effort
     pub thinking_effort: ThinkingEffort,
+    /// User bubble background color.
+    pub user_bubble_background: Color,
+    /// Assistant and waiting bubble background color.
+    pub assistant_bubble_background: Color,
     /// List state for thinking effort selection
     pub thinking_effort_state: ListState,
     /// Is the app loading available models?
@@ -644,6 +648,8 @@ impl Default for App<'_> {
             search_bar: styled_textarea("Search"),
             do_highlight: true,
             thinking_effort: ThinkingEffort::Medium,
+            user_bubble_background: Color::Rgb(22, 20, 6),
+            assistant_bubble_background: Color::Rgb(6, 22, 10),
             thinking_effort_state: {
                 let mut s = ListState::default();
                 s.select_first();
@@ -960,6 +966,8 @@ impl<'a> App<'a> {
                 width.saturating_sub(4) as usize,
                 self.theme.clone(),
                 &self.syntax_set,
+                self.user_bubble_background,
+                self.assistant_bubble_background,
             ));
         }
     }
@@ -1010,6 +1018,8 @@ impl<'a> App<'a> {
                     width.saturating_sub(4) as usize,
                     self.theme.clone(),
                     &self.syntax_set,
+                    self.user_bubble_background,
+                    self.assistant_bubble_background,
                 ));
             }
         }
@@ -1057,7 +1067,14 @@ impl<'a> App<'a> {
         };
 
         // Format the streaming message (borrows theme + syntax_set immutably).
-        let formatted = style_message(message, line_width, self.theme.clone(), &self.syntax_set);
+        let formatted = style_message(
+            message,
+            line_width,
+            self.theme.clone(),
+            &self.syntax_set,
+            self.user_bubble_background,
+            self.assistant_bubble_background,
+        );
 
         // Store the result in the stream state (mutable borrow).
         if let Some(state) = self.streams.get_mut(&conv_id) {
@@ -1144,15 +1161,33 @@ impl<'a> App<'a> {
                 if stream_lines > 0 {
                     cached + stream_lines
                 } else {
-                    messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
+                    messages_to_lines(
+                        &self.messages,
+                        width.saturating_sub(4) as usize,
+                        self.user_bubble_background,
+                        self.assistant_bubble_background,
+                    )
+                    .len()
                 }
             } else {
-                messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
+                messages_to_lines(
+                    &self.messages,
+                    width.saturating_sub(4) as usize,
+                    self.user_bubble_background,
+                    self.assistant_bubble_background,
+                )
+                .len()
             }
         } else if self.do_highlight {
             self.cached_lines.len()
         } else {
-            messages_to_lines(&self.messages, width.saturating_sub(4) as usize).len()
+            messages_to_lines(
+                &self.messages,
+                width.saturating_sub(4) as usize,
+                self.user_bubble_background,
+                self.assistant_bubble_background,
+            )
+            .len()
         };
         let sub = if self.is_view_streaming() {
             (height - 4) as usize

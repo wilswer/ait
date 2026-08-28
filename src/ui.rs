@@ -829,25 +829,30 @@ struct BubbleSkin {
     title: Cow<'static, str>,
     align: BubbleAlign,
     border: Style,
+    interior: Style,
 }
 
-fn user_skin() -> BubbleSkin {
+fn user_skin(background: Color) -> BubbleSkin {
     BubbleSkin {
         title: Cow::Borrowed("User"),
         align: BubbleAlign::Right,
         border: Style::default()
             .fg(Color::Yellow)
+            .bg(background)
             .add_modifier(Modifier::BOLD),
+        interior: Style::default().bg(background),
     }
 }
 
-fn assistant_skin() -> BubbleSkin {
+fn assistant_skin(background: Color) -> BubbleSkin {
     BubbleSkin {
         title: Cow::Borrowed("Assistant"),
         align: BubbleAlign::Left,
         border: Style::default()
             .fg(Color::Green)
+            .bg(background)
             .add_modifier(Modifier::BOLD),
+        interior: Style::default().bg(background),
     }
 }
 
@@ -938,20 +943,19 @@ fn bubble_title_spans(
     border: Style,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let attr_style = Style::default().dim().italic();
     // Split the title into role + attribution at the first '('.
     match title.split_once('(') {
         Some((role, rest)) => {
             spans.push(Span::styled(prefix.to_string(), border));
             spans.push(Span::styled(role.to_string(), border));
-            spans.push(Span::styled("(".to_string(), attr_style));
+            spans.push(Span::styled("(".to_string(), border.dim().italic()));
             // `rest` includes the trailing ')' (and any text after it).
             if let Some((attr, tail)) = rest.split_once(')') {
-                spans.push(Span::styled(attr.to_string(), attr_style));
-                spans.push(Span::styled(")".to_string(), attr_style));
+                spans.push(Span::styled(attr.to_string(), border.dim().italic()));
+                spans.push(Span::styled(")".to_string(), border.dim().italic()));
                 spans.push(Span::styled(tail.to_string(), border));
             } else {
-                spans.push(Span::styled(rest.to_string(), attr_style));
+                spans.push(Span::styled(rest.to_string(), border.dim().italic()));
             }
             spans.push(Span::styled(suffix.to_string(), border));
         }
@@ -1013,11 +1017,22 @@ fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -
         )]));
     }
 
-    // Body
+    // Body. Give the border, content, and padding the role-tinted bubble
+    // background while preserving role-colored borders and content styling.
     for line in &body {
-        let mut spans = vec![Span::styled("│ ", skin.border)];
-        spans.extend(fit_spans(line, content_width));
-        spans.push(Span::styled(" │", skin.border));
+        let mut spans = vec![
+            Span::styled("│", skin.border),
+            Span::styled(" ", skin.interior),
+        ];
+        spans.extend(
+            fit_spans(line, content_width)
+                .into_iter()
+                // The content's foreground/modifiers should survive, while
+                // the bubble background must win over inherited line styles.
+                .map(|span| Span::styled(span.content, span.style.patch(skin.interior))),
+        );
+        spans.push(Span::styled(" ", skin.interior));
+        spans.push(Span::styled("│", skin.border));
         lines.push(pad(spans));
     }
 
@@ -1036,15 +1051,17 @@ pub fn style_message<'a>(
     line_width: usize,
     theme: Theme,
     syntax_set: &SyntaxSet,
+    user_background: Color,
+    assistant_background: Color,
 ) -> Vec<Line<'a>> {
     let content_width = bubble_max_content_width(line_width);
     let (skin, text) = match &message {
-        Message::User(_) => (user_skin(), message.to_string()),
+        Message::User(_) => (user_skin(user_background), message.to_string()),
         Message::Assistant(t, model, provider, _) => {
             if t.is_empty() {
                 return Vec::new();
             }
-            let mut skin = assistant_skin();
+            let mut skin = assistant_skin(assistant_background);
             skin.title = assistant_title(model.as_deref(), provider.as_deref());
             (skin, t.clone())
         }
@@ -1063,6 +1080,7 @@ fn waiting_bubble<'a>(
     spinner_frame: usize,
     model: Option<&str>,
     provider: Option<&str>,
+    assistant_background: Color,
 ) -> Vec<Line<'a>> {
     let frame = SPINNER_FRAMES[(spinner_frame / 2) % SPINNER_FRAMES.len()];
     let thinking_split_n = (spinner_frame / 8) % THINKING_VERB.len();
@@ -1075,7 +1093,7 @@ fn waiting_bubble<'a>(
         ])
         .style(Style::default().fg(Color::DarkGray)),
     ];
-    let mut skin = assistant_skin();
+    let mut skin = assistant_skin(assistant_background);
     skin.title = assistant_title(model, provider);
     let mut lines = frame_bubble(body, line_width, &skin);
     lines.push(Line::from(""));
@@ -1083,17 +1101,22 @@ fn waiting_bubble<'a>(
 }
 
 /// Render all messages as plain (non-highlighted) chat bubbles.
-pub fn messages_to_lines<'a>(messages: &[Message], line_width: usize) -> Vec<Line<'a>> {
+pub fn messages_to_lines<'a>(
+    messages: &[Message],
+    line_width: usize,
+    user_background: Color,
+    assistant_background: Color,
+) -> Vec<Line<'a>> {
     let content_width = bubble_max_content_width(line_width);
     let mut line_vec = Vec::new();
     for message in messages {
         let (skin, text) = match message {
-            Message::User(_) => (user_skin(), message.to_string()),
+            Message::User(_) => (user_skin(user_background), message.to_string()),
             Message::Assistant(m, model, provider, _) => {
                 if m.is_empty() {
                     continue;
                 }
-                let mut skin = assistant_skin();
+                let mut skin = assistant_skin(assistant_background);
                 skin.title = assistant_title(model.as_deref(), provider.as_deref());
                 (skin, m.clone())
             }
@@ -1135,18 +1158,33 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
                     // Fallback: render the last message as plain text
                     // until the first format pass completes.
                     if let Some(last) = app.messages.last() {
-                        lines.extend(messages_to_lines(std::slice::from_ref(last), line_width));
+                        lines.extend(messages_to_lines(
+                            std::slice::from_ref(last),
+                            line_width,
+                            app.user_bubble_background,
+                            app.assistant_bubble_background,
+                        ));
                     }
                 }
             }
             lines
         } else {
-            messages_to_lines(&app.messages, line_width)
+            messages_to_lines(
+                &app.messages,
+                line_width,
+                app.user_bubble_background,
+                app.assistant_bubble_background,
+            )
         }
     } else if app.do_highlight {
         app.cached_lines.clone()
     } else {
-        messages_to_lines(&app.messages, line_width)
+        messages_to_lines(
+            &app.messages,
+            line_width,
+            app.user_bubble_background,
+            app.assistant_bubble_background,
+        )
     };
 
     if app.is_view_waiting() {
@@ -1161,6 +1199,7 @@ fn render_messages(f: &mut Frame, app: &mut App, messages_area: Rect) {
             app.spinner_frame,
             wm.as_deref(),
             wp.as_deref(),
+            app.assistant_bubble_background,
         ));
     }
 
@@ -2323,6 +2362,63 @@ mod tests {
 
     fn lines_to_strings(lines: &[Line]) -> Vec<String> {
         lines.iter().map(line_to_string).collect()
+    }
+
+    #[test]
+    fn bubble_interior_background_is_applied_to_content_and_padding() {
+        let expected = Color::Rgb(22, 20, 6);
+        let lines = frame_bubble(
+            vec![Line::from("hello")],
+            40,
+            &user_skin(Color::Rgb(22, 20, 6)),
+        );
+        let body = &lines[1];
+
+        let interior_spans: Vec<&Span> = body
+            .spans
+            .iter()
+            .filter(|span| span.content.contains("hello") || span.content.as_ref() == " ")
+            .collect();
+        assert!(!interior_spans.is_empty());
+        assert!(
+            interior_spans
+                .iter()
+                .all(|span| span.style.bg == Some(expected))
+        );
+    }
+
+    #[test]
+    fn bubble_reset_background_is_applied_to_all_bubble_cells() {
+        let lines = frame_bubble(vec![Line::from("hello")], 40, &user_skin(Color::Reset));
+
+        for line in &lines {
+            for span in &line.spans {
+                // A right-aligned bubble's leading indent intentionally
+                // inherits the terminal background; all bubble cells reset.
+                if span.content.trim().is_empty() && span.style == Style::default() {
+                    continue;
+                }
+                assert_eq!(span.style.bg, Some(Color::Reset));
+            }
+        }
+    }
+
+    #[test]
+    fn bubble_border_uses_interior_background() {
+        let expected = Color::Rgb(6, 22, 10);
+        let lines = frame_bubble(
+            vec![Line::from("hello")],
+            40,
+            &assistant_skin(Color::Rgb(6, 22, 10)),
+        );
+
+        for line in &lines {
+            for span in &line.spans {
+                if span.content.contains(['╭', '╮', '╰', '╯', '│']) {
+                    assert_eq!(span.style.bg, Some(expected));
+                }
+            }
+        }
     }
 
     #[test]

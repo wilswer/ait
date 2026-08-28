@@ -27,6 +27,21 @@ default_model = {name = "gemini-3.1-pro-preview", provider = "Gemini"}
 default_thinking_level = "medium"
 
 # ──────────────────────────────────────────────────────────────────────────
+# Chat bubble appearance
+# ──────────────────────────────────────────────────────────────────────────
+# Bubble backgrounds accept a 24-bit color in "#RRGGBB" form. Use "reset"
+# (or its alias "none") to use the terminal's default background instead.
+# The defaults are the subtle role-tinted colors shown below.
+#
+# [ui.chat_bubbles]
+# user_background = "#161406"
+# assistant_background = "#06160a"
+#
+# To disable bubble backgrounds:
+# user_background = "reset"
+# assistant_background = "reset"
+
+# ──────────────────────────────────────────────────────────────────────────
 # Typed Python tools
 # ──────────────────────────────────────────────────────────────────────────
 # Python sources are keyed by a stable id. They are loaded when enabled and
