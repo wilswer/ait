@@ -9,7 +9,7 @@ use tokio::task;
 use ait::ai::{get_models, run_assistant_stream};
 use ait::app::{Action, App, AppMode, AppResult, Message, Notification, SpawnArgs, ThinkingEffort};
 use ait::cli::Cli;
-use ait::config::{Config, ModelConfig, PythonToolConfig};
+use ait::config::{Config, ModelConfig, PythonToolConfig, UiColor};
 use ait::event::{Event, EventHandler};
 use ait::handler::{handle_key_events, handle_mouse_events};
 use ait::python_tools::{PythonToolSource, validate_source_path};
@@ -237,6 +237,13 @@ Context:
         .default_thinking_level
         .unwrap_or(ThinkingEffort::Medium);
 
+    let to_ratatui_color = |color: UiColor| match color {
+        UiColor::Reset => ratatui::style::Color::Reset,
+        UiColor::Rgb(r, g, b) => ratatui::style::Color::Rgb(r, g, b),
+    };
+    let user_bubble_background = to_ratatui_color(config.ui.chat_bubbles.user_background);
+    let assistant_bubble_background = to_ratatui_color(config.ui.chat_bubbles.assistant_background);
+
     // Resolve default model: Config > Default
     let default_model = config.default_model.unwrap_or_else(|| {
         ModelConfig::new("gemini-3.1-pro-preview".to_string(), "Gemini".to_string())
@@ -257,6 +264,8 @@ Context:
     let _log_guard = ait::logger::init_logging();
 
     let mut app = App::new(&system_prompt, default_model, default_thinking_level);
+    app.user_bubble_background = user_bubble_background;
+    app.assistant_bubble_background = assistant_bubble_background;
 
     // Python discovery is scheduled after the TUI is initialized. Invalid
     // files, missing `uv`, and dependency failures therefore become visible

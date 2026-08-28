@@ -21,6 +21,91 @@ pub struct Config {
     /// Typed Python tool source configuration.
     #[serde(default)]
     pub python_tools: PythonToolsConfig,
+    /// User-interface appearance configuration.
+    #[serde(default)]
+    pub ui: UiConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct UiConfig {
+    #[serde(default)]
+    pub chat_bubbles: ChatBubbleConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatBubbleConfig {
+    #[serde(default = "default_user_bubble_background")]
+    pub user_background: UiColor,
+    #[serde(default = "default_assistant_bubble_background")]
+    pub assistant_background: UiColor,
+}
+
+impl Default for ChatBubbleConfig {
+    fn default() -> Self {
+        Self {
+            user_background: default_user_bubble_background(),
+            assistant_background: default_assistant_bubble_background(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiColor {
+    Reset,
+    Rgb(u8, u8, u8),
+}
+
+impl<'de> Deserialize<'de> for UiColor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.to_ascii_lowercase().as_str() {
+            "reset" | "none" => Ok(Self::Reset),
+            _ => parse_ui_color(&value).map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+impl Serialize for UiColor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Reset => serializer.serialize_str("reset"),
+            Self::Rgb(r, g, b) => serializer.serialize_str(&format!("#{r:02x}{g:02x}{b:02x}")),
+        }
+    }
+}
+
+fn parse_ui_color(value: &str) -> Result<UiColor, String> {
+    let hex = value
+        .strip_prefix('#')
+        .ok_or_else(|| format!("invalid UI color `{value}`; expected #RRGGBB, reset, or none"))?;
+    if hex.len() != 6 {
+        return Err(format!(
+            "invalid UI color `{value}`; expected exactly six hexadecimal digits"
+        ));
+    }
+    let component = |range: std::ops::Range<usize>| {
+        u8::from_str_radix(&hex[range], 16)
+            .map_err(|_| format!("invalid UI color `{value}`; expected #RRGGBB"))
+    };
+    Ok(UiColor::Rgb(
+        component(0..2)?,
+        component(2..4)?,
+        component(4..6)?,
+    ))
+}
+
+fn default_user_bubble_background() -> UiColor {
+    UiColor::Rgb(22, 20, 6)
+}
+
+fn default_assistant_bubble_background() -> UiColor {
+    UiColor::Rgb(6, 22, 10)
 }
 
 /// Top-level Python tool configuration (`[python_tools]`).
@@ -553,6 +638,69 @@ uv_command = "uv"
     fn expand_unterminated_braces_error() {
         let err = expand_env("${AIT_TEST_KEY").unwrap_err();
         assert!(err.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn bubble_colors_use_role_defaults_when_ui_is_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(
+            config.ui.chat_bubbles.user_background,
+            UiColor::Rgb(22, 20, 6)
+        );
+        assert_eq!(
+            config.ui.chat_bubbles.assistant_background,
+            UiColor::Rgb(6, 22, 10)
+        );
+    }
+
+    #[test]
+    fn bubble_colors_parse_hex_reset_and_none() {
+        let config: Config = toml::from_str(
+            r##"
+[ui.chat_bubbles]
+user_background = "#A1b2C3"
+assistant_background = "none"
+"##,
+        )
+        .unwrap();
+        assert_eq!(
+            config.ui.chat_bubbles.user_background,
+            UiColor::Rgb(0xa1, 0xb2, 0xc3)
+        );
+        assert_eq!(config.ui.chat_bubbles.assistant_background, UiColor::Reset);
+
+        let reset: Config = toml::from_str(
+            r#"
+[ui.chat_bubbles]
+user_background = "reset"
+"#,
+        )
+        .unwrap();
+        assert_eq!(reset.ui.chat_bubbles.user_background, UiColor::Reset);
+        assert_eq!(
+            reset.ui.chat_bubbles.assistant_background,
+            UiColor::Rgb(6, 22, 10)
+        );
+    }
+
+    #[test]
+    fn bubble_colors_reject_invalid_values() {
+        for value in ["yellow", "#123", "#gg0011"] {
+            let input = format!("[ui.chat_bubbles]\nuser_background = \"{value}\"\n");
+            let error = toml::from_str::<Config>(&input).unwrap_err().to_string();
+            assert!(error.contains("invalid UI color"), "{error}");
+        }
+    }
+
+    #[test]
+    fn bubble_colors_serialize_as_hex_or_reset() {
+        let bubbles = ChatBubbleConfig {
+            user_background: UiColor::Rgb(1, 2, 255),
+            assistant_background: UiColor::Reset,
+        };
+        let serialized = toml::to_string(&bubbles).unwrap();
+        assert!(serialized.contains("user_background = \"#0102ff\""));
+        assert!(serialized.contains("assistant_background = \"reset\""));
     }
 
     #[test]
