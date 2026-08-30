@@ -972,14 +972,51 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Returns an estimate for token usage of all messages sent and receved from the LLM.
+    /// Estimates the conversation messages that will be included in the next
+    /// request, rather than their display representation.
+    ///
+    /// User messages retain every content part (including attached context),
+    /// while assistant turns with structured history are represented by the
+    /// exact messages replayed to the provider. The system prompt and enabled
+    /// tool schemas are added by the request launcher and cannot be included
+    /// here because discovering MCP tool schemas is asynchronous. Binary
+    /// content and provider-specific chat framing also cannot be represented
+    /// exactly by the local text tokenizer, so provider usage is authoritative.
     pub fn estimate_messages_tokens(&self) -> usize {
-        let count: usize = self
-            .messages
-            .iter()
-            .map(|m| estimate_tokens(&m.to_string()).unwrap_or(0))
-            .sum();
-        count
+        let mut prompt = String::new();
+
+        if let Some(system_prompt) = system_prompt_for_model(&self.selected_model, self.system_prompt) {
+            prompt.push_str("system:\n");
+            prompt.push_str(&system_prompt);
+            prompt.push('\n');
+        }
+
+        for message in &self.messages {
+            match message {
+                Message::User(parts) => {
+                    prompt.push_str("user:\n");
+                    for part in parts {
+                        if let ContentPart::Text(text) = part {
+                            prompt.push_str(text);
+                        }
+                    }
+                    prompt.push('\n');
+                }
+                Message::Assistant(_, _, _, Some(raw_messages)) => {
+                    for message in raw_messages {
+                        prompt.push_str(&format!("{message:?}"));
+                        prompt.push('\n');
+                    }
+                }
+                Message::Assistant(text, _, _, None) => {
+                    prompt.push_str("assistant:\n");
+                    prompt.push_str(text);
+                    prompt.push('\n');
+                }
+            }
+        }
+
+        estimate_tokens(&prompt).unwrap_or(0)
     }
 
     /// Estimate the tokens for the provided text.
