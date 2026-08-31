@@ -1,6 +1,6 @@
 <div align="center">
 
-# **AIT**: _AI in the Terminal_
+# AIT: _AI in the Terminal_
 
 [![Crates.io](https://img.shields.io/crates/v/ait.svg)](https://crates.io/crates/ait)
 [![Built With Ratatui](https://img.shields.io/badge/Built_With_Ratatui-000?logo=ratatui&logoColor=fff)](https://ratatui.rs/)
