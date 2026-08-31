@@ -1,8 +1,9 @@
 <div align="center">
 
-# AI in the Terminal
+# AIT -- _AI in the Terminal_
 
-[![Crates.io](https://img.shields.io/crates/v/ait.svg)](https://crates.io/crates/ait) [![Built With Ratatui](https://img.shields.io/badge/Built_With_Ratatui-000?logo=ratatui&logoColor=fff)](https://ratatui.rs/)
+[![Crates.io](https://img.shields.io/crates/v/ait.svg)](https://crates.io/crates/ait)
+[![Built With Ratatui](https://img.shields.io/badge/Built_With_Ratatui-000?logo=ratatui&logoColor=fff)](https://ratatui.rs/)
 
 </div>
 
@@ -87,8 +88,8 @@ Or serialize all file in a directory and add as context:
 yek my_dir | ait
 ```
 
-AIT can also load typed Python functions as local tools. `uv` must be installed and
-available on `PATH`:
+AIT can also load typed Python functions as local tools. `uv` must be installed
+and available on `PATH`:
 
 ```bash
 ait --python-tools ./tools.py
@@ -124,8 +125,6 @@ enabled = true
 ```
 
 The adjacent project convention is used by default; `project_dir` overrides it.
-
-
 
 Chat history is stored as a `sqlite` database (facilitated by the
 [`rusqlite`](https://github.com/rusqlite/rusqlite) crate) in the platform's
@@ -195,16 +194,16 @@ api_key = "your-secret-key"
 headers = { "X-Custom-Header" = "value" }
 ```
 
-| Field | Description |
-| ----- | ----------- |
-| `name` | Optional human-readable display name. Defaults to the server id. |
-| `enabled` | Whether the server connects automatically at startup. Defaults to `true`. |
-| `command` | Command to spawn for a stdio server (e.g. `npx`, `uvx`). |
-| `args` | Arguments passed to the command. |
-| `env` | Extra environment variables for the spawned process (where stdio server secrets such as API keys go). |
-| `url` | URL of a streamable-http MCP server. |
-| `api_key` | API key sent as `Authorization: Bearer <api_key>` on every request to an http server. |
-| `headers` | Extra HTTP headers for an http server (e.g. `X-API-Key`). |
+| Field     | Description                                                                                           |
+| --------- | ----------------------------------------------------------------------------------------------------- |
+| `name`    | Optional human-readable display name. Defaults to the server id.                                      |
+| `enabled` | Whether the server connects automatically at startup. Defaults to `true`.                             |
+| `command` | Command to spawn for a stdio server (e.g. `npx`, `uvx`).                                              |
+| `args`    | Arguments passed to the command.                                                                      |
+| `env`     | Extra environment variables for the spawned process (where stdio server secrets such as API keys go). |
+| `url`     | URL of a streamable-http MCP server.                                                                  |
+| `api_key` | API key sent as `Authorization: Bearer <api_key>` on every request to an http server.                 |
+| `headers` | Extra HTTP headers for an http server (e.g. `X-API-Key`).                                             |
 
 ### Secrets
 
@@ -235,17 +234,17 @@ loudly instead of silently sending an empty value to a server.
   disconnecting it live.
 - Press `Esc`, `q`, or `S` to return to normal mode.
 
-The footer shows a summary of MCP server status (ready, connecting, failed)
-and the connected tools available to the assistant.
+The footer shows a summary of MCP server status (ready, connecting, failed) and
+the connected tools available to the assistant.
 
 ### How tools are used
 
 When you submit a message, the assistant can call any tool exposed by the
 currently-connected MCP servers. The model decides when a tool is needed; each
-call is executed immediately and the result is fed back into the conversation
-so the model can continue. Tool calls and results are shown inline in the
-thinking trace, so you can watch what the assistant is doing. The conversation
-supports up to 12 tool-calling rounds per response to prevent runaway loops.
+call is executed immediately and the result is fed back into the conversation so
+the model can continue. Tool calls and results are shown inline in the thinking
+trace, so you can watch what the assistant is doing. The conversation supports
+up to 12 tool-calling rounds per response to prevent runaway loops.
 
 ### Example servers
 
