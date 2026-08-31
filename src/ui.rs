@@ -1029,7 +1029,13 @@ fn frame_bubble<'a>(body: Vec<Line<'a>>, line_width: usize, skin: &BubbleSkin) -
                 .into_iter()
                 // The content's foreground/modifiers should survive, while
                 // the bubble background must win over inherited line styles.
-                .map(|span| Span::styled(span.content, span.style.patch(skin.interior))),
+                .map(|span| {
+                    let mut style = span.style.patch(skin.interior);
+                    if span.style.bg.is_some() {
+                        style.bg = span.style.bg;
+                    }
+                    Span::styled(span.content, style)
+                }),
         );
         spans.push(Span::styled(" ", skin.interior));
         spans.push(Span::styled("│", skin.border));
@@ -2429,6 +2435,24 @@ mod tests {
         assert_eq!(
             strip_inline_markdown("Hello **world** and *universe*!"),
             "Hello world and universe!"
+        );
+    }
+
+    #[test]
+    fn table_background_survives_bubble_background() {
+        let table_lines = render_table_block(
+            &["| A | B |", "|---|---|", "| 1 | 2 |"],
+            80,
+            Style::default(),
+        );
+        let lines = frame_bubble(table_lines, 80, &user_skin(Color::Rgb(22, 20, 6)));
+        let table_background = Some(Color::Rgb(45, 45, 45));
+
+        assert!(
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .any(|span| span.content.contains("1") && span.style.bg == table_background)
         );
     }
 
