@@ -1,6 +1,10 @@
+<div align="center">
+
 # AI in the Terminal
 
 [![Crates.io](https://img.shields.io/crates/v/ait.svg)](https://crates.io/crates/ait) [![Built With Ratatui](https://img.shields.io/badge/Built_With_Ratatui-000?logo=ratatui&logoColor=fff)](https://ratatui.rs/)
+
+</div>
 
 `ait` is a terminal user interface for interacting with several generative large
 language models from multiple providers. It uses the
