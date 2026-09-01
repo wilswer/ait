@@ -32,6 +32,7 @@ pub fn handle_key_events(
             // Exit application on `ESC` or `q`
             KeyCode::Esc | KeyCode::Char('q') => app.quit(),
             KeyCode::Char('m') => app.set_app_mode(AppMode::ModelSelection),
+            KeyCode::Char('M') => app.set_app_mode(AppMode::MessageSelection),
             KeyCode::Char('s') => {
                 app.snippet_list.state.select_first();
                 app.set_app_mode(AppMode::SnippetSelection);
@@ -242,6 +243,22 @@ pub fn handle_key_events(
             KeyCode::Enter | KeyCode::Char('y') => {
                 app.copy_snippet()
                     .context("Error when copying snippet to clipboard")?;
+                app.set_app_mode(AppMode::Normal);
+            }
+            _ => {}
+        },
+        AppMode::MessageSelection => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('M') => {
+                app.set_app_mode(AppMode::Normal)
+            }
+            KeyCode::Char('j') | KeyCode::Down => app.select_next_message(),
+            KeyCode::Char('k') | KeyCode::Up => app.select_previous_message(),
+            KeyCode::Char('g') | KeyCode::Home => app.select_first_message(),
+            KeyCode::Char('G') | KeyCode::End => app.select_last_message(),
+            #[cfg(not(target_os = "linux"))]
+            KeyCode::Enter | KeyCode::Char('y') => {
+                app.copy_selected_message()
+                    .context("Error when copying to clipboard")?;
                 app.set_app_mode(AppMode::Normal);
             }
             _ => {}

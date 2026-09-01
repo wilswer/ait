@@ -26,6 +26,7 @@ use ratatui_textarea::{TextArea, WrapMode};
 use tiktoken_rs::cl100k_base;
 
 use crate::config::ModelConfig;
+use crate::message_list::{MessageItem, MessageList};
 use crate::models::{ModelItem, generate_model_spec, model_provider_from_spec};
 use crate::ui::messages_to_lines;
 use crate::{
@@ -466,6 +467,7 @@ pub enum AppMode {
     FilterModels,
     ThinkingEffortSelection,
     SnippetSelection,
+    MessageSelection,
     ShowHistory,
     FilterHistory,
     ExploreFiles,
@@ -527,6 +529,8 @@ pub struct App<'a> {
     pub selected_model: ModelSpec,
     /// Discovered snippets
     pub snippet_list: SnippetList,
+    /// List of messages, for copying and search
+    pub message_list: MessageList,
     /// List of chats
     pub chat_list: ChatList,
     /// Selected text
@@ -629,6 +633,7 @@ impl Default for App<'_> {
             })),
             selected_model: "gemini-3.1-pro-preview".into(),
             snippet_list: SnippetList::from_iter([].iter().map(|&snippet| (snippet, false, None))),
+            message_list: MessageList::empty(),
             chat_list: ChatList::from_iter([].iter().map(|&chat| (chat, "".to_string(), false))),
             selection: Selection::default(),
             theme_index: 0,
@@ -985,7 +990,9 @@ impl<'a> App<'a> {
     pub fn estimate_messages_tokens(&self) -> usize {
         let mut prompt = String::new();
 
-        if let Some(system_prompt) = system_prompt_for_model(&self.selected_model, self.system_prompt) {
+        if let Some(system_prompt) =
+            system_prompt_for_model(&self.selected_model, self.system_prompt)
+        {
             prompt.push_str("system:\n");
             prompt.push_str(&system_prompt);
             prompt.push('\n');
@@ -1451,12 +1458,15 @@ impl<'a> App<'a> {
 
         if is_current {
             self.add_cached_lines(message.clone());
-            self.messages.push(message);
+            self.messages.push(message.clone());
             // The view was rendering the live partial from `messages_to_lines`
             // during streaming; force a rebuild of the cached (highlighted)
             // lines so it matches the final message list.
             self.needs_recache = true;
         }
+
+        // Also update the message list state.
+        self.message_list.items.push(MessageItem::from(&message));
 
         Ok(())
     }
@@ -1677,6 +1687,43 @@ impl<'a> App<'a> {
         Ok(())
     }
 
+    pub fn get_selected_message(&self) -> Option<&MessageItem> {
+        self.message_list
+            .state
+            .selected()
+            .map(|i| &self.message_list.items[i])
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    /// Copy the selected snippet to the clipboard.
+    pub fn copy_selected_message(&mut self) -> AppResult<()> {
+        if let Some(i) = self.message_list.state.selected() {
+            for item in self.message_list.items.iter_mut() {
+                item.selected = false;
+            }
+            self.message_list.items[i].selected = true;
+            self.clipboard
+                .set_text(&self.message_list.items[i].content)
+                .context("Unable to copy snippet to clipboard")?;
+        }
+        Ok(())
+    }
+
+    pub fn select_next_message(&mut self) {
+        self.message_list.state.select_next();
+    }
+    pub fn select_previous_message(&mut self) {
+        self.message_list.state.select_previous();
+    }
+
+    pub fn select_first_message(&mut self) {
+        self.message_list.state.select_first();
+    }
+
+    pub fn select_last_message(&mut self) {
+        self.message_list.state.select_last();
+    }
+
     pub fn select_no_chat(&mut self) {
         self.chat_list.state.select(None);
     }
@@ -1821,7 +1868,9 @@ impl<'a> App<'a> {
 
         // Clear snippet list and find fenced code snippets
         self.snippet_list.clear();
+        self.message_list.items.clear();
         for message in self.messages.iter() {
+            self.message_list.items.push(MessageItem::from(message));
             let message_content = message.to_string();
             let discovered_snippets = find_fenced_code_snippets(
                 message_content.split('\n').map(|s| s.to_string()).collect(),
@@ -1857,7 +1906,9 @@ impl<'a> App<'a> {
             self.messages.clear();
             self.messages = list_all_messages(conv_id)?;
             self.snippet_list.clear();
+            self.message_list.items.clear();
             for message in self.messages.iter_mut() {
+                self.message_list.items.push(MessageItem::from(&*message));
                 let message_content = message.to_string();
                 let discovered_snippets = find_fenced_code_snippets(
                     message_content.split('\n').map(|s| s.to_string()).collect(),

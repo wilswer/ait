@@ -1519,6 +1519,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 );
             }
         }
+        AppMode::MessageSelection => {
+            let area = left_aligned_rect_percent(messages_area, 25);
+            render_popup(f, "Select Message", area);
+            render_message_list(f, area, app);
+
+            let preview_area = right_aligned_rect_percent(messages_area, 75);
+            render_popup(f, "Message Preview", preview_area);
+            if let Some(message) = app.get_selected_message() {
+                f.render_widget(
+                    Paragraph::new(style_message(
+                        message.into(),
+                        preview_area.width as usize - 3,
+                        app.theme.clone(),
+                        &app.syntax_set,
+                        app.user_bubble_background,
+                        app.assistant_bubble_background,
+                    ))
+                    .block(Block::new().padding(Padding::uniform(1))),
+                    preview_area,
+                );
+            }
+        }
         AppMode::ShowHistory => {
             render_chat_history_panel(f, messages_area, app);
         }
@@ -1607,6 +1629,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to copy snippet to the clipboard (not linux yet), and return to 'normal' mode."
                     .into(),
             ];
+            let message_keys = vec![
+                "Press ".into(),
+                "Up/Down".bold(),
+                " to select message, or press ".into(),
+                "Enter".bold(),
+                " to copy message to the clipboard (not linux yet), and return to 'normal' mode."
+                    .into(),
+            ];
             let file_explorer_keys = vec![
                 "Press ".into(),
                 "h/j/k/l or arrows".bold(),
@@ -1658,6 +1688,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Line::from(""),
                 Line::from(Span::raw("When browsing snippets, you can:").bold()),
                 Line::from(snippet_keys),
+                Line::from(Span::raw("When browsing messages, you can:").bold()),
+                Line::from(message_keys),
                 Line::from(""),
                 Line::from(Span::raw("When exploring files, you can:").bold()),
                 Line::from(file_explorer_keys),
@@ -1803,6 +1835,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to cancel.".into(),
             ]
         }
+        AppMode::MessageSelection => {
+            vec![
+                "Navigate: ".into(),
+                "j/k or Up/Down".bold(),
+                ". Press ".into(),
+                "Enter/y".bold(),
+                " to copy message. ".into(),
+                "Esc/q".bold(),
+                " to cancel.".into(),
+            ]
+        }
         _ => {
             vec![
                 "Press ".into(),
@@ -1939,6 +1982,19 @@ fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
         .map(|&i| ListItem::from(&app.model_list.items[i]))
         .collect();
     f.render_stateful_widget(styled_list(items, block), area, &mut app.model_list.state);
+}
+
+fn render_message_list(f: &mut Frame, area: Rect, app: &mut App) {
+    let block = Block::new().padding(Padding::uniform(1));
+    if app.model_list.items.is_empty() {
+        let p = Paragraph::new(Text::from("Messages will show up here.").yellow())
+            .wrap(Wrap { trim: true })
+            .block(block);
+        f.render_widget(p, area);
+        return;
+    }
+    let items: Vec<ListItem> = app.message_list.items.iter().map(|i| i.into()).collect();
+    f.render_stateful_widget(styled_list(items, block), area, &mut app.message_list.state);
 }
 
 fn render_thinking_effort_list(f: &mut Frame, area: Rect, app: &mut App) {

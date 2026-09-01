@@ -48,3 +48,6 @@ pub mod storage;
 
 /// Chat list.
 pub mod chats;
+
+/// Messages selector.
+pub mod message_list;
