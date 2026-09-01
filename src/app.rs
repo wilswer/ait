@@ -1709,19 +1709,65 @@ impl<'a> App<'a> {
         Ok(())
     }
 
+    /// Select a message in the picker and align its corresponding chat bubble
+    /// with the top of the chat viewport.
+    fn scroll_selected_message_to_top(&mut self) {
+        let Some(selected) = self.message_list.state.selected() else {
+            return;
+        };
+
+        // `cached_lines` contains each completed message in display order.
+        // Its per-message line counts include the bubble framing and separator,
+        // so the sum before `selected` is precisely that message's top offset.
+        let line_width = self
+            .size
+            .map(|size| size.width.saturating_sub(4) as usize)
+            .unwrap_or(0);
+        self.vertical_scroll = self
+            .messages
+            .iter()
+            .take(selected)
+            .map(|message| {
+                if self.do_highlight {
+                    style_message(
+                        message.clone(),
+                        line_width,
+                        self.theme.clone(),
+                        &self.syntax_set,
+                        self.user_bubble_background,
+                        self.assistant_bubble_background,
+                    )
+                    .len()
+                } else {
+                    messages_to_lines(
+                        std::slice::from_ref(message),
+                        line_width,
+                        self.user_bubble_background,
+                        self.assistant_bubble_background,
+                    )
+                    .len()
+                }
+            })
+            .sum();
+    }
+
     pub fn select_next_message(&mut self) {
         self.message_list.state.select_next();
+        self.scroll_selected_message_to_top();
     }
     pub fn select_previous_message(&mut self) {
         self.message_list.state.select_previous();
+        self.scroll_selected_message_to_top();
     }
 
     pub fn select_first_message(&mut self) {
         self.message_list.state.select_first();
+        self.scroll_selected_message_to_top();
     }
 
     pub fn select_last_message(&mut self) {
         self.message_list.state.select_last();
+        self.scroll_selected_message_to_top();
     }
 
     pub fn select_no_chat(&mut self) {
