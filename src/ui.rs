@@ -1451,7 +1451,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     };
 
     let searchbar_constraint = match app.app_mode {
-        AppMode::FilterHistory => Constraint::Length(3),
+        AppMode::FilterModels | AppMode::FilterHistory | AppMode::FilterMessages => Constraint::Length(3),
         _ => Constraint::Length(0),
     };
 
@@ -1519,7 +1519,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 );
             }
         }
-        AppMode::MessageSelection => {
+        AppMode::MessageSelection | AppMode::FilterMessages => {
             let area = left_aligned_rect_percent(messages_area, 25);
             render_popup(f, "Select Message", area);
             render_message_list(f, area, app);
@@ -1539,6 +1539,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .block(Block::new().padding(Padding::uniform(1))),
                     preview_area,
                 );
+            }
+            if matches!(app.app_mode, AppMode::FilterMessages) {
+                f.render_widget(&app.search_bar, searchbar_area);
             }
         }
         AppMode::ShowHistory => {
@@ -1633,6 +1636,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 "Press ".into(),
                 "Up/Down".bold(),
                 " to select message, or press ".into(),
+                "/".bold(),
+                " to search messages by content, or press ".into(),
                 "Enter".bold(),
                 " to copy message to the clipboard (not linux yet), and return to 'normal' mode."
                     .into(),
@@ -1835,13 +1840,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 " to cancel.".into(),
             ]
         }
-        AppMode::MessageSelection => {
+        AppMode::MessageSelection | AppMode::FilterMessages => {
             vec![
                 "Navigate: ".into(),
                 "j/k or Up/Down".bold(),
                 ". Press ".into(),
                 "Enter/y".bold(),
                 " to copy message. ".into(),
+                "/".bold(),
+                " to search. ".into(),
                 "Esc/q".bold(),
                 " to cancel.".into(),
             ]
@@ -1986,14 +1993,18 @@ fn render_model_list(f: &mut Frame, area: Rect, app: &mut App) {
 
 fn render_message_list(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::new().padding(Padding::uniform(1));
-    if app.model_list.items.is_empty() {
+    if app.message_list.items.is_empty() {
         let p = Paragraph::new(Text::from("Messages will show up here.").yellow())
             .wrap(Wrap { trim: true })
             .block(block);
         f.render_widget(p, area);
         return;
     }
-    let items: Vec<ListItem> = app.message_list.items.iter().map(|i| i.into()).collect();
+    let indices = app.filtered_message_indices();
+    let items: Vec<ListItem> = indices
+        .iter()
+        .map(|&index| ListItem::from(&app.message_list.items[index]))
+        .collect();
     f.render_stateful_widget(styled_list(items, block), area, &mut app.message_list.state);
 }
 

@@ -249,19 +249,54 @@ pub fn handle_key_events(
         },
         AppMode::MessageSelection => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('M') => {
+                app.reset_searchbar();
                 app.set_app_mode(AppMode::Normal)
             }
             KeyCode::Char('j') | KeyCode::Down => app.select_next_message(),
             KeyCode::Char('k') | KeyCode::Up => app.select_previous_message(),
             KeyCode::Char('g') | KeyCode::Home => app.select_first_message(),
             KeyCode::Char('G') | KeyCode::End => app.select_last_message(),
+            KeyCode::Char('/') => {
+                app.reset_searchbar();
+                app.select_first_message();
+                app.set_app_mode(AppMode::FilterMessages);
+            }
             #[cfg(not(target_os = "linux"))]
             KeyCode::Enter | KeyCode::Char('y') => {
                 app.copy_selected_message()
                     .context("Error when copying to clipboard")?;
+                app.reset_searchbar();
                 app.set_app_mode(AppMode::Normal);
             }
             _ => {}
+        },
+        AppMode::FilterMessages => match code {
+            KeyCode::Enter => {
+                #[cfg(not(target_os = "linux"))]
+                {
+                    app.copy_selected_message()
+                        .context("Error when copying to clipboard")?;
+                    app.reset_searchbar();
+                    app.set_app_mode(AppMode::Normal);
+                }
+            }
+            KeyCode::Up => {
+                app.set_app_mode(AppMode::MessageSelection);
+                app.select_previous_message();
+            }
+            KeyCode::Down => {
+                app.set_app_mode(AppMode::MessageSelection);
+                app.select_next_message();
+            }
+            KeyCode::Esc => {
+                app.reset_searchbar();
+                app.select_first_message();
+                app.set_app_mode(AppMode::MessageSelection);
+            }
+            _ => {
+                app.search_bar.input(key_event);
+                app.select_first_message();
+            }
         },
         AppMode::ExploreFiles => match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => app.set_app_mode(AppMode::Normal),

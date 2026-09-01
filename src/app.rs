@@ -468,6 +468,7 @@ pub enum AppMode {
     ThinkingEffortSelection,
     SnippetSelection,
     MessageSelection,
+    FilterMessages,
     ShowHistory,
     FilterHistory,
     ExploreFiles,
@@ -1687,32 +1688,55 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub fn get_selected_message(&self) -> Option<&MessageItem> {
+    pub fn selected_message_index(&self) -> Option<usize> {
         self.message_list
             .state
             .selected()
-            .map(|i| &self.message_list.items[i])
+            .and_then(|index| self.filtered_message_indices().get(index).copied())
+    }
+
+    pub fn get_selected_message(&self) -> Option<&MessageItem> {
+        self.selected_message_index()
+            .and_then(|index| self.message_list.items.get(index))
     }
 
     #[cfg(not(target_os = "linux"))]
     /// Copy the selected snippet to the clipboard.
     pub fn copy_selected_message(&mut self) -> AppResult<()> {
-        if let Some(i) = self.message_list.state.selected() {
+        if let Some(index) = self.selected_message_index() {
+            let content = self.message_list.items[index].content.clone();
             for item in self.message_list.items.iter_mut() {
                 item.selected = false;
             }
-            self.message_list.items[i].selected = true;
+            self.message_list.items[index].selected = true;
             self.clipboard
-                .set_text(&self.message_list.items[i].content)
+                .set_text(content)
                 .context("Unable to copy snippet to clipboard")?;
         }
         Ok(())
     }
 
+    /// Returns indices into `message_list.items` matching the current search
+    /// query. Empty queries include every message.
+    pub fn filtered_message_indices(&self) -> Vec<usize> {
+        let query = self.search_bar.lines().first().cloned().unwrap_or_default();
+        let query = query.to_lowercase();
+        if query.is_empty() {
+            return (0..self.message_list.items.len()).collect();
+        }
+        self.message_list
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.content.to_lowercase().contains(&query))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
     /// Select a message in the picker and align its corresponding chat bubble
     /// with the top of the chat viewport.
     fn scroll_selected_message_to_top(&mut self) {
-        let Some(selected) = self.message_list.state.selected() else {
+        let Some(selected) = self.selected_message_index() else {
             return;
         };
 
@@ -1752,21 +1776,45 @@ impl<'a> App<'a> {
     }
 
     pub fn select_next_message(&mut self) {
-        self.message_list.state.select_next();
+        let len = self.filtered_message_indices().len();
+        if len > 0 {
+            let next = self
+                .message_list
+                .state
+                .selected()
+                .map(|index| (index + 1).min(len - 1))
+                .unwrap_or(0);
+            self.message_list.state.select(Some(next));
+        }
         self.scroll_selected_message_to_top();
     }
     pub fn select_previous_message(&mut self) {
-        self.message_list.state.select_previous();
+        let previous = self
+            .message_list
+            .state
+            .selected()
+            .unwrap_or(0)
+            .saturating_sub(1);
+        self.message_list.state.select(Some(previous));
         self.scroll_selected_message_to_top();
     }
 
     pub fn select_first_message(&mut self) {
-        self.message_list.state.select_first();
+        if self.filtered_message_indices().is_empty() {
+            self.message_list.state.select(None);
+        } else {
+            self.message_list.state.select_first();
+        }
         self.scroll_selected_message_to_top();
     }
 
     pub fn select_last_message(&mut self) {
-        self.message_list.state.select_last();
+        let len = self.filtered_message_indices().len();
+        if len > 0 {
+            self.message_list.state.select(Some(len - 1));
+        } else {
+            self.message_list.state.select(None);
+        }
         self.scroll_selected_message_to_top();
     }
 
